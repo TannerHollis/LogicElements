@@ -1,50 +1,69 @@
 #include "le_Counter.hpp"
 
+/**
+ * @brief Constructor implementation that initializes the counter element with a specified final count.
+ * @param countFinal The final count value for the counter.
+ */
 le_Counter::le_Counter(uint16_t countFinal) : le_Base<bool>(2, 1)
 {
-	// Set extrinsic variables
-	this->uCountFinal = countFinal;
+    // Set extrinsic variables
+    this->uCountFinal = countFinal;
 
-	// Set intrinsic variables
-	this->uCount = 0;
-	this->_inputStates[0] = false;
-	this->_inputStates[1] = false;
+    // Set intrinsic variables
+    this->uCount = 0;
+    this->_inputStates[0] = false;
+    this->_inputStates[1] = false;
 }
 
+/**
+ * @brief Updates the counter element.
+ * @param timeStep The current timestamp.
+ */
 void le_Counter::Update(float timeStep)
 {
-	// Get input component
-	le_Base<bool>* cu = (le_Base<bool>*)this->_inputs[0];
-	le_Base<bool>* reset = (le_Base<bool>*)this->_inputs[1];
+    // Get input components for count-up and reset
+    le_Base<bool>* cu = (le_Base<bool>*)this->_inputs[0];
+    le_Base<bool>* reset = (le_Base<bool>*)this->_inputs[1];
 
-	// If inputs are invalid, skip
-	if (cu == nullptr || reset == nullptr)
-		return;
+    // If inputs are invalid, skip update
+    if (cu == nullptr || reset == nullptr)
+        return;
 
-	// Update input states for rising trigger
-	this->_inputStates[1] = this->_inputStates[0];
-	this->_inputStates[0] = cu->GetValue(this->_outputSlots[0]);
+    // Update input states for rising trigger detection
+    this->_inputStates[1] = this->_inputStates[0];
+    this->_inputStates[0] = cu->GetValue(this->_outputSlots[0]);
 
-	// Detect rising trigger
-	bool rtrig = this->_inputStates[0] && !this->_inputStates[1];
+    // Detect rising edge trigger
+    bool rtrig = this->_inputStates[0] && !this->_inputStates[1];
 
-	if (reset->GetValue(this->_outputSlots[1]))
-		this->uCount = 0;
-	else if (rtrig)
-		this->uCount += 1;
+    // Reset dominant logic
+    if (reset->GetValue(this->_outputSlots[1]))
+        this->uCount = 0;
+    else if (rtrig)
+        this->uCount += 1;
 
-	// Set next state
-	this->SetValue(0, this->uCount >= this->uCountFinal);
+    // Set the next state based on the count value
+    this->SetValue(0, this->uCount >= this->uCountFinal);
 }
 
+/**
+ * @brief Sets the input for counting up.
+ * @param e The element to connect from.
+ * @param outputSlot The output slot of the element to connect from.
+ */
 void le_Counter::SetInput_CountUp(le_Base<bool>* e, uint16_t outputSlot)
 {
-	// Use default connection function
-	le_Base::Connect(e, outputSlot, this, 0);
+    // Use the base class connection function
+    le_Base::Connect(e, outputSlot, this, 0);
 }
 
+/**
+ * @brief Sets the input for resetting the counter.
+ * @param e The element to connect from.
+ * @param outputSlot The output slot of the element to connect from.
+ */
 void le_Counter::SetInput_Reset(le_Base<bool>* e, uint16_t outputSlot)
 {
-	// Use default connection function
-	le_Base::Connect(e, outputSlot, this, 1);
+    // Use the base class connection function
+    le_Base::Connect(e, outputSlot, this, 1);
 }

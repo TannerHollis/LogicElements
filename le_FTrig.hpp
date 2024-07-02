@@ -2,18 +2,35 @@
 
 #include "le_Base.hpp"
 
+/**
+ * @brief Class representing a falling edge trigger (FTrig) element.
+ *        Inherits from le_Base with boolean type.
+ */
 class le_FTrig : protected le_Base<bool>
 {
 private:
-	le_FTrig();
-	
-	void Update(float timeStep);
-	
+    /**
+     * @brief Constructor that initializes the FTrig element.
+     */
+    le_FTrig();
+
+    /**
+     * @brief Updates the FTrig element. Detects falling edge transitions.
+     * @param timeStep The current timestamp.
+     */
+    void Update(float timeStep);
+
 public:
-	void Connect(le_Base<bool>* e, uint16_t outputSlot);
-	
+    /**
+     * @brief Connects an output slot of another element to the input of this FTrig element.
+     * @param e The element to connect from.
+     * @param outputSlot The output slot of the element to connect from.
+     */
+    void Connect(le_Base<bool>* e, uint16_t outputSlot);
+
 private:
-	bool _inputStates[2];
-	
-	friend class le_Engine;
+    bool _inputStates[2]; ///< Stores the previous and current input states
+
+    // Allow le_Engine to access private members
+    friend class le_Engine;
 };

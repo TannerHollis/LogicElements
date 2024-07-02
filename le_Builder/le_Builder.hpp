@@ -26,7 +26,7 @@ public:
     static le_Engine* LoadFromString(char* string)
     {
         // Specify pool size
-        json_t* pool = (json_t*)malloc(sizeof(json_t) * 512);
+        json_t* pool = new json_t[512];
 
         // Specify root
         json_t const* root = json_create(string, pool, 512);
@@ -66,6 +66,9 @@ public:
 
         // Parse nets
         ParseNets(engine, netsField);
+
+        // Deallocate json_t
+        delete[] pool;
 
         return engine;
     }
@@ -117,7 +120,7 @@ private:
                 continue;
 
             // Create structure
-            le_Engine::le_Element_Def comp;
+            le_Engine::le_Element_TypeDef comp;
             GetString(nameField, comp.name, LE_ELEMENT_NAME_LENGTH);
             comp.type = json_getInteger(typeField);
 
@@ -135,7 +138,7 @@ private:
         }
     }
 
-    static void ParseElementArguments(le_Engine::le_Element_Def* comp, json_t const* j)
+    static void ParseElementArguments(le_Engine::le_Element_TypeDef* comp, json_t const* j)
     {
         // Iterator
         uint8_t i = 0;
@@ -197,7 +200,7 @@ private:
                 continue;
 
             // Parse output fields
-            le_Engine::le_Element_Net n;
+            le_Engine::le_Element_Net_TypeDef n;
             if (!ParseNetConnection(&n.output, outputElementField))
                 continue;
 
@@ -212,7 +215,7 @@ private:
             for (inputElementField = json_getChild(inputElementsField); inputElementField != 0; inputElementField = json_getSibling(inputElementField))
             {
                 // Create new connection
-                le_Engine::le_Element_Net_Connection c;
+                le_Engine::le_Element_Net_Connection_TypeDef c;
 
                 // If could not parse
                 if(!ParseNetConnection(&c, inputElementField))
@@ -227,7 +230,7 @@ private:
         }
     }
 
-    static bool ParseNetConnection(le_Engine::le_Element_Net_Connection* c, json_t const* j)
+    static bool ParseNetConnection(le_Engine::le_Element_Net_Connection_TypeDef* c, json_t const* j)
     {
         // Get output
         json_t const* nameField = json_getProperty(j, "name");
