@@ -87,7 +87,7 @@ void le_Timer::Update(float timeStep)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_Timer::Connect(le_Base<bool>* e, uint16_t outputSlot)
+void le_Timer::SetInput(le_Base<bool>* e, uint16_t outputSlot)
 {
     // Use default connection function
     le_Base::Connect(e, outputSlot, this, 0);

@@ -8,7 +8,7 @@
  */
 class le_Timer : protected le_Base<bool>
 {
-private:
+protected:
     /**
      * @brief Enum representing different timer states.
      */
@@ -38,7 +38,7 @@ public:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot);
 
 private:
     float fPickup;   ///< The pickup time.

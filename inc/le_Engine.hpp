@@ -9,7 +9,9 @@
 #include "le_Node.hpp"
 #include "le_Timer.hpp"
 #include "le_Counter.hpp"
+#include "le_Math.hpp"
 #include "le_Overcurrent.hpp"
+#include "le_Analog1PWinding.hpp"
 
 // Include standard C++ libraries
 #include <string>
@@ -19,7 +21,7 @@
 #include <cstring>
 
 #define LE_ELEMENT_NAME_LENGTH 8
-#define LE_ELEMENT_ARGUMENT_LENGTH 4
+#define LE_ELEMENT_ARGUMENT_LENGTH 64
 
 /**
  * @brief Enum class to define the types of elements.
@@ -34,7 +36,10 @@ enum class le_Element_Type : int8_t {
     LE_NODE_ANALOG = 11,
     LE_TIMER = 20,
     LE_COUNTER = 21,
-    LE_OVERCURRENT = 30,
+    LE_ANALOG_1P = 30,
+    LE_ANALOG_3P = 31,
+    LE_OVERCURRENT = 40,
+    LE_MATH = 100,
     LE_INVALID = -1
 };
 
@@ -164,14 +169,14 @@ public:
      */
     void Print();
 
-private:
+public:
     /**
      * @brief Adds an element with a specified name to the engine.
      * @param name The name of the element.
      * @param e The element.
      * @return The added element.
      */
-    le_Element* AddElement(const std::string& name, le_Element* e);
+    le_Element* AddElement(le_Element* e, const std::string& name);
 
     /**
      * @brief Sorts the elements in the engine based on their update order.

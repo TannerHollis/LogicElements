@@ -8,7 +8,7 @@
  */
 class le_RTrig : protected le_Base<bool>
 {
-private:
+protected:
     /**
      * @brief Constructor that initializes the RTrig element.
      */
@@ -26,7 +26,7 @@ public:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot);
 
 private:
     bool _inputStates[2]; ///< Stores the previous and current input states

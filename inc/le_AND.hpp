@@ -8,7 +8,7 @@
  */
 class le_AND : protected le_Base<bool>
 {
-private:
+protected:
     /**
      * @brief Constructor that initializes the AND element with a specified number of inputs.
      * @param nInputs Number of inputs for the AND element.
@@ -28,7 +28,7 @@ public:
      * @param outputSlot The output slot of the element to connect from.
      * @param inputSlot The input slot of this AND element to connect to.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
 
 private:
     // Allow le_Engine to access private members

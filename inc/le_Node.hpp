@@ -10,7 +10,7 @@
 template <typename T>
 class le_Node : protected le_Base<T>
 {
-private:
+protected:
     /**
      * @brief Constructor that initializes the node with a specified history length.
      * @param historyLength The length of the history buffer.
@@ -28,6 +28,7 @@ private:
      */
     void Update(float timeStep);
 
+public:
     /**
      * @brief Gets the history buffer with an offset from the circular buffer.
      * @param buffer Pointer to store the history buffer.
@@ -40,7 +41,7 @@ private:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void Connect(le_Base<T>* e, uint16_t outputSlot);
+    void SetInput(le_Base<T>* e, uint16_t outputSlot);
 
     using le_Base<T>::GetValue;
     using le_Base<T>::SetValue;
@@ -125,7 +126,7 @@ void le_Node<T>::GetHistory(T** buffer, uint16_t* startOffset)
  * @param outputSlot The output slot of the element to connect from.
  */
 template<typename T>
-void le_Node<T>::Connect(le_Base<T>* e, uint16_t outputSlot)
+void le_Node<T>::SetInput(le_Base<T>* e, uint16_t outputSlot)
 {
     // Use default connection function
     le_Element::Connect(e, outputSlot, this, 0);

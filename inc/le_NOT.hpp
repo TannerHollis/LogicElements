@@ -8,7 +8,7 @@
  */
 class le_NOT : protected le_Base<bool>
 {
-private:
+protected:
     /**
      * @brief Constructor that initializes the NOT element.
      */
@@ -26,7 +26,7 @@ public:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot);
 
 private:
     // Allow le_Engine to access private members

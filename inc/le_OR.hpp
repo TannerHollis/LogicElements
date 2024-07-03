@@ -8,7 +8,7 @@
  */
 class le_OR : protected le_Base<bool>
 {
-private:
+protected:
     /**
      * @brief Constructor that initializes the OR element with a specified number of inputs.
      * @param nInputs Number of inputs for the OR element.
@@ -28,7 +28,7 @@ public:
      * @param outputSlot The output slot of the element to connect from.
      * @param inputSlot The input slot of this OR element to connect to.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
 
 private:
     // Allow le_Engine to access private members

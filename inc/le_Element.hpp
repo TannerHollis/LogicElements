@@ -4,13 +4,19 @@
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
+#include <cmath>
+
+// Define M_PI
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /**
  * @brief Base class for le_Element which represents an element with inputs and an update mechanism.
  */
 class le_Element
 {
-public:
+protected:
     /**
      * @brief Constructor that initializes the element with a specified number of inputs.
      * @param nInputs Number of inputs for the element.
@@ -22,6 +28,13 @@ public:
      */
     virtual ~le_Element();
 
+    /**
+     * @brief Virtual function to update the element. Can be overridden by derived classes.
+     * @param timeStamp The current timestamp.
+     */
+    virtual void Update(float timeStamp);
+
+public:
     /**
      * @brief Gets the update order of the element.
      * @return The update order.
@@ -35,12 +48,6 @@ public:
      * @return True if this element has a smaller update order than the other element.
      */
     static bool CompareElementOrders(le_Element* left, le_Element* right);
-
-    /**
-     * @brief Virtual function to update the element. Can be overridden by derived classes.
-     * @param timeStamp The current timestamp.
-     */
-    virtual void Update(float timeStamp);
 
     /**
      * @brief Static function to connect the output of one element to the input of another element.
@@ -65,7 +72,6 @@ private:
      */
     void SetUpdateOrderFlag(le_Element* original);
 
-private:
     bool bUpdateOrder;            ///< Flag indicating if the update order needs to be recalculated.
     uint16_t iOrder;              ///< The update order of the element.
 

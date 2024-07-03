@@ -88,37 +88,41 @@ void le_Overcurrent::Update(float timeStep)
     le_Base<float>* e = (le_Base<float>*)this->_inputs[0];
     if (e != nullptr)
     {
-        // Calculate multiple
-        float m = e->GetValue(0) / this->fPickup;
-
-        // Get time dial
-        float td = this->fTimeDial;
-
-        // Get parameters
+        // Aliasing frequently accessed member variables to local variables
+        float fPickup = this->fPickup;
+        float fTimeDial = this->fTimeDial;
+        float fTimeAdder = this->fTimeAdder;
+        bool bEMReset = this->bEMReset;
         float* ps = this->_fParameters;
 
-        // Calculate trip/reset time
+        // Calculate multiple
+        float m = e->GetValue(this->_outputSlots[0]) / fPickup;
+
+        // Calculate trip/reset time and update percentage
         if (m > 1.0f)
         {
-            float tripTime = this->fTimeAdder + td * (ps[0] + (ps[1]) / (powf(m, ps[2]) - 1.0f));
+            float tripTime = fTimeAdder + fTimeDial * (ps[0] + ps[1] / (powf(m, ps[2]) - 1.0f));
             this->fPercent += timeStep / tripTime; // Increment dial spin percentage
         }
-        else if (m <= 1.0f && this->bEMReset)
+        else if (m < 1.0f && bEMReset)
         {
-            if (m < 1.0f)
-            {
-                float tripTime = td * (ps[3]) / (1.0f - powf(m, ps[4]));
-                this->fPercent -= timeStep / tripTime; // Decrement dial spin percentage
-            }
+            float tripTime = fTimeDial * ps[3] / (1.0f - powf(m, ps[4]));
+            this->fPercent -= timeStep / tripTime; // Decrement dial spin percentage
         }
-        else
+        else if (m == 1.0f || !bEMReset)
+        {
             this->fPercent = 0.0f;
+        }
 
         // Clamp percentage
         if (this->fPercent > 100.0f)
+        {
             this->fPercent = 100.0f;
+        }
         if (this->fPercent < 0.0f)
+        {
             this->fPercent = 0.0f;
+        }
 
         // Set the output of the timer
         this->SetValue(0, this->fPercent == 100.0f);

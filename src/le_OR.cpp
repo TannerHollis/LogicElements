@@ -39,7 +39,7 @@ void le_OR::Update(float timeStep)
  * @param outputSlot The output slot of the element to connect from.
  * @param inputSlot The input slot of this OR element to connect to.
  */
-void le_OR::Connect(le_Base* e, uint16_t outputSlot, uint16_t inputSlot)
+void le_OR::SetInput(le_Base* e, uint16_t outputSlot, uint16_t inputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, inputSlot);

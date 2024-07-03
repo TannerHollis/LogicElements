@@ -16,7 +16,10 @@ le_Element_Type le_Engine::ParseElementType(std::string& type)
     if (type == "LE_NODE_ANALOG") return le_Element_Type::LE_NODE_ANALOG;
     if (type == "LE_TIMER") return le_Element_Type::LE_TIMER;
     if (type == "LE_COUNTER") return le_Element_Type::LE_COUNTER;
+    if (type == "LE_ANALOG_1P") return le_Element_Type::LE_ANALOG_1P;
+    if (type == "LE_ANALOG_3P") return le_Element_Type::LE_ANALOG_3P;
     if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
+    if (type == "LE_MATH") return le_Element_Type::LE_MATH;
 
     return le_Element_Type::LE_INVALID;
 }
@@ -81,42 +84,48 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     switch ((le_Element_Type)comp->type)
     {
     case le_Element_Type::LE_AND:
-        return this->AddElement(compName, new le_AND(comp->args[0].uArg));
+        return this->AddElement(new le_AND(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_OR:
-        return this->AddElement(compName, new le_OR(comp->args[0].uArg));
+        return this->AddElement(new le_OR(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_NOT:
-        return this->AddElement(compName, new le_NOT());
+        return this->AddElement(new le_NOT(), compName);
 
     case le_Element_Type::LE_RTRIG:
-        return this->AddElement(compName, new le_RTrig());
+        return this->AddElement(new le_RTrig(), compName);
 
     case le_Element_Type::LE_FTRIG:
-        return this->AddElement(compName, new le_FTrig());
+        return this->AddElement(new le_FTrig(), compName);
 
     case le_Element_Type::LE_NODE_DIGITAL:
-        return this->AddElement(compName, new le_Node<bool>(comp->args[0].uArg));
+        return this->AddElement(new le_Node<bool>(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_NODE_ANALOG:
-        return this->AddElement(compName, new le_Node<float>(comp->args[0].uArg));
+        return this->AddElement(new le_Node<float>(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_TIMER:
-        return this->AddElement(compName, new le_Timer(comp->args[0].fArg, comp->args[1].fArg));
+        return this->AddElement(new le_Timer(comp->args[0].fArg, comp->args[1].fArg), compName);
 
     case le_Element_Type::LE_COUNTER:
-        return this->AddElement(compName, new le_Counter(comp->args[0].uArg));
+        return this->AddElement(new le_Counter(comp->args[0].uArg), compName);
+
+    case le_Element_Type::LE_ANALOG_1P:
+        return this->AddElement(new le_Analog1PWinding(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_OVERCURRENT:
     {
         std::string curveName = std::string(comp->args[0].sArg);
-        return this->AddElement(compName, new le_Overcurrent(
+        return this->AddElement(new le_Overcurrent(
             comp->args[0].sArg, // Curve type
             comp->args[1].fArg, // Pickup value
             comp->args[2].fArg, // Time Dial
             comp->args[3].fArg,  // Time Adder
-            comp->args[4].bArg)); // Electromechanical reset
+            comp->args[4].bArg), compName); // Electromechanical reset
     }
+
+    case le_Element_Type::LE_MATH:
+        return this->AddElement(new le_Math(comp->args[0].uArg, comp->args[1].sArg), compName);
 
     default:
         // TODO: implement printf() function
@@ -225,7 +234,7 @@ void le_Engine::Print()
  * @param e The element.
  * @return The added element.
  */
-le_Element* le_Engine::AddElement(const std::string& name, le_Element* e)
+le_Element* le_Engine::AddElement(le_Element* e, const std::string& name)
 {
     // Create new map member
     std::pair<std::string, le_Element*> newElement = std::make_pair(name, e);

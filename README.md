@@ -44,7 +44,7 @@ This project provides a framework for creating and managing logical elements and
 To install and use this project, clone the repository and include the necessary files in your project.
 
 ```bash
-git clone https://github.com/yourusername/yourproject.git
+git clone https://github.com/TannerHollis/LogicElements.git
 ```
 
 Include the headers and source files in your build system.
@@ -64,9 +64,9 @@ int main() {
 
     // Create engine and add elements
     le_Engine engine("Example Engine");
-    engine.AddElement(andGate);
-    engine.AddElement(orGate);
-    engine.AddElement(notGate);
+    engine.AddElement(andGate, "AND1");
+    engine.AddElement(orGate, "OR1");
+    engine.AddElement(notGate, "NOT1");
 
     // Connect elements
     le_Element::Connect(andGate, 0, orGate, 0);

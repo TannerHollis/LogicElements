@@ -27,13 +27,10 @@ protected:
     ~le_Base();
 
     /**
-     * @brief Static function to connect the output of one element to the input of another element.
-     * @param output The output element.
-     * @param outputSlot The slot of the output element.
-     * @param input The input element.
-     * @param inputSlot The slot of the input element.
+     * @brief Virtual function to update the element. Can be overridden by derived classes.
+     * @param timeStep The current timestamp.
      */
-    static void Connect(le_Base* output, uint16_t outputSlot, le_Base* input, uint16_t inputSlot);
+    virtual void Update(float timeStep);
 
     /**
      * @brief Gets the value of the specified output slot.
@@ -49,12 +46,6 @@ protected:
      */
     void SetValue(uint16_t outputSlot, T value);
 
-    /**
-     * @brief Virtual function to update the element. Can be overridden by derived classes.
-     * @param timeStep The current timestamp.
-     */
-    virtual void Update(float timeStep);
-
 private:
     uint16_t nOutputs;  ///< Number of outputs.
 
@@ -67,11 +58,15 @@ private:
     friend class le_NOT;
     friend class le_RTrig;
     friend class le_FTrig;
-    friend class le_Counter;
     friend class le_Timer;
+    friend class le_Counter;
+    friend class le_Analog1PWinding;
+    friend class le_Analog3PWinding;
     friend class le_Overcurrent;
-    friend class le_Engine;
     friend class le_Math;
+
+    // Make le_Engine a friend for factory
+    friend class le_Engine;
 };
 
 // Implementation of the le_Base class
@@ -107,21 +102,6 @@ le_Base<T>::~le_Base()
 {
     // Deallocate memory for outputs
     delete[] this->_outputs;
-}
-
-/**
- * @brief Static function implementation to connect the output of one element to the input of another element.
- * @tparam T The type of the output values.
- * @param output The output element.
- * @param outputSlot The slot of the output element.
- * @param input The input element.
- * @param inputSlot The slot of the input element.
- */
-template<typename T>
-void le_Base<T>::Connect(le_Base* output, uint16_t outputSlot, le_Base* input, uint16_t inputSlot)
-{
-    // Call base class function to connect elements
-    le_Element::Connect(output, outputSlot, input, inputSlot);
 }
 
 /**

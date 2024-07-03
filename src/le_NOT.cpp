@@ -30,7 +30,7 @@ void le_NOT::Update(float timeStep)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_NOT::Connect(le_Base<bool>* e, uint16_t outputSlot)
+void le_NOT::SetInput(le_Base<bool>* e, uint16_t outputSlot)
 {
     // Use default connection function
     le_Base::Connect(e, outputSlot, this, 0);

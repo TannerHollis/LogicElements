@@ -12,7 +12,7 @@
  */
 class le_Overcurrent : protected le_Base<bool>
 {
-private:
+public:
     /**
      * @brief Enum representing different overcurrent curve types.
      */
@@ -39,13 +39,7 @@ private:
      */
     le_Overcurrent_Curve ParseCurveType(std::string& curve);
 
-    /**
-     * @brief Sets the curve parameters based on the curve type.
-     * @param curve The curve type.
-     * @param parameters The array to store the curve parameters.
-     */
-    void SetCurveParameters(le_Overcurrent_Curve curve, float* parameters);
-
+protected:
     /**
      * @brief Constructor that initializes the overcurrent element.
      * @param curve The curve type as a string.
@@ -70,6 +64,13 @@ public:
     void SetInput(le_Base<float>* e);
 
 private:
+    /**
+     * @brief Sets the curve parameters based on the curve type.
+     * @param curve The curve type.
+     * @param parameters The array to store the curve parameters.
+     */
+    void SetCurveParameters(le_Overcurrent_Curve curve, float* parameters);
+
     le_Overcurrent_Curve curve; ///< The type of the overcurrent curve.
     float fPickup;              ///< The pickup current value.
     float fTimeDial;            ///< The time dial setting.

@@ -39,7 +39,7 @@ void le_AND::Update(float timeStep)
  * @param outputSlot The output slot of the element to connect from.
  * @param inputSlot The input slot of this AND element to connect to.
  */
-void le_AND::Connect(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot)
+void le_AND::SetInput(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, inputSlot);

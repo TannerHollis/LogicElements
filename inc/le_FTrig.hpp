@@ -21,12 +21,13 @@ private:
     void Update(float timeStep);
 
 public:
+
     /**
      * @brief Connects an output slot of another element to the input of this FTrig element.
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void Connect(le_Base<bool>* e, uint16_t outputSlot);
+    void SetInput(le_Base<bool>* e, uint16_t outputSlot);
 
 private:
     bool _inputStates[2]; ///< Stores the previous and current input states

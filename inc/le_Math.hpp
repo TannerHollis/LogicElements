@@ -11,76 +11,47 @@ extern "C"
 #include "tinyexpr/tinyexpr.h"
 }
 
+/**
+ * @brief Class representing a mathematical expression evaluator.
+ *        Inherits from le_Base with float type.
+ */
 class le_Math : protected le_Base<float>
 {
-private:
-	le_Math(uint16_t nInputs_Digital, std::string expr) : le_Base<float>(nInputs_Digital, 1)
-	{
-		// Declare extrinsic variables
-		this->sExpr = expr;
+protected:
+    /**
+     * @brief Constructor that initializes the le_Math with specified number of inputs and expression.
+     * @param nInputs Number of inputs for the mathematical expression.
+     * @param expr The mathematical expression to evaluate.
+     */
+    le_Math(uint16_t nInputs, std::string expr);
 
-		// Declare intrinsic variables
-		this->te_vars = (te_variable*)malloc( sizeof(te_variable) * nInputs_Digital );
-		this->_vars = (double*)malloc( sizeof(double) * nInputs_Digital );
-		for (uint16_t i = 0; i < nInputs_Digital; i++)
-		{
-			snprintf(this->te_vars[i].name, 63, "x%d", i);
-			this->te_vars[i].address = &this->_vars[i];
-		}
+    /**
+     * @brief Destructor to clean up the le_Math.
+     */
+    ~le_Math();
 
-		// Compile expression
-		this->te_expr = te_compile(expr.c_str(), this->te_vars, nInputs_Digital, &this->te_err);
-	}
-
-	~le_Math()
-	{
-		// Free allocated memory
-		free(this->te_vars);
-		free(this->_vars);
-		te_free(this->te_expr);
-	}
-
-	void Update(float timeStep)
-	{
-		// Set default to true
-		bool nextValue = true;
-
-		// Iterate through all input values and apply inversion if necessary
-		for (uint16_t i = 0; i < this->nInputs_Digital; i++)
-		{
-			le_Base<float>* e = this->_inputs[i];
-			if (e != nullptr)
-			{
-				this->_vars[i] = (double)e->GetValue(this->_outputSlots[i]);
-			}
-		}
-
-		// Attempt expression
-		if (this->te_expr)
-		{
-			double exprEvaluation = te_eval(this->expr);
-
-			// Set next value
-			this->SetValue(0, (float)exprEvaluation);
-		}
-	}
+    /**
+     * @brief Updates the le_Math by evaluating the expression with the current input values.
+     * @param timeStep The current timestamp.
+     */
+    void Update(float timeStep);
 
 public:
-	void Connect(le_Base<float>* e, uint16_t outputSlot, uint16_t inputSlot)
-	{
-		// Use default connection function
-		le_Base<float>::Connect(e, outputSlot, this, inputSlot);
-	}
+    /**
+     * @brief Sets the input for the mathematical expression.
+     * @param e The element providing the input value.
+     * @param outputSlot The output slot of the element providing the input.
+     * @param inputSlot The input slot of this le_Math element to connect to.
+     */
+    void SetInput(le_Base<float>* e, uint16_t outputSlot, uint16_t inputSlot);
 
 private:
-	// Expression string
-	std::string sExpr;
+    std::string sExpr;    ///< The mathematical expression as a string.
+    double* _vars;        ///< Array of variables used in the expression.
+    te_variable* te_vars; ///< Array of tinyexpr variables.
+    te_expr* te_expr;     ///< Compiled tinyexpr expression.
+    int te_err;           ///< Error code for tinyexpr expression compilation.
 
-	// Expression variables
-	double* _vars;
-	te_variable* te_vars;
-	te_expr* te_expr;
-	int te_err;
-
-	friend class le_Engine;
+    // Allow le_Engine to access private members
+    friend class le_Engine;
 };
