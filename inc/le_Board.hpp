@@ -46,7 +46,6 @@ public:
 	}
 
 private:
-
 	static void le_Board_UpdateInput(le_Board_IO_Digital* io);
 	static void le_Board_UpdateInput(le_Board_IO_Analog* io);
 	static void le_Board_UpdateOutput(le_Board_IO_Digital* io);

@@ -64,6 +64,7 @@ private:
     friend class le_Analog3PWinding;
     friend class le_Overcurrent;
     friend class le_Math;
+    friend class le_PID;
 
     // Make le_Engine a friend for factory
     friend class le_Engine;

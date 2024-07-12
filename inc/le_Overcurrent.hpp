@@ -12,7 +12,7 @@
  */
 class le_Overcurrent : protected le_Base<bool>
 {
-public:
+protected:
     /**
      * @brief Enum representing different overcurrent curve types.
      */

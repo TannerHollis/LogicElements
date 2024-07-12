@@ -8,7 +8,7 @@
 // Include tinyexpr lib
 extern "C"
 {
-#include "tinyexpr/tinyexpr.h"
+#include "../tinyexpr/tinyexpr.h"
 }
 
 /**

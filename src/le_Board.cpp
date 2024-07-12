@@ -1,5 +1,14 @@
 #include "le_Board.hpp"
 
+// Define a macro to handle weak attribute based on the compiler
+#if defined(_MSC_VER)
+    #define WEAK_ATTR __declspec(selectany)
+#elif defined(__GNUC__) || defined(__clang__)
+    #define WEAK_ATTR __attribute__((weak))
+#else
+    #define WEAK_ATTR
+#endif
+
 le_Board::le_Board(uint16_t nInputs_Digital, uint16_t nInputs_Analog, uint16_t nOutputs)
 {
 	// Declare extrinsic variables
@@ -86,26 +95,18 @@ void le_Board::FlagInputForUpdate()
 	this->bInputsNeedUpdated = true;
 }
 
-#ifdef __GNUC__
-__attribute__((weak))
-#endif
-void le_Board::le_Board_UpdateInput(le_Board_IO_Digital* io)
+
+WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Digital* io)
 {
 	// Implement board specific read
 }
 
-#ifdef __GNUC__
-__attribute__((weak))
-#endif
-void le_Board::le_Board_UpdateInput(le_Board_IO_Analog* io)
+WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Analog* io)
 {
 	// Implement board specific read
 }
 
-#ifdef __GNUC__
-__attribute__((weak))
-#endif
-void le_Board::le_Board_UpdateOutput(le_Board_IO_Digital* io)
+WEAK_ATTR void le_Board::le_Board_UpdateOutput(le_Board_IO_Digital* io)
 {
 	// Implement board specific write
 }
