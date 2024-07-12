@@ -66,17 +66,12 @@ private:
      */
     void FindOrder(le_Element* original, uint16_t* order);
 
-    /**
-     * @brief Sets the flag for updating the order of the element.
-     * @param original The original element to start from.
-     */
-    void SetUpdateOrderFlag(le_Element* original);
-
-    bool bUpdateOrder;            ///< Flag indicating if the update order needs to be recalculated.
     uint16_t iOrder;              ///< The update order of the element.
 
 protected:
     uint16_t nInputs;             ///< Number of inputs.
     le_Element** _inputs;         ///< Array of pointers to input elements.
     uint16_t* _outputSlots;       ///< Array of output slots.
+
+    friend class le_Engine;
 };

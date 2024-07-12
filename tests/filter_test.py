@@ -66,8 +66,8 @@ test_signal_with_step = test_signal.copy()
 test_signal_with_step[step_index:] *= 5  # Increase the amplitude by 5 times after the step time
 
 # Add a decaying DC offset starting at 0.5 seconds
-decay_constant = 5
-dc_offset_mag = 5
+decay_constant = 30
+dc_offset_mag = 10
 dc_offset = np.zeros_like(test_signal)
 dc_offset[step_index:] = dc_offset_mag * np.exp(-decay_constant * (t[step_index:] - step_time))
 
@@ -75,7 +75,7 @@ dc_offset[step_index:] = dc_offset_mag * np.exp(-decay_constant * (t[step_index:
 test_signal_with_step_and_dc = test_signal_with_step + dc_offset
 
 # Add noise to the test signal with step and decaying DC offset
-noise = 0.1 * np.random.normal(size=test_signal.shape)
+noise = 0.25 * np.random.normal(size=test_signal.shape)
 noisy_test_signal_with_step_and_dc = test_signal_with_step_and_dc + noise
 
 # Create an instance of the class and run the update method

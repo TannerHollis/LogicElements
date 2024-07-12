@@ -77,8 +77,8 @@ private:
      */
     void CalculateSequenceComponents();
 
-    const std::complex<float> a = std::polar(1.0f, 2.0f * M_PI / 3.0f); ///< Constant phasor component.
-    const std::complex<float> a2 = a * a; ///< Constant phasor component squared.
+    static const std::complex<float> a;     ///< Constant phasor component.
+    static const std::complex<float> a2;    ///< Constant phasor component squared.
 
     le_Analog1PWinding* _windings; ///< Array of single-phase windings.
     bool bInputsVerified; ///< Flag indicating if inputs are verified.

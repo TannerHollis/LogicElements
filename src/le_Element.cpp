@@ -20,9 +20,8 @@ le_Element::le_Element(uint16_t nInputs)
         this->_inputs[i] = nullptr;
     }
 
-    // Set default order and update flag
+    // Set default order
     this->iOrder = 0;
-    this->bUpdateOrder = false;
 }
 
 /**
@@ -41,13 +40,9 @@ le_Element::~le_Element()
  */
 uint16_t le_Element::GetOrder()
 {
-    if (this->bUpdateOrder)
-    {
-        // Reset order to zero and recalculate it
-        this->iOrder = 0;
-        this->FindOrder(this, &(this->iOrder));
-        this->bUpdateOrder = false; // Reset flag
-    }
+    // Reset order to zero and recalculate it
+    this->iOrder = 0;
+    this->FindOrder(this, &(this->iOrder));
 
     return this->iOrder;
 }
@@ -83,9 +78,6 @@ void le_Element::Connect(le_Element* output, uint16_t outputSlot, le_Element* in
 {
     // Connect the output element to the input element
     input->_inputs[inputSlot] = output;
-
-    // Set the update order flag
-    input->SetUpdateOrderFlag(input);
 }
 
 /**
@@ -98,40 +90,31 @@ void le_Element::FindOrder(le_Element* original, uint16_t* order)
     // Increment the order
     (*order)++;
 
+    // Create array of orders for each input
+    uint16_t* orders = new uint16_t[this->nInputs];
+
     // Iterate through inputs to calculate the order
     for (uint16_t i = 0; i < this->nInputs; i++)
     {
-        uint16_t orderTmp = *order;
+        orders[i] = *order;
         le_Element* e = this->_inputs[i];
 
         // Avoid circular dependency and null pointers
         if (e != original && e != nullptr)
         {
-            e->FindOrder(this, &orderTmp);
-            if (orderTmp > *order)
-                *order = orderTmp;
+            e->FindOrder(this, &orders[i]);
         }
     }
-}
 
-/**
- * @brief Sets the flag for updating the order of the element.
- * @param original The original element to start from.
- */
-void le_Element::SetUpdateOrderFlag(le_Element* original)
-{
-    // Set the update order flag
-    this->bUpdateOrder = true;
-
-    // Recurse through inputs to propagate the flag
+    // Take highest order
     for (uint16_t i = 0; i < this->nInputs; i++)
     {
-        le_Element* e = _inputs[i];
-
-        // Avoid circular dependency and null pointers
-        if (e != original && e != nullptr)
+        if (orders[i] > *order)
         {
-            e->SetUpdateOrderFlag(this);
+            *order = orders[i];
         }
     }
+
+    // Deallocate orders
+    delete[] orders;
 }

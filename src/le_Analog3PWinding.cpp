@@ -152,3 +152,6 @@ void le_Analog3PWinding::CalculateSequenceComponents()
     this->SetValue(11, v2.real()); // Negative-Sequence (Real)
     this->SetValue(12, v2.imag()); // Negative-Sequence (Imag)
 }
+
+const std::complex<float> le_Analog3PWinding::a = std::polar(1.0f, (float)(2.0 * M_PI / 3.0)); ///< Constant phasor component.
+const std::complex<float> le_Analog3PWinding::a2 = a * a;

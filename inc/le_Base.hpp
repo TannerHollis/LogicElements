@@ -89,7 +89,7 @@ le_Base<T>::le_Base(uint16_t nInputs, uint16_t nOutputs) : le_Element(nInputs)
     // Initialize output values
     for (uint16_t i = 0; i < nOutputs; i++)
     {
-        this->_outputs[i] = static_cast<T>(0);
+        this->_outputs[i] = (T)0;
     }
 }
 

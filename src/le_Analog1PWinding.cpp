@@ -20,15 +20,15 @@ le_Analog1PWinding::le_Analog1PWinding(uint16_t samplesPerCycle) : le_Base<float
         this->_rawFilteredValues[i] = 0.0f;
     }
 
-    this->uWrite = 0;
-    this->uQuarterCycle = (uint16_t)((float)samplesPerCycle / 4.0f); // Designate read head as: (2pi_samples / 4)
+    this->uWrite = samplesPerCycle - 1;
+    this->uQuarterCycle = (uint16_t)((float)samplesPerCycle / 4.0f) - 1; // Designate read head as: (2pi_samples / 4)
 
     // Initialize and calculate cosine filter coefficients
     this->sFilter.coefficients = new float[samplesPerCycle];
     this->sFilter.length = samplesPerCycle;
     for (uint16_t i = 0; i < samplesPerCycle; i++)
     {
-        this->sFilter.coefficients[i] = 2.0 / (double)samplesPerCycle * cos(2.0 * M_PI / (double)samplesPerCycle * (double)i);
+        this->sFilter.coefficients[i] = (float)(2.0 / (double)samplesPerCycle * cos(2.0 * (double)M_PI / (double)samplesPerCycle * (double)i));
     }
 }
 
@@ -57,16 +57,31 @@ void le_Analog1PWinding::Update(float timeStep)
     this->uQuarterCycle = (this->uQuarterCycle - 1 + this->uSamplesPerCycle) % this->uSamplesPerCycle;
 }
 
+/**
+ * @brief Sets the input for Winding.
+ * @param e The element providing the input value for Winding.
+ * @param outputSlot The output slot of the element providing the input.
+ */
 void le_Analog1PWinding::SetInput_Winding(le_Base<float>* e, uint16_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 0);
 }
 
+/**
+ * @brief Sets the real part of the reference input for the winding.
+ * @param e The element providing the reference real input value.
+ * @param outputSlot The output slot of the element providing the reference real input.
+ */
 void le_Analog1PWinding::SetInput_RefReal(le_Base<float>* e, uint16_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 1);
 }
 
+/**
+ * @brief Sets the imaginary part of the reference input for the winding.
+ * @param e The element providing the reference imaginary input value.
+ * @param outputSlot The output slot of the element providing the reference imaginary input.
+ */
 void le_Analog1PWinding::SetInput_RefImag(le_Base<float>* e, uint16_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 2);
