@@ -8,34 +8,27 @@
 class le_IRIGB : public le_Time
 {
 public:
-	le_IRIGB(uint32_t timerFreq, float tolerance) : le_Time(timerFreq, 0, 0, 0, 0, 0, 0)
+	le_IRIGB(uint32_t irigTimerFreq, float irigFrameTolerance, uint32_t updateTimerFreq) : le_Time(updateTimerFreq, 0, 0, 0, 0, 0, 0)
 	{
 		// Set extrinsic variables
-		this->uTimerFreq = timerFreq;
+		this->uTimerFreq = irigTimerFreq;
 
 		// Set intrinsic variables		
-		//this->_irigFrameIn = new le_IRIGB_Frame[100];
-		//this->_irigFrameOut = new le_IRIGB_Frame[100];
-		this->uSignalStart = -1;	// Declare start frame invalid
-		this->uFrameDecodeWrite = 0;
-		this->uFrameWrite = 0;
+		this->_irigFrameIn = new le_IRIGB_Frame[SIGNAL_LEN]; // Allocate buffer frame input data
+		this->_irigFrameOut = new le_IRIGB_Frame[SIGNAL_LEN * 2]; // Allocate double-buffer frame output data
+		this->uSignalStart = -1; // Declare start frame invalid
+		this->uFrameDecodeWrite = 0; // Frame input write pointer
+		this->uFrameWrite = 0; // Frame output write pointer
 
 		// Initialize flags
 		this->bValidSignal = false;
 		this->bBufferFlip = false;
 
-		// Initialize next time stamp
-		this->sNext.second = 0;
-		this->sNext.minute = 0;
-		this->sNext.hour = 0;
-		this->sNext.day = 0;
-		this->sNext.year = 0;
-
 		// Initialize drift
-		this->fDrift = 0.0f;
+		this->iDrift = 0;
 
 		// Set tolerances to frame times
-		this->SetFrameCountTolerances(timerFreq, tolerance);
+		this->SetFrameCountTolerances(irigTimerFreq, irigFrameTolerance);
 	}
 
 	~le_IRIGB()
@@ -96,9 +89,9 @@ public:
 	    }
 	}
 
-	float GetDrift() const
+	int32_t GetDrift() const
 	{
-		return this->fDrift;
+		return this->iDrift;
 	}
 
 private:
@@ -106,7 +99,7 @@ private:
 	{
 		BIT_0 = 0,
 		BIT_1 = 1,
-		FRAME_REF = 9,
+		FRAME_REF = 10,
 		FRAME_INVALID = -1
 	};
 
@@ -124,7 +117,7 @@ private:
 
 	void DecodeFrames(le_IRIGB_Frame* frames, uint16_t offset)
 	{
-		// Decode seconds (bits 1-8)
+		// Decode seconds (bits 1-8), if invalid frame format, quit
 		if (frames[0] != le_IRIGB_Frame::FRAME_REF ||
 			frames[5] != le_IRIGB_Frame::BIT_0 ||
 			frames[9] != le_IRIGB_Frame::FRAME_REF)
@@ -133,10 +126,10 @@ private:
 			return;
 		}
 
-		this->sNext.second = this->FromBCD(frames, 1, 4, 1);
-		this->sNext.second += this->FromBCD(frames, 6, 8, 10);
+		uint8_t second = this->FromBCD(frames, 1, 4, 1);
+		second += this->FromBCD(frames, 6, 8, 10);
 		
-		// Decode minutes (bits 10-17)
+		// Decode minutes (bits 10-17), if invalid frame format, quit
 		if (frames[14] != le_IRIGB_Frame::BIT_0 ||
 			frames[18] != le_IRIGB_Frame::BIT_0 ||
 			frames[19] != le_IRIGB_Frame::FRAME_REF)
@@ -145,10 +138,10 @@ private:
 			return;
 		}
 
-		this->sNext.minute = this->FromBCD(frames, 10, 13, 1);
-		this->sNext.minute += this->FromBCD(frames, 15, 17, 10);
+		uint8_t minute = this->FromBCD(frames, 10, 13, 1);
+		minute += this->FromBCD(frames, 15, 17, 10);
 
-		// Decode hours (bits 20-28)
+		// Decode hours (bits 20-28), if invalid frame format, quit
 		if (frames[24] != le_IRIGB_Frame::BIT_0 ||
 			frames[27] != le_IRIGB_Frame::BIT_0 ||
 			frames[28] != le_IRIGB_Frame::BIT_0 ||
@@ -158,10 +151,10 @@ private:
 			return;
 		}
 
-		this->sNext.hour = this->FromBCD(frames, 20, 23, 1);
-		this->sNext.hour += this->FromBCD(frames, 25, 26, 10);
+		uint8_t hour = this->FromBCD(frames, 20, 23, 1);
+		hour += this->FromBCD(frames, 25, 26, 10);
 
-		// Decode days (bits 30-41)
+		// Decode days (bits 30-41), if invalid frame format, quit
 		if (frames[34] != le_IRIGB_Frame::BIT_0 ||
 			frames[39] != le_IRIGB_Frame::FRAME_REF ||
 			frames[42] != le_IRIGB_Frame::BIT_0 ||
@@ -177,11 +170,11 @@ private:
 			return;
 		}
 
-		this->sNext.day = this->FromBCD(frames, 30, 33, 1);
-		this->sNext.day += this->FromBCD(frames, 35, 38, 10);
-		this->sNext.day += this->FromBCD(frames, 40, 41, 100);
+		uint16_t day = this->FromBCD(frames, 30, 33, 1);
+		day += this->FromBCD(frames, 35, 38, 10);
+		day += this->FromBCD(frames, 40, 41, 100);
 
-		// Decode years (bits 50-58)
+		// Decode years (bits 50-58), if invalid frame format, quit
 		if (frames[54] != le_IRIGB_Frame::BIT_0 ||
 			frames[59] != le_IRIGB_Frame::FRAME_REF)
 		{
@@ -189,15 +182,10 @@ private:
 			return;
 		}
 
-		this->sNext.year = this->FromBCD(frames, 50, 53, 1);
-		this->sNext.year += this->FromBCD(frames, 55, 58, 10);
+		uint8_t year = this->FromBCD(frames, 50, 53, 1);
+		year += this->FromBCD(frames, 55, 58, 10);
 
-		this->fDrift = this->Align(0, this->sNext.second, this->sNext.minute, this->sNext.hour, this->sNext.day, this->sNext.year);
-
-		char buffer[50];
-
-		this->PrintShortTime(buffer, 50);
-		printf("%s\r\n", buffer);
+		this->iDrift = this->Align(0, second, minute, hour, day, year);
 	}
 
 	inline uint16_t FromBCD(le_IRIGB_Frame* buffer, uint16_t start, uint16_t stop, uint16_t multiplier)
@@ -209,6 +197,7 @@ private:
 			tmp += ((uint8_t)_irigFrameOut[i] << (i - start));
 		}
 
+		// Return with ones, tens, or hundreds multiplier
 		return tmp * multiplier;
 	}
 
@@ -216,21 +205,21 @@ private:
 		return ((bcd >> 4) * 10) + (bcd & 0x0F);
 	}
 
-	void SetFrameCountTolerances(uint32_t timerFreq, float tolerance)
+	inline void SetFrameCountTolerances(uint32_t timerFreq, float tolerance)
 	{
 		this->uBit0Max = (uint32_t)(0.002f * (float)timerFreq * (1.0f + tolerance));
 		this->uBit1Max = (uint32_t)(0.005f * (float)timerFreq * (1.0f + tolerance));
 		this->uRefMax = (uint32_t)(0.008f * (float)timerFreq * (1.0f + tolerance));
 	}
 
-	void InvalidateIRIG()
+	inline void InvalidateIRIG()
 	{
 		this->uSignalStart = -1;
 		this->bValidSignal = false;
 	}
 
-	le_IRIGB_Frame _irigFrameIn[100]; ///< Frame buffer input
-	le_IRIGB_Frame _irigFrameOut[200]; ///< Frame buffer output, left-aligned
+	le_IRIGB_Frame* _irigFrameIn; ///< Frame buffer input
+	le_IRIGB_Frame* _irigFrameOut; ///< Frame buffer output, left-aligned
 	bool bBufferFlip; ///< Double buffer marker
 
 	// Signal offset for alignment
@@ -247,16 +236,8 @@ private:
 	uint32_t uBit1Max;
 	uint32_t uRefMax;
 
-	// Store next time
-	struct
-	{
-		uint8_t second;
-		uint8_t minute;
-		uint8_t hour;
-		uint16_t day;
-		uint16_t year;
-	} sNext;
+
 
 	// Drift since last update
-	float fDrift;
+	int32_t iDrift;
 };

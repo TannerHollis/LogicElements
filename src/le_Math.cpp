@@ -20,7 +20,7 @@ le_Math::le_Math(uint16_t nInputs, std::string expr) : le_Base<float>(nInputs, 1
     }
 
     // Compile expression
-    this->te_expr = te_compile(expr.c_str(), this->te_vars, nInputs, &this->te_err);
+    this->te_expression = te_compile(expr.c_str(), this->te_vars, nInputs, &this->te_err);
 }
 
 /**
@@ -31,7 +31,7 @@ inline le_Math::~le_Math()
     // Free allocated memory
     delete[] this->te_vars;
     delete[] this->_vars;
-    te_free(this->te_expr);
+    te_free(this->te_expression);
 }
 
 /**
@@ -51,9 +51,9 @@ void le_Math::Update(float timeStep)
     }
 
     // Attempt expression
-    if (this->te_expr)
+    if (this->te_expression)
     {
-        double exprEvaluation = te_eval(this->te_expr);
+        double exprEvaluation = te_eval(this->te_expression);
 
         // Set next value
         this->SetValue(0, (float)exprEvaluation);

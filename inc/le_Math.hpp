@@ -8,7 +8,7 @@
 // Include tinyexpr lib
 extern "C"
 {
-#include "../tinyexpr/tinyexpr.h"
+#include "tinyexpr/tinyexpr.h"
 }
 
 /**
@@ -49,7 +49,7 @@ private:
     std::string sExpr;    ///< The mathematical expression as a string.
     double* _vars;        ///< Array of variables used in the expression.
     te_variable* te_vars; ///< Array of tinyexpr variables.
-    te_expr* te_expr;     ///< Compiled tinyexpr expression.
+    te_expr* te_expression;     ///< Compiled tinyexpr expression.
     int te_err;           ///< Error code for tinyexpr expression compilation.
 
     // Allow le_Engine to access private members

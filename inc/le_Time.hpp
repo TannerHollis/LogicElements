@@ -47,7 +47,10 @@ public:
 
 	le_Time GetFuture(float seconds)
 	{
-
+		uint32_t subSeconds = (uint32_t)(seconds * this->uSubSecondFraction);
+		le_Time futureTime = *this;
+		futureTime.Update(subSeconds);
+		return futureTime;
 	}
 
 	void Update(uint32_t subSeconds)
@@ -103,24 +106,25 @@ public:
 		this->uHour = (uint8_t)hour;
 		this->uMinute = (uint8_t)minute;
 		this->uSecond = (uint8_t)second;
+		this->uSubSecond = (uint8_t)subSecond;
 	}
 
-	float GetElapsedTimeSince(le_Time& other)
+	int32_t GetElapsedTimeSince(le_Time& other)
 	{
-		float totalTime = 0.0f;
-		totalTime += ((float)this->uSubSecond - (float)other.uSubSecond) / (float)this->uSubSecondFraction;
-		totalTime += (float)(this->uSecond - other.uSecond);
-		totalTime += (float)(this->uMinute - other.uMinute) * 60.0f;
-		totalTime += (float)(this->uHour - other.uHour) * 3600.0f;
-		totalTime += (float)(this->uDay - other.uDay) * 86400.0f;
+		int32_t totalTime = 0;
+		totalTime += ((int32_t)this->uSubSecond - (int32_t)other.uSubSecond) * 1000000 / (int32_t)this->uSubSecondFraction;
+		totalTime += ((int32_t)this->uSecond - (int32_t)other.uSecond) * 1000000;
+		totalTime += ((int32_t)this->uMinute - (int32_t)other.uMinute) * 60 * 1000000;
+		totalTime += ((int32_t)this->uHour - (int32_t)other.uHour) * 3600 * 1000000;
+		totalTime += ((int32_t)this->uDay - (int32_t)other.uDay) * 86400 * 1000000;
 		return totalTime;
 	}	
 
-	float Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint8_t day, uint8_t year)
+	int32_t Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint8_t day, uint8_t year)
 	{
 		le_Time time(this->uSubSecondFraction, subSecond, second, minute, hour, day, year);
 		
-		float drift = time.GetElapsedTimeSince(*this);
+		int32_t drift = time.GetElapsedTimeSince(*this);
 
 		this->uSubSecond = subSecond;
 		this->uSecond = second;
@@ -159,7 +163,7 @@ protected:
 	}
 
 	// Function to convert day of the year to month and day of the month
-	void ConvertDayOfYearToMonthDay(uint16_t year, uint16_t dayOfYear, uint8_t* month, uint8_t* day) {
+	inline void ConvertDayOfYearToMonthDay(uint16_t year, uint16_t dayOfYear, uint8_t* month, uint8_t* day) {
 		if (dayOfYear < 1 || dayOfYear > GetDaysInYear(year)) {
 			// Invalid day of the year
 			*month = 0;
