@@ -78,6 +78,7 @@ void le_Element::Connect(le_Element* output, uint16_t outputSlot, le_Element* in
 {
     // Connect the output element to the input element
     input->_inputs[inputSlot] = output;
+    input->_outputSlots[inputSlot] = outputSlot;
 }
 
 /**

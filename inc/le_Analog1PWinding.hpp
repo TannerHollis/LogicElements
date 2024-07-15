@@ -85,4 +85,5 @@ private:
     // Allow le_Engine and le_Analog3PWinding to access private members
     friend class le_Engine;
     friend class le_Analog3PWinding;
+
 };

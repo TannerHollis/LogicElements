@@ -7,9 +7,9 @@ class le_Analog1PWinding:
         self.uSamplesPerCycle = samples_per_cycle
         self.uWrite = samples_per_cycle - 1
         self.uQuarterCycle = int(samples_per_cycle / 4.0) - 1
-        self._rawValues = np.zeros(samples_per_cycle)
-        self._rawFilteredValues = np.zeros(samples_per_cycle)
-        self.coefficients = [2.0 / samples_per_cycle * np.cos(2.0 * np.pi / samples_per_cycle * i) for i in range(int(samples_per_cycle/1))]
+        self._rawValues = np.zeros(samples_per_cycle, dtype=np.float32)
+        self._rawFilteredValues = np.zeros(samples_per_cycle, dtype=np.float32)
+        self.coefficients = np.array([2.0 / samples_per_cycle * np.cos(2.0 * np.pi / samples_per_cycle * i) for i in range(int(samples_per_cycle/1))], dtype=np.float32)
 
     def ApplyCosineFilter(self):
         # Get the input element value
@@ -18,7 +18,7 @@ class le_Analog1PWinding:
         # Store raw input to raw values buffer
         self._rawValues[self.uWrite] = e_value
 
-        sum_val = 0.0
+        sum_val = np.float32(0.0)
         pos = self.uWrite
 
         for i in range(int(self.uSamplesPerCycle/1)):
@@ -54,10 +54,10 @@ test_signal_frequency = 60  # frequency of the test signal in Hz
 samples_per_cycle = 8
 sampling_rate = test_signal_frequency * samples_per_cycle  # samples per second
 duration = 1  # duration of the test signal in seconds
-t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False)
+t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False, dtype=np.float32)
 
 # Create test signal (sine wave)
-test_signal = np.sin(2 * np.pi * test_signal_frequency * t)
+test_signal = np.sin(2 * np.pi * test_signal_frequency * t).astype(np.float32)
 
 # Create a step in the sinusoidal magnitude at 0.5 seconds with 5x magnitude
 step_time = 0.5  # seconds
@@ -68,14 +68,14 @@ test_signal_with_step[step_index:] *= 5  # Increase the amplitude by 5 times aft
 # Add a decaying DC offset starting at 0.5 seconds
 decay_constant = 30
 dc_offset_mag = 10
-dc_offset = np.zeros_like(test_signal)
-dc_offset[step_index:] = dc_offset_mag * np.exp(-decay_constant * (t[step_index:] - step_time))
+dc_offset = np.zeros_like(test_signal, dtype=np.float32)
+dc_offset[step_index:] = dc_offset_mag * np.exp(-decay_constant * (t[step_index:] - step_time)).astype(np.float32)
 
 # Combine the step change and the decaying DC offset
 test_signal_with_step_and_dc = test_signal_with_step + dc_offset
 
 # Add noise to the test signal with step and decaying DC offset
-noise = 0.25 * np.random.normal(size=test_signal.shape)
+noise = 0.25 * np.random.normal(size=test_signal.shape).astype(np.float32)
 noisy_test_signal_with_step_and_dc = test_signal_with_step_and_dc + noise
 
 # Create an instance of the class and run the update method

@@ -121,7 +121,7 @@ void le_Analog1PWinding::ApplyCosineFilter()
         for (uint16_t i = 0; i < samplesPerCycle; ++i)
         {
             sum += rawValues[pos] * coefficients[i];
-            ++pos;
+            pos++;
             if (pos >= samplesPerCycle)
                 pos = 0; // Wrap around
         }

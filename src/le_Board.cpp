@@ -42,7 +42,7 @@ void le_Board::AddInput(uint16_t slot, const char* name, void* gpioPort, uint16_
 void le_Board::AddInput(uint16_t slot, const char* name, float* addr)
 {
 	le_Board_IO_Analog* io = &this->_inputs_Analog[slot];
-	io->name = name;
+	strncpy(io->name, name, LE_ELEMENT_NAME_LENGTH);
 	io->addr = addr;
 	io->element = nullptr;
 }
@@ -140,7 +140,7 @@ void le_Board::ValidateIO()
 	// Validate Analog Inputs
 	for (uint16_t i = 0; i < this->nInputs_Analog; i++)
 	{
-		this->_inputs_Analog[i].element = this->e->GetElement(this->_inputs_Analog[i].name);
+		this->_inputs_Analog[i].element = (le_Base<float>*)this->e->GetElement(this->_inputs_Analog[i].name);
 		if (this->_inputs_Analog[i].element == nullptr)
 			return;
 	}
@@ -148,7 +148,7 @@ void le_Board::ValidateIO()
 	// Validate Digital Inputs
 	for (uint16_t i = 0; i < this->nInputs_Digital; i++)
 	{
-		this->_inputs_Digital[i].element = this->e->GetElement(this->_inputs_Digital[i].name);
+		this->_inputs_Digital[i].element = (le_Base<bool>*)this->e->GetElement(this->_inputs_Digital[i].name);
 		if (this->_inputs_Digital[i].element == nullptr)
 			return;
 	}
@@ -156,7 +156,7 @@ void le_Board::ValidateIO()
 	// Validate Outputs
 	for (uint16_t i = 0; i < this->nOutputs; i++)
 	{
-		this->_outputs[i].element = this->e->GetElement(this->_outputs[i].name);
+		this->_outputs[i].element = (le_Base<bool>*)this->e->GetElement(this->_outputs[i].name);
 		if (this->_outputs[i].element == nullptr)
 			return;
 	}
@@ -170,7 +170,7 @@ void le_Board::UpdateInputs()
 	for (uint16_t i = 0; i < this->nInputs_Analog; i++)
 	{
 		// Get element
-		le_Node<float>* e = (le_Node*)this->_inputs_Analog[i].element;
+		le_Node<float>* e = (le_Node<float>*)this->_inputs_Analog[i].element;
 		if (e == nullptr)
 			continue;
 
@@ -181,7 +181,7 @@ void le_Board::UpdateInputs()
 	for (uint16_t i = 0; i < this->nInputs_Digital; i++)
 	{
 		// Get element
-		le_Node<bool>* e = (le_Node*)this->_inputs_Digital[i].element;
+		le_Node<bool>* e = (le_Node<bool>*)this->_inputs_Digital[i].element;
 		if (e == nullptr)
 			continue;
 
@@ -195,7 +195,7 @@ void le_Board::UpdateOutputs()
 	for (uint16_t i = 0; i < this->nOutputs; i++)
 	{
 		// Get element
-		le_Node<bool>* e = (le_Node*)this->_outputs[i].element;
+		le_Node<bool>* e = (le_Node<bool>*)this->_outputs[i].element;
 		if (e == nullptr)
 			continue;
 
