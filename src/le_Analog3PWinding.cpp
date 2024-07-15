@@ -141,8 +141,8 @@ void le_Analog3PWinding::CalculateSequenceComponents()
 
     // Calculate sequence components
     std::complex<float> v0 = vA + vB + vC;
-    std::complex<float> v1 = vA + a * vB + a2 * vC;
-    std::complex<float> v2 = vA + a2 * vB + a * vC;
+    std::complex<float> v1 = (vA + a * vB + a2 * vC) / 3.0f;
+    std::complex<float> v2 = (vA + a2 * vB + a * vC) / 3.0f;
 
     // Save sequence components
     this->SetValue(7, v0.real());  // Zero-Sequence (Real)

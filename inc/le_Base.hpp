@@ -65,6 +65,7 @@ private:
     friend class le_Overcurrent;
     friend class le_Math;
     friend class le_PID;
+    friend class le_Mux;
 
     // Make le_Engine a friend for factory
     friend class le_Engine;

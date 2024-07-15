@@ -9,6 +9,7 @@
 #include "le_Node.hpp"
 #include "le_Timer.hpp"
 #include "le_Counter.hpp"
+#include "le_Mux.hpp"
 #include "le_Math.hpp"
 #include "le_Overcurrent.hpp"
 #include "le_Analog1PWinding.hpp"
@@ -36,6 +37,7 @@ enum class le_Element_Type : int8_t {
     LE_NODE_ANALOG = 11,
     LE_TIMER = 20,
     LE_COUNTER = 21,
+    LE_MUX = 22,
     LE_ANALOG_1P = 30,
     LE_ANALOG_3P = 31,
     LE_OVERCURRENT = 40,
@@ -82,8 +84,19 @@ public:
     typedef struct le_Element_TypeDef
     {
         char name[LE_ELEMENT_NAME_LENGTH];
-        int8_t type;
+        le_Element_Type type;
         le_Element_Argument_TypeDef args[5];
+
+        /**
+         * @brief Initializes the element name and type.
+         * @param name The name of the element.
+         * @param type The type of the element.
+         */
+        le_Element_TypeDef(std::string name, le_Element_Type type)
+        {
+            CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
+            this->type = type;
+        }
     } le_Element_TypeDef;
 
     /**
@@ -104,19 +117,17 @@ public:
         std::vector<le_Element_Net_Connection_TypeDef> inputs;
 
         /**
-         * @brief Sets the output connection.
+         * @brief Initializes the output connection.
          * @param elementName The name of the element.
          * @param outputSlot The output slot.
          */
-        void SetOutput(const char(&elementName)[LE_ELEMENT_NAME_LENGTH], uint16_t outputSlot);
-        void SetOutput(std::string elementName, uint16_t outputSlot);
+        le_Element_Net_TypeDef(std::string elementName, uint16_t outputSlot);
 
         /**
          * @brief Adds an input connection.
          * @param elementName The name of the element.
          * @param inputSlot The input slot.
          */
-        void AddInput(const char(&elementName)[LE_ELEMENT_NAME_LENGTH], uint16_t inputSlot);
         void AddInput(std::string elementName, uint16_t inputSlot);
     } le_Element_Net_TypeDef;
 

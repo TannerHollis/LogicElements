@@ -16,6 +16,7 @@ le_Element_Type le_Engine::ParseElementType(std::string& type)
     if (type == "LE_NODE_ANALOG") return le_Element_Type::LE_NODE_ANALOG;
     if (type == "LE_TIMER") return le_Element_Type::LE_TIMER;
     if (type == "LE_COUNTER") return le_Element_Type::LE_COUNTER;
+    if (type == "LE_MUX") return le_Element_Type::LE_MUX;
     if (type == "LE_ANALOG_1P") return le_Element_Type::LE_ANALOG_1P;
     if (type == "LE_ANALOG_3P") return le_Element_Type::LE_ANALOG_3P;
     if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
@@ -32,17 +33,8 @@ le_Element_Type le_Engine::ParseElementType(std::string& type)
  */
 void le_Engine::CopyAndClampString(std::string src, char* dst, uint16_t dstLength)
 {
-    // Adjust copying range
-    uint16_t cpyLength = dstLength;
-    if (src.length() < dstLength)
-        cpyLength = (uint16_t)src.length();
-
-    // Perform mem copy
-    strncpy(dst, src.c_str(), cpyLength);
-    if (src.length() < dstLength)
-        dst[cpyLength] = '\0';
-    else
-        dst[dstLength - 1] = '\0';
+    std::memset(dst, 0, dstLength);
+    std::memcpy(dst, src.c_str(), std::min((int)src.size(), dstLength - 1));
 }
 
 /**
@@ -110,8 +102,14 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     case le_Element_Type::LE_COUNTER:
         return this->AddElement(new le_Counter(comp->args[0].uArg), compName);
 
+    case le_Element_Type::LE_MUX:
+        return this->AddElement(new le_Mux(comp->args[0].uArg, comp->args[1].uArg), compName);
+
     case le_Element_Type::LE_ANALOG_1P:
         return this->AddElement(new le_Analog1PWinding(comp->args[0].uArg), compName);
+
+    case le_Element_Type::LE_ANALOG_3P:
+        return this->AddElement(new le_Analog3PWinding(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_OVERCURRENT:
     {
@@ -260,13 +258,14 @@ void le_Engine::SortElements()
 }
 
 /**
- * @brief Sets the output connection.
- * @param elementName The name of the element.
- * @param outputSlot The output slot.
- */
-void le_Engine::le_Element_Net_TypeDef::SetOutput(const char(&elementName)[LE_ELEMENT_NAME_LENGTH], uint16_t outputSlot)
+* @brief Initializes the element name and type.
+* @param name The name of the element.
+* @param type The type of the element.
+*/
+le_Element_TypeDef le_Engine::le_Element_TypeDef::le_Element_TypeDef(std::string name, le_Element_Type type)
 {
-    this->SetOutput(std::string(elementName), outputSlot);
+    CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
+    this->type = type;
 }
 
 /**
@@ -274,21 +273,11 @@ void le_Engine::le_Element_Net_TypeDef::SetOutput(const char(&elementName)[LE_EL
  * @param elementName The name of the element.
  * @param outputSlot The output slot.
  */
-void le_Engine::le_Element_Net_TypeDef::SetOutput(std::string elementName, uint16_t outputSlot)
+le_Element_Net_TypeDef le_Engine::le_Element_Net_TypeDef(std::string elementName, uint16_t outputSlot)
 {
     // Create output
     le_Engine::CopyAndClampString(elementName, this->output.name, LE_ELEMENT_NAME_LENGTH);
     this->output.slot = outputSlot;
-}
-
-/**
- * @brief Adds an input connection.
- * @param elementName The name of the element.
- * @param inputSlot The input slot.
- */
-void le_Engine::le_Element_Net_TypeDef::AddInput(const char(&elementName)[LE_ELEMENT_NAME_LENGTH], uint16_t inputSlot)
-{
-    this->AddInput(std::string(elementName), inputSlot);
 }
 
 /**

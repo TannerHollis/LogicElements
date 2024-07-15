@@ -34,7 +34,7 @@ public:
      * @param buffer Pointer to store the history buffer.
      * @param startOffset Pointer to store the start offset in the circular buffer.
      */
-    void GetHistory(T** buffer, uint16_t* startOffset);
+    void GetHistory(T* buffer, uint16_t* startOffset);
 
     /**
      * @brief Connects an output slot of another element to the input of this node.
@@ -115,7 +115,7 @@ void le_Node<T>::Update(float timeStep)
  * @param startOffset Pointer to store the start offset in the circular buffer.
  */
 template<typename T>
-void le_Node<T>::GetHistory(T** buffer, uint16_t* startOffset)
+void le_Node<T>::GetHistory(T* buffer, uint16_t* startOffset)
 {
     // TODO: Implement this
 }
