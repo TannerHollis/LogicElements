@@ -11,6 +11,9 @@ template <typename T>
 class le_Node;
 
 template <typename T>
+class le_Mux;
+
+template <typename T>
 class le_Base : public le_Element
 {
 protected:
@@ -53,6 +56,9 @@ private:
 
     // Friend classes for access to protected members (Make friends, shake hands)
     friend class le_Node<T>;
+    friend class le_Mux<float>;
+    friend class le_Mux<bool>;
+    friend class le_Mux<T>;
     friend class le_AND;
     friend class le_OR;
     friend class le_NOT;
@@ -65,7 +71,6 @@ private:
     friend class le_Overcurrent;
     friend class le_Math;
     friend class le_PID;
-    friend class le_Mux;
 
     // Make le_Engine a friend for factory
     friend class le_Engine;

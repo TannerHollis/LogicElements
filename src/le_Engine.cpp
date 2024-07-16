@@ -16,7 +16,8 @@ le_Element_Type le_Engine::ParseElementType(std::string& type)
     if (type == "LE_NODE_ANALOG") return le_Element_Type::LE_NODE_ANALOG;
     if (type == "LE_TIMER") return le_Element_Type::LE_TIMER;
     if (type == "LE_COUNTER") return le_Element_Type::LE_COUNTER;
-    if (type == "LE_MUX") return le_Element_Type::LE_MUX;
+    if (type == "LE_MUX_DIGITAL") return le_Element_Type::LE_MUX_DIGITAL;
+    if (type == "LE_MUX_ANALOG") return le_Element_Type::LE_MUX_ANALOG;
     if (type == "LE_ANALOG_1P") return le_Element_Type::LE_ANALOG_1P;
     if (type == "LE_ANALOG_3P") return le_Element_Type::LE_ANALOG_3P;
     if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
@@ -102,8 +103,11 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     case le_Element_Type::LE_COUNTER:
         return this->AddElement(new le_Counter(comp->args[0].uArg), compName);
 
-    case le_Element_Type::LE_MUX:
-        return this->AddElement(new le_Mux(comp->args[0].uArg, comp->args[1].uArg), compName);
+    case le_Element_Type::LE_MUX_DIGITAL:
+        return this->AddElement(new le_Mux<bool>((uint8_t)comp->args[0].uArg, comp->args[1].uArg), compName);
+
+    case le_Element_Type::LE_MUX_ANALOG:
+        return this->AddElement(new le_Mux<float>((uint8_t)comp->args[0].uArg, comp->args[1].uArg), compName);
 
     case le_Element_Type::LE_ANALOG_1P:
         return this->AddElement(new le_Analog1PWinding(comp->args[0].uArg), compName);
@@ -258,22 +262,11 @@ void le_Engine::SortElements()
 }
 
 /**
-* @brief Initializes the element name and type.
-* @param name The name of the element.
-* @param type The type of the element.
-*/
-le_Element_TypeDef le_Engine::le_Element_TypeDef::le_Element_TypeDef(std::string name, le_Element_Type type)
-{
-    CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
-    this->type = type;
-}
-
-/**
  * @brief Sets the output connection.
  * @param elementName The name of the element.
  * @param outputSlot The output slot.
  */
-le_Element_Net_TypeDef le_Engine::le_Element_Net_TypeDef(std::string elementName, uint16_t outputSlot)
+le_Engine::le_Element_Net_TypeDef::le_Element_Net_TypeDef(std::string elementName, uint16_t outputSlot)
 {
     // Create output
     le_Engine::CopyAndClampString(elementName, this->output.name, LE_ELEMENT_NAME_LENGTH);
@@ -294,4 +287,16 @@ void le_Engine::le_Element_Net_TypeDef::AddInput(std::string elementName, uint16
 
     // Add to inputs
     this->inputs.push_back(c);
+}
+
+/**
+* @brief Initializes the element name and type.
+* @param name The name of the element.
+* @param type The type of the element.
+*/
+
+le_Engine::le_Element_TypeDef::le_Element_TypeDef(std::string name, le_Element_Type type)
+{
+    CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
+    this->type = type;
 }

@@ -13,6 +13,7 @@
 #include "le_Math.hpp"
 #include "le_Overcurrent.hpp"
 #include "le_Analog1PWinding.hpp"
+#include "le_Analog3PWinding.hpp"
 
 // Include standard C++ libraries
 #include <string>
@@ -37,7 +38,8 @@ enum class le_Element_Type : int8_t {
     LE_NODE_ANALOG = 11,
     LE_TIMER = 20,
     LE_COUNTER = 21,
-    LE_MUX = 22,
+    LE_MUX_DIGITAL = 22,
+    LE_MUX_ANALOG = 23,
     LE_ANALOG_1P = 30,
     LE_ANALOG_3P = 31,
     LE_OVERCURRENT = 40,
@@ -92,11 +94,7 @@ public:
          * @param name The name of the element.
          * @param type The type of the element.
          */
-        le_Element_TypeDef(std::string name, le_Element_Type type)
-        {
-            CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
-            this->type = type;
-        }
+        le_Element_TypeDef(std::string name, le_Element_Type type);
     } le_Element_TypeDef;
 
     /**

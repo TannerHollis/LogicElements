@@ -176,7 +176,7 @@ protected:
 			dayOfYear -= GetDaysInMonth(year, *month);
 			(*month)++;
 		}
-		*day = dayOfYear;
+		*day = (uint8_t)dayOfYear;
 	}
 
 	uint16_t uYear; // Year since 1970

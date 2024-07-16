@@ -6,6 +6,8 @@
 
 #include <fstream>
 
+#define MAX_POOL_SIZE 1024
+
 class le_Builder
 {
 public:
@@ -26,10 +28,10 @@ public:
     static le_Engine* LoadFromString(char* string)
     {
         // Specify pool size
-        json_t* pool = new json_t[512];
+        json_t* pool = new json_t[MAX_POOL_SIZE];
 
         // Specify root
-        json_t const* root = json_create(string, pool, 512);
+        json_t const* root = json_create(string, pool, MAX_POOL_SIZE);
 
         if (root == nullptr)
             return nullptr;
@@ -120,9 +122,7 @@ private:
                 continue;
 
             // Create structure
-            le_Engine::le_Element_TypeDef comp;
-            GetString(nameField, comp.name, LE_ELEMENT_NAME_LENGTH);
-            comp.type = json_getInteger(typeField);
+            le_Engine::le_Element_TypeDef comp(json_getValue(nameField), (le_Element_Type)json_getInteger(typeField));
 
             // Get Arguments property
             json_t const* args = json_getProperty(element, "args");
@@ -200,7 +200,7 @@ private:
                 continue;
 
             // Parse output fields
-            le_Engine::le_Element_Net_TypeDef n;
+            le_Engine::le_Element_Net_TypeDef n("", 0);
             if (!ParseNetConnection(&n.output, outputElementField))
                 continue;
 
