@@ -7,7 +7,7 @@
 le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float>(5, 12)
 {
     // Allocate memory for all windings
-    this->_windings = (le_Analog1PWinding**)malloc(sizeof(le_Analog1PWinding*) * 3);
+    this->_windings = new le_Analog1PWinding*[3];
     for (uint8_t i = 0; i < 3; i++)
     {
         this->_windings[i] = new le_Analog1PWinding(samplesPerCycle);

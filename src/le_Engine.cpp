@@ -45,7 +45,7 @@ void le_Engine::CopyAndClampString(std::string src, char* dst, uint16_t dstLengt
 le_Engine::le_Engine(std::string name)
 {
     // Set extrinsic variables
-    this->sName = name;
+    CopyAndClampString(name, this->sName, LE_ENGINE_NAME_LENGTH);
 
     // Set intrinsic variables
     this->_elements = std::vector<le_Element*>();
@@ -222,7 +222,7 @@ std::string le_Engine::GetElementName(le_Element* e)
  */
 void le_Engine::Print()
 {
-    printf("Engine Name: %s\r\n", this->sName.c_str());
+    printf("Engine Name: %s\r\n", sName);
     for (le_Element* e : this->_elements)
     {
         std::string elementName = this->GetElementName(e);

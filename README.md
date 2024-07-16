@@ -51,29 +51,90 @@ Include the headers and source files in your build system.
 
 ## Usage
 
-Provide an example of how to use the classes in your project.
+Unfortunately, to make our lives easier, we first must make it harder. This library uses a "factory" class to manage and condense the loop code under the `le_Engine` class. This class will manage all memory and manage the `Update()` loop. It will also manage and sort the connections between elements based on their "order", which can be thought of as a dependency ranking. Those with a larger firing order will be updated last and those with a lower firing order will be updated first.
 
 ```cpp
 #include "le_Engine.hpp"
 
 int main() {
-    // Create instances of logical elements
-    std::shared_ptr<le_AND> andGate = std::make_shared<le_AND>(2);
-    std::shared_ptr<le_OR> orGate = std::make_shared<le_OR>(2);
-    std::shared_ptr<le_NOT> notGate = std::make_shared<le_NOT>();
+    le_Engine engine = le_Engine("TEST");
+	le_Node<float>* le_vAIn;
+	le_Node<float>* le_vBIn;
+	le_Node<float>* le_vCIn;
+	le_Node<float>* le_vAOutR;
+	le_Node<float>* le_vAOutI;
 
-    // Create engine and add elements
-    le_Engine engine("Example Engine");
-    engine.AddElement(andGate, "AND1");
-    engine.AddElement(orGate, "OR1");
-    engine.AddElement(notGate, "NOT1");
+	// Define inputs
+	le_Engine::le_Element_TypeDef vAIn("VA_IN", le_Element_Type::LE_NODE_ANALOG);
+	vAIn.args[0].uArg = 100;
 
-    // Connect elements
-    le_Element::Connect(andGate, 0, orGate, 0);
-    le_Element::Connect(orGate, 0, notGate, 0);
+	le_Engine::le_Element_TypeDef vBIn("VB_IN", le_Element_Type::LE_NODE_ANALOG);
+	vBIn.args[0].uArg = 100;
 
-    // Update engine
-    engine.Update(1.0f);
+	le_Engine::le_Element_TypeDef vCIn("VC_IN", le_Element_Type::LE_NODE_ANALOG);
+	vCIn.args[0].uArg = 100;
+
+	// Define elements
+	le_Engine::le_Element_TypeDef v("V", le_Element_Type::LE_ANALOG_3P);
+	v.args[0].uArg = 64;
+
+	// Define outputs
+	le_Engine::le_Element_TypeDef vOutReal("VAR", le_Element_Type::LE_NODE_ANALOG);
+	vOutReal.args[0].uArg = 100;
+
+	le_Engine::le_Element_TypeDef vOutImag("VAI", le_Element_Type::LE_NODE_ANALOG);;
+	vOutImag.args[0].uArg = 100;
+
+	// Add elements
+	le_vAIn = (le_Node<float>*)engine.AddElement(&vAIn);
+	le_vBIn = (le_Node<float>*)engine.AddElement(&vBIn);
+	le_vCIn = (le_Node<float>*)engine.AddElement(&vCIn);
+	engine.AddElement(&v);
+	le_vAOutR = (le_Node<float>*)engine.AddElement(&vOutReal);
+	le_vAOutI = (le_Node<float>*)engine.AddElement(&vOutImag);
+
+	// Define net
+	le_Engine::le_Element_Net_TypeDef rawA("VA_IN", 0);
+	rawA.AddInput("V", 0);
+
+	le_Engine::le_Element_Net_TypeDef rawB("VB_IN", 0);
+	rawB.AddInput("V", 1);
+
+	le_Engine::le_Element_Net_TypeDef rawC("VA_IN", 0);
+	rawC.AddInput("V", 2);
+
+	le_Engine::le_Element_Net_TypeDef vaReal("V", 0);
+	vaReal.AddInput("V", 3);
+	vaReal.AddInput("VAR", 0);
+
+	le_Engine::le_Element_Net_TypeDef vaImag("V", 1);
+	vaImag.AddInput("V", 4);
+	vaImag.AddInput("VAI", 0);
+
+	// Add nets
+	engine.AddNet(&rawA);
+	engine.AddNet(&rawB);
+	engine.AddNet(&rawC);
+	engine.AddNet(&vaReal);
+	engine.AddNet(&vaImag);
+
+	// Print engine details
+	engine.Print();
+
+	// iterate through
+	double vARaw = 0.0f;
+	float tSample = 1.0f / 3840.0f;
+	for (float t = 0.0f; t < 10.0f; t += tSample)
+	{
+		vARaw = 10 * std::sin(2.0 * M_PI * 60.0 * (double)t);
+		le_vAIn->SetValue(0, (float)vARaw);
+		engine.Update(tSample);
+
+		float r = le_vAOutR->GetValue(0);
+		float i = le_vAOutI->GetValue(0);
+		float mag = (float)std::sqrtf(r * r + i * i);
+		printf("%+4.2f, %+4.2f (%+4.2f, %+4.2fj)\r\n", vARaw, mag, r, i);
+	}
 
     return 0;
 }

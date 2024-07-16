@@ -43,6 +43,18 @@ public:
      */
     void SetInput(le_Base<T>* e, uint16_t outputSlot);
 
+    /**
+     * @brief Overrides the current value of the node with a specified value for a given duration.
+     *
+     * This function sets an override value that will replace the current value of the node for a specified duration.
+     * The override is initiated immediately and will persist until the duration expires.
+     *
+     * @tparam T The type of the value to be overridden.
+     * @param value The value to override the current node value with.
+     * @param duration The duration (in seconds) for which the override value should be used.
+     */
+    void OverrideValue(T value, float duration);
+
     using le_Base<T>::GetValue;
     using le_Base<T>::SetValue;
 
@@ -50,6 +62,11 @@ private:
     uint16_t uHistoryLength; ///< The length of the history buffer.
     T* _history;             ///< The history buffer.
     uint16_t uWrite;         ///< The current write position in the history buffer.
+    
+    float fOverrideTimer;
+    float fOverrideDuration;
+    float _overrideValue;
+    bool bOverride;
 
     // Allow le_Engine to access private members
     friend class le_Engine;
@@ -75,6 +92,7 @@ le_Node<T>::le_Node(uint16_t historyLength) : le_Base<T>(1, 1)
     // Set intrinsic variables
     this->_history = new T[historyLength];
     this->uWrite = 0;
+    this->bOverride;
 }
 
 /**
@@ -94,9 +112,19 @@ le_Node<T>::~le_Node()
 template<typename T>
 void le_Node<T>::Update(float timeStep)
 {
+    // If override is set
+    if (this->bOverride)
+    {
+        // Set output value
+        this->SetValue(0, this->_overrideValue);
+        this->fOverrideTimer += timeStep;
+        if (this->fOverrideTimer > this->fOverrideDuration)
+            this->bOverride = false;
+    }
+
     // Get input value
     le_Base<T>* e = (le_Base<T>*)this->_inputs[0];
-    if (e != nullptr)
+    if (e != nullptr && !this->bOverride)
     {
         T inputValue = e->GetValue(this->_outputSlots[0]);
 
@@ -130,4 +158,23 @@ void le_Node<T>::SetInput(le_Base<T>* e, uint16_t outputSlot)
 {
     // Use default connection function
     le_Element::Connect(e, outputSlot, this, 0);
+}
+
+/**
+ * @brief Overrides the current value of the node with a specified value for a given duration.
+ *
+ * This function sets an override value that will replace the current value of the node for a specified duration.
+ * The override is initiated immediately and will persist until the duration expires.
+ *
+ * @tparam T The type of the value to be overridden.
+ * @param value The value to override the current node value with.
+ * @param duration The duration (in seconds) for which the override value should be used.
+ */
+template<typename T>
+void le_Node<T>::OverrideValue(T value, float duration)
+{
+    this->_overrideValue = value; ///< The value to override the current node value with.
+    this->fOverrideDuration = duration; ///< The duration (in seconds) for which the override value should be used.
+    this->fOverrideTimer = 0.0f; ///< Timer to track the duration of the override.
+    this->bOverride = true; ///< Flag indicating that the override is active.
 }

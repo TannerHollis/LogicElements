@@ -17,12 +17,14 @@
 
 // Include standard C++ libraries
 #include <string>
+#include <vector>
 #include <map>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 
 #define LE_ELEMENT_NAME_LENGTH 8
+#define LE_ENGINE_NAME_LENGTH 32
 #define LE_ELEMENT_ARGUMENT_LENGTH 64
 
 /**
@@ -192,7 +194,7 @@ public:
      */
     void SortElements();
 
-    std::string sName;                        ///< The name of the engine.
-    std::vector<le_Element*> _elements;       ///< Vector of elements in the engine.
+    char sName[LE_ENGINE_NAME_LENGTH];                  ///< The name of the engine.
+    std::vector<le_Element*> _elements;                 ///< Vector of elements in the engine.
     std::map<std::string, le_Element*> _elementsByName; ///< Map of elements by their names.
 };

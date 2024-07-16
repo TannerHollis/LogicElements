@@ -133,7 +133,7 @@ private:
      * @param invert Whether the I/O is inverted.
      * @param input Whether the I/O is an input.
      */
-    void AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input);
+    inline void AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input);
 
     /**
      * @brief Validates the I/O configurations.

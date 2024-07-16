@@ -21,9 +21,9 @@
     this->nOutputs = nOutputs;
 
     // Declare intrinsic variables
-    this->_inputs_Digital = (le_Board_IO_Digital*)malloc(sizeof(le_Board_IO_Digital) * nInputs_Digital);
-    this->_inputs_Analog = (le_Board_IO_Analog*)malloc(sizeof(le_Board_IO_Analog) * nInputs_Analog);
-    this->_outputs = (le_Board_IO_Digital*)malloc(sizeof(le_Board_IO_Digital) * nOutputs);
+    this->_inputs_Digital = new le_Board_IO_Digital[nInputs_Digital];
+    this->_inputs_Analog = new le_Board_IO_Analog[nInputs_Analog];
+    this->_outputs = new le_Board_IO_Digital[nOutputs];
     this->e = nullptr;
     this->bEnginePaused = true;
     this->bIOInvalidated = true;
@@ -36,9 +36,9 @@
  */
 le_Board::~le_Board()
 {
-    free(this->_inputs_Digital);
-    free(this->_inputs_Analog);
-    free(this->_outputs);
+    delete[] this->_inputs_Digital;
+    delete[] this->_inputs_Analog;
+    delete[] this->_outputs;
 }
 
 /**
@@ -63,7 +63,7 @@ void le_Board::AddInput(uint16_t slot, const char* name, void* gpioPort, uint16_
 void le_Board::AddInput(uint16_t slot, const char* name, float* addr)
 {
     le_Board_IO_Analog* io = &this->_inputs_Analog[slot];
-    strncpy(io->name, name, LE_ELEMENT_NAME_LENGTH);
+    le_Engine::CopyAndClampString(name, io->name, LE_ELEMENT_NAME_LENGTH);
     io->addr = addr;
     io->element = nullptr;
 }
@@ -174,11 +174,11 @@ WEAK_ATTR void le_Board::le_Board_UpdateOutput(le_Board_IO_Digital* io)
  * @param invert Whether the I/O is inverted.
  * @param input Whether the I/O is an input.
  */
-void le_Board::AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input)
+inline void le_Board::AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input)
 {
     if (input)
     {
-        strncpy(this->_inputs_Digital[slot].name, name, LE_ELEMENT_NAME_LENGTH);
+        le_Engine::CopyAndClampString(name, this->_inputs_Digital[slot].name, LE_ELEMENT_NAME_LENGTH);
         this->_inputs_Digital[slot].gpioPort = gpioPort;
         this->_inputs_Digital[slot].gpioPin = gpioPin;
         this->_inputs_Digital[slot].invert = invert;
@@ -186,7 +186,7 @@ void le_Board::AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t g
     }
     else
     {
-        strncpy(this->_outputs[slot].name, name, LE_ELEMENT_NAME_LENGTH);
+        le_Engine::CopyAndClampString(name, this->_outputs[slot].name, LE_ELEMENT_NAME_LENGTH);
         this->_outputs[slot].gpioPort = gpioPort;
         this->_outputs[slot].gpioPin = gpioPin;
         this->_outputs[slot].invert = invert;

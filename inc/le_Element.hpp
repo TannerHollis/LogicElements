@@ -1,7 +1,6 @@
 #pragma once
 
 // Include standard C++ libraries
-#include <vector>
 #include <cstdint>
 #include <cstdlib>
 #include <cmath>
