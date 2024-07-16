@@ -7,10 +7,10 @@
 le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float>(5, 12)
 {
     // Allocate memory for all windings
-    this->_windings = (le_Analog1PWinding*)malloc(sizeof(le_Analog1PWinding) * 3);
+    this->_windings = (le_Analog1PWinding**)malloc(sizeof(le_Analog1PWinding*) * 3);
     for (uint8_t i = 0; i < 3; i++)
     {
-        this->_windings[i] = le_Analog1PWinding(samplesPerCycle);
+        this->_windings[i] = new le_Analog1PWinding(samplesPerCycle);
     }
 
     this->bInputsVerified = false;
@@ -22,7 +22,7 @@ le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float
 le_Analog3PWinding::~le_Analog3PWinding()
 {
     // Deallocate arrays
-    free(this->_windings);
+    delete[] this->_windings;
 }
 
 /**
@@ -36,11 +36,11 @@ void le_Analog3PWinding::Update(float timeStep)
     // Update each winding
     for (uint8_t i = 0; i < 3; i++)
     {
-        this->_windings[i].Update(timeStep);
+        this->_windings[i]->Update(timeStep);
 
         // Set phase values
-        this->SetValue(i * 2, this->_windings[i].GetValue(0));
-        this->SetValue(i * 2 + 1, this->_windings[i].GetValue(1));
+        this->SetValue(i * 2, this->_windings[i]->GetValue(0));
+        this->SetValue(i * 2 + 1, this->_windings[i]->GetValue(1));
     }
 
     // Set sequence component values
@@ -113,14 +113,15 @@ void le_Analog3PWinding::VerifyInputs()
     for (uint8_t phase = 0; phase < 3; phase++)
     {
         le_Base<float>* phaseInput = (le_Base<float>*)this->_inputs[phase];
+        le_Base<float>* phaseWinding = (le_Base<float>*)this->_windings[phase];
         if (phaseInput != nullptr)
         {
-            le_Element::Connect(phaseInput, this->_outputSlots[phase], &this->_windings[phase], phase);
+            le_Element::Connect(phaseInput, this->_outputSlots[phase], phaseWinding, phase);
         }
         if (refReal != nullptr && refImag != nullptr)
         {
-            le_Element::Connect(refReal, this->_outputSlots[3], &this->_windings[phase], 1);
-            le_Element::Connect(refImag, this->_outputSlots[4], &this->_windings[phase], 2);
+            le_Element::Connect(refReal, this->_outputSlots[3], phaseWinding, 1);
+            le_Element::Connect(refImag, this->_outputSlots[4], phaseWinding, 2);
         }
     }
 

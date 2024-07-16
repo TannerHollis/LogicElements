@@ -80,7 +80,7 @@ private:
     static const std::complex<float> a;     ///< Constant phasor component.
     static const std::complex<float> a2;    ///< Constant phasor component squared.
 
-    le_Analog1PWinding* _windings; ///< Array of single-phase windings.
+    le_Analog1PWinding** _windings; ///< Array of single-phase windings.
     bool bInputsVerified; ///< Flag indicating if inputs are verified.
 
     // Allow le_Engine to access private members
