@@ -56,8 +56,7 @@ private:
 
     // Friend classes for access to protected members (Make friends, shake hands)
     friend class le_Node<T>;
-    friend class le_Mux<float>;
-    friend class le_Mux<bool>;
+    friend class le_Mux<float>; // Special case since le_Mux<float> always requires a boolean (le_Base<bool>) input
     friend class le_Mux<T>;
     friend class le_AND;
     friend class le_OR;

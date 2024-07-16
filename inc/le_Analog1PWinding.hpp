@@ -55,17 +55,17 @@ private:
     /**
      * @brief Calculates the phasor for the winding.
      */
-    void CalculatePhasor();
+    inline void CalculatePhasor();
 
     /**
      * @brief Applies a cosine filter to the raw values.
      */
-    void ApplyCosineFilter();
+    inline void ApplyCosineFilter();
 
     /**
      * @brief Applies an angular shift with reference to the reference input.
      */
-    void AdjustOutputAngleWithReference();
+    inline void AdjustOutputAngleWithReference();
 
     uint16_t uSamplesPerCycle; ///< Number of samples per cycle.
 
