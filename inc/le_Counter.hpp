@@ -8,7 +8,7 @@
  */
 class le_Counter : protected le_Base<bool>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the counter element with a specified final count.
      * @param countFinal The final count value for the counter.

@@ -12,7 +12,7 @@
  */
 class le_Analog3PWinding : protected le_Base<float>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the le_Analog3PWinding with specified samples per cycle.
      * @param samplesPerCycle Number of samples per cycle.

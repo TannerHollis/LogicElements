@@ -10,6 +10,16 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+// Enable le_Element test mode
+//#define LE_ELEMENT_TEST_MODE
+
+// Whether or not test mode is enabled, public functions will be available
+#ifdef LE_ELEMENT_TEST_MODE
+#define LE_ELEMENT_ACCESS_MOD public
+#else
+#define LE_ELEMENT_ACCESS_MOD protected
+#endif
+
 /**
  * @brief Base class for le_Element which represents an element with inputs and an update mechanism.
  */

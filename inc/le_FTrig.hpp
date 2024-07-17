@@ -8,7 +8,7 @@
  */
 class le_FTrig : protected le_Base<bool>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the FTrig element.
      */

@@ -10,7 +10,7 @@
 template <typename T>
 class le_Node : protected le_Base<T>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the node with a specified history length.
      * @param historyLength The length of the history buffer.
@@ -92,7 +92,11 @@ le_Node<T>::le_Node(uint16_t historyLength) : le_Base<T>(1, 1)
     // Set intrinsic variables
     this->_history = new T[historyLength];
     this->uWrite = 0;
-    this->bOverride;
+
+    // Set override variables
+    this->bOverride = false;
+    this->fOverrideDuration = 0.0f;
+    this->fOverrideTimer = 0.0f;
 }
 
 /**

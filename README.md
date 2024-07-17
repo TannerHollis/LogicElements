@@ -59,8 +59,6 @@ Unfortunately, to make our lives easier, we first must make it harder. This libr
 int main() {
     le_Engine engine = le_Engine("TEST");
 	le_Node<float>* le_vAIn;
-	le_Node<float>* le_vBIn;
-	le_Node<float>* le_vCIn;
 	le_Node<float>* le_vAOutR;
 	le_Node<float>* le_vAOutI;
 

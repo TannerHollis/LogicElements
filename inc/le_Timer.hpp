@@ -8,7 +8,7 @@
  */
 class le_Timer : protected le_Base<bool>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Enum representing different timer states.
      */

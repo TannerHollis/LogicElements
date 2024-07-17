@@ -8,7 +8,7 @@
  */
 class le_OR : protected le_Base<bool>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the OR element with a specified number of inputs.
      * @param nInputs Number of inputs for the OR element.

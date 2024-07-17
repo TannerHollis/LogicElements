@@ -15,12 +15,24 @@ le_Math::le_Math(uint16_t nInputs, std::string expr) : le_Base<float>(nInputs, 1
     this->_vars = new double[nInputs];
     for (uint16_t i = 0; i < nInputs; i++)
     {
+        // Initialize all to default (0)
+        this->te_vars[i].context = 0;
+        this->te_vars[i].type = 0;
+
+        // Assign name & address
+    	this->te_vars[i].name = new char[5];
         snprintf((char*)this->te_vars[i].name, 5, "x%d", i);
         this->te_vars[i].address = &this->_vars[i];
     }
 
     // Compile expression
     this->te_expression = te_compile(expr.c_str(), this->te_vars, nInputs, &this->te_err);
+
+    if (!this->te_expression)
+    {
+        printf("\t%s\r\n", expr.c_str());
+        printf("\t%*s^\nError near here\r\n", this->te_err - 1, "");
+    }
 }
 
 /**
@@ -29,6 +41,10 @@ le_Math::le_Math(uint16_t nInputs, std::string expr) : le_Base<float>(nInputs, 1
 inline le_Math::~le_Math()
 {
     // Free allocated memory
+	for(uint16_t i = 0; i < this->nInputs; i++)
+	{
+		delete[] this->te_vars->name;
+	}
     delete[] this->te_vars;
     delete[] this->_vars;
     te_free(this->te_expression);
@@ -40,19 +56,19 @@ inline le_Math::~le_Math()
  */
 void le_Math::Update(float timeStep)
 {
-    // Iterate through all input values and apply inversion if necessary
-    for (uint16_t i = 0; i < this->nInputs; i++)
-    {
-        le_Base<float>* e = (le_Base<float>*)this->_inputs[i];
-        if (e != nullptr)
-        {
-            this->_vars[i] = (double)e->GetValue(this->_outputSlots[i]);
-        }
-    }
-
     // Attempt expression
     if (this->te_expression)
     {
+        // Iterate through all input values
+        for (uint16_t i = 0; i < this->nInputs; i++)
+        {
+            le_Base<float>* e = (le_Base<float>*)this->_inputs[i];
+            if (e != nullptr)
+            {
+                this->_vars[i] = (double)e->GetValue(this->_outputSlots[i]);
+            }
+        }
+
         double exprEvaluation = te_eval(this->te_expression);
 
         // Set next value

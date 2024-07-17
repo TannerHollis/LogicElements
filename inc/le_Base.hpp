@@ -16,7 +16,7 @@ class le_Mux;
 template <typename T>
 class le_Base : public le_Element
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the base element with specified inputs and outputs.
      * @param nInputs Number of inputs for the element.

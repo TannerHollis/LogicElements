@@ -17,7 +17,7 @@ extern "C"
  */
 class le_Math : protected le_Base<float>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the le_Math with specified number of inputs and expression.
      * @param nInputs Number of inputs for the mathematical expression.

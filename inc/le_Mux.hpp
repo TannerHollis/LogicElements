@@ -11,7 +11,7 @@
 template <typename T>
 class le_Mux : protected le_Base<T>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the le_Mux with specified signal width and number of inputs.
      * @param signalWidth The width of the signal.

@@ -8,7 +8,7 @@
  */
 class le_AND : protected le_Base<bool>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the AND element with a specified number of inputs.
      * @param nInputs Number of inputs for the AND element.
