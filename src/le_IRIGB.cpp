@@ -65,13 +65,13 @@ void le_IRIGB::Decode(uint16_t* buffer, uint16_t length)
         {
             // Calculate output-aligned index
             uint16_t alignedIndex = (this->uFrameWrite >= this->uSignalStart) ? (this->uFrameWrite - this->uSignalStart) : (SIGNAL_LEN - this->uSignalStart + this->uFrameWrite);
-            uint16_t outIndex = this->bBufferFlip ? alignedIndex : alignedIndex + SIGNAL_LEN;
+            uint16_t outIndex = this->bBufferFlip ? alignedIndex + SIGNAL_LEN : alignedIndex;
 
             // Write to output buffer
             this->_irigFrameOut[outIndex] = decodedFrame;
 
             // Check if all 100 frames are available
-            if (alignedIndex == SIGNAL_LEN - 1)
+            if (this->uFrameDecodeWrite == SIGNAL_LEN - 1)
             {
                 // Process the decoded frames in the valid half
                 if (this->bBufferFlip)
@@ -84,10 +84,12 @@ void le_IRIGB::Decode(uint16_t* buffer, uint16_t length)
                 }
 
                 this->bBufferFlip = !this->bBufferFlip;
-            }
 
-            // Save write index
-            this->uFrameDecodeWrite = (uint8_t)outIndex;
+                // Reset write pointer
+                this->uFrameDecodeWrite = 0;
+            }
+            else
+            	this->uFrameDecodeWrite += 1;
         }
 
         this->uFrameWrite = (this->uFrameWrite + 1) % SIGNAL_LEN;
@@ -196,6 +198,13 @@ void le_IRIGB::DecodeFrames(le_IRIGB_Frame* frames, uint16_t offset)
     year += this->FromBCD(frames, 55, 58, 10);
 
     this->iDrift = this->Align(0, second, minute, hour, day, year);
+
+    if(true)
+    {
+		char buffer[100];
+		this->PrintShortTime(&buffer[0], 100);
+		printf("%s\r\n", buffer);
+    }
 }
 
 /**
@@ -236,6 +245,7 @@ inline void le_IRIGB::SetFrameCountTolerances(uint32_t timerFreq, float toleranc
  */
 inline void le_IRIGB::InvalidateIRIG()
 {
-    this->uSignalStart = -1;
-    this->bValidSignal = false;
+    //this->uSignalStart = -1;
+    //this->bValidSignal = false;
+    this->uFrameDecodeWrite = 0;
 }

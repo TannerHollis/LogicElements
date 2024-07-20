@@ -50,6 +50,14 @@ le_Engine::le_Engine(std::string name)
     // Set intrinsic variables
     this->_elements = std::vector<le_Element*>();
     this->_elementsByName = std::map<std::string, le_Element*>();
+
+#ifdef LE_ENGINE_EXECUTION_DIAG
+    this->uExecTimerFreq = 1; // Default for non divide by zero error
+    this->uUpdateTime = 1; // Default for non divide by zero error
+    this->uUpdateTimeLast = 0;
+    this->uUpdateTimePeriod = 0;
+    this->_elementExecTime = std::map<le_Element*, uint32_t>();
+#endif
 }
 
 /**
@@ -176,11 +184,24 @@ void le_Engine::AddNet(le_Element_Net_TypeDef* net)
  */
 void le_Engine::Update(float timeStep)
 {
+#ifdef LE_ENGINE_EXECUTION_DIAG
+    // Call each element update individually by lowest to highest order and calculate execution time
+    this->uUpdateTimePeriod = this->GetTime() - this->uUpdateTimeLast;
+    this->uUpdateTimeLast = this->GetTime();
+    for (le_Element* e : this->_elements)
+    {
+        uint32_t t = this->GetTime();
+        e->Update(timeStep);
+        this->_elementExecTime[e] = this->GetTime() - t;
+    }
+    this->uUpdateTime = this->GetTime() - this->uUpdateTimeLast;
+#else
     // Call each element update individually by highest to lowest order
     for (le_Element* e : this->_elements)
     {
         e->Update(timeStep);
     }
+#endif
 }
 
 /**
@@ -220,13 +241,69 @@ std::string le_Engine::GetElementName(le_Element* e)
 /**
  * @brief Prints the current state of the engine.
  */
-void le_Engine::Print()
+void le_Engine::Print(char* buffer, uint16_t length)
 {
-    printf("Engine Name: %s\r\n", sName);
+#ifdef LE_ENGINE_EXECUTION_DIAG
+    // Print engine name
+    snprintf(buffer, length, "Engine Name: %s\r\n", sName);
+
+    // Calculate CPU usage
+    uint16_t updateUsageInteger;
+    uint16_t updateUsageFraction;
+    this->ConvertFloat(
+        this->uUpdateTime * 100,
+        this->uUpdateTimePeriod, 
+        &updateUsageInteger, 
+        &updateUsageFraction);
+
+    // Calculate Update Frequency
+    uint16_t freqInteger;
+    uint16_t freqFraction;
+    this->ConvertFloat(
+        this->uExecTimerFreq,
+        this->uUpdateTimePeriod, 
+        &freqInteger,
+        &freqFraction);
+
+    // Print to buffer
+    snprintf(
+        buffer, 
+        length, 
+        "%sCPU_Total: %3u.%03u%%\tFreq: %5u.%03u Hz\r\n",
+        buffer,
+        updateUsageInteger,
+        updateUsageFraction,
+        freqInteger,
+        freqFraction);
+#else
+    snprintf(buffer, length, "Engine Name: %s\r\n", sName);
+#endif
     for (le_Element* e : this->_elements)
     {
         std::string elementName = this->GetElementName(e);
-        printf("  Element: %-8s \tOrder: %-3u\r\n", elementName.c_str(), e->GetOrder());
+#ifdef LE_ENGINE_EXECUTION_DIAG
+        // Calculate element CPU usage
+        uint16_t usageInteger;
+        uint16_t usageFraction;
+        this->ConvertFloat(
+            this->_elementExecTime[e] * 100, 
+            this->uUpdateTime, 
+            &usageInteger,
+            &usageFraction);
+
+        // Print to buffer
+        snprintf(
+            buffer, 
+            length, 
+            "%s  Element: %-8s\tOrder: %-3u\tCPU_Update: %3u.%03u%%\r\n",
+            buffer, 
+            elementName.c_str(), 
+            e->GetOrder(),
+            usageInteger,
+            usageFraction);
+#else
+        snprintf(buffer, length, "%s  Element: %-8s \tOrder: %-3u\r\n", buffer, elementName.c_str(), e->GetOrder());
+#endif
     }
 }
 
@@ -250,6 +327,12 @@ le_Element* le_Engine::AddElement(le_Element* e, const std::string& name)
     // Sort elements
     this->SortElements();
 
+#ifdef LE_ENGINE_EXECUTION_DIAG
+    // Add element to execution time map
+    std::pair<le_Element*, uint32_t> execTime = std::make_pair(e, 0);
+    this->_elementExecTime.insert(execTime);
+#endif
+
     return insertResult.first->second;
 }
 
@@ -260,6 +343,40 @@ void le_Engine::SortElements()
 {
     std::sort(this->_elements.begin(), this->_elements.end(), le_Element::CompareElementOrders);
 }
+
+#ifdef LE_ENGINE_EXECUTION_DIAG
+/**
+* @brief Gets timestamp of a running timer to calculate function execute time.
+* @return Return the current timer CNT register
+*/
+WEAK_ATTR inline uint32_t le_Engine::GetTime()
+{
+    return 0;
+}
+
+/**
+* @brief Configures the execution timer with a specified frequency.
+* @param execTimerFreq Frequency to set for the execution timer.
+*/
+void le_Engine::ConfigureTimer(uint32_t execTimerFreq)
+{
+    this->uExecTimerFreq = execTimerFreq;
+}
+
+/*
+* @brief Calculate function CPU usage.
+* @param execTime The execution time of the function.
+* @param totalTime The total time over which the execution time is measured.
+* @param integerPart Pointer to store the integer part of the CPU usage.
+* @param fractionalPart Pointer to store the fractional part of the CPU usage.
+*/
+inline void le_Engine::ConvertFloat(uint32_t execTime, uint32_t totalTime, uint16_t* integerPart, uint16_t* fractionalPart)
+{
+    float percentage = (float)execTime / (float)totalTime;
+    *integerPart = (uint16_t)percentage;
+    *fractionalPart = (uint16_t)((percentage - (float)*integerPart) * 1000.0f);
+}
+#endif
 
 /**
  * @brief Sets the output connection.

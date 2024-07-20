@@ -1,5 +1,8 @@
 #pragma once
 
+// Include config
+#include "le_Config.hpp"
+
 // Include standard C++ libraries
 #include <cstdint>
 #include <cstdlib>

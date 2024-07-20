@@ -1,12 +1,5 @@
 #include "le_Board.hpp"
 
-// Define a macro to handle weak attribute based on the compiler
-#if defined(_MSC_VER)
-#define WEAK_ATTR 
-#elif defined(__GNUC__) || defined(__clang__)
-#define WEAK_ATTR __attribute__((weak))
-#endif
-
 /**
  * @brief Constructor to initialize the le_Board object with specified numbers of digital inputs, analog inputs, and outputs.
  * @param nInputs_Digital Number of digital inputs.

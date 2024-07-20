@@ -178,9 +178,9 @@ public:
     /**
      * @brief Prints the current state of the engine.
      */
-    void Print();
+    void Print(char* buffer, uint16_t length);
 
-public:
+private:
     /**
      * @brief Adds an element with a specified name to the engine.
      * @param name The name of the element.
@@ -197,4 +197,35 @@ public:
     char sName[LE_ENGINE_NAME_LENGTH];                  ///< The name of the engine.
     std::vector<le_Element*> _elements;                 ///< Vector of elements in the engine.
     std::map<std::string, le_Element*> _elementsByName; ///< Map of elements by their names.
+
+#ifdef LE_ENGINE_EXECUTION_DIAG
+public:
+    /**
+     * @brief Gets timestamp of a running timer to calculate function execute time.
+     * @return Return the current timer CNT register
+     */
+    uint32_t GetTime();
+
+    /**
+     * @brief Configures the execution timer with a specified frequency.
+     * @param execTimerFreq Frequency to set for the execution timer.
+     */
+    void ConfigureTimer(uint32_t execTimerFreq);
+
+private:
+    /*
+     * @brief Calculate floating point integer and remainder
+     * @param execTime The execution time of the function.
+     * @param totalTime The total time over which the execution time is measured.
+     * @param integerPart Pointer to store the integer part of the CPU usage.
+     * @param fractionalPart Pointer to store the fractional part of the CPU usage.
+    */
+    void ConvertFloat(uint32_t execTime, uint32_t totalTime, uint16_t* integerPart, uint16_t* fractionalPart);
+
+    uint32_t uExecTimerFreq;
+    uint32_t uUpdateTime;
+    uint32_t uUpdateTimeLast;
+    uint32_t uUpdateTimePeriod;
+    std::map<le_Element*, uint32_t> _elementExecTime;
+#endif
 };
