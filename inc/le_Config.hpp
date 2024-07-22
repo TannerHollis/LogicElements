@@ -1,6 +1,6 @@
 #pragma once
 
-// Allow element constructors without use of the le_Engine factory
+// Enables use of element constructors without use of the le_Engine factory
 //#define LE_ELEMENT_TEST_MODE
 
 /* 
@@ -9,9 +9,8 @@
 */
 #define LE_ENGINE_EXECUTION_DIAG
 
-// Define a macro to handle weak attribute based on the compiler
-#if defined(_MSC_VER)
-#define WEAK_ATTR 
-#elif defined(__GNUC__) || defined(__clang__)
-#define WEAK_ATTR __attribute__((weak))
-#endif
+// Enables the use of the digital elements
+//#define LE_ELEMENTS_DIGITAL
+ 
+// Enables the use of the analog elements
+//#define LE_ELEMENTS_ANALOG

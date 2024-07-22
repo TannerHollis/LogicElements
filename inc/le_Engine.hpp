@@ -178,7 +178,13 @@ public:
     /**
      * @brief Prints the current state of the engine.
      */
-    void Print(char* buffer, uint16_t length);
+    void GetInfo(char* buffer, uint16_t length);
+
+    /*
+    * @brief Allows the user to define a default buffer length for nodes, used for event data logging.
+    * @param Size of data buffer to be allocated.
+    */
+    void SetDefaultNodeBufferLength(uint16_t length);
 
 private:
     /**
@@ -197,6 +203,7 @@ private:
     char sName[LE_ENGINE_NAME_LENGTH];                  ///< The name of the engine.
     std::vector<le_Element*> _elements;                 ///< Vector of elements in the engine.
     std::map<std::string, le_Element*> _elementsByName; ///< Map of elements by their names.
+    uint16_t uDefaultNodeBufferLength;
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
 public:
@@ -213,14 +220,20 @@ public:
     void ConfigureTimer(uint32_t execTimerFreq);
 
 private:
-    /*
-     * @brief Calculate floating point integer and remainder
-     * @param execTime The execution time of the function.
-     * @param totalTime The total time over which the execution time is measured.
-     * @param integerPart Pointer to store the integer part of the CPU usage.
-     * @param fractionalPart Pointer to store the fractional part of the CPU usage.
-    */
-    void ConvertFloat(uint32_t execTime, uint32_t totalTime, uint16_t* integerPart, uint16_t* fractionalPart);
+    /**
+     * @brief Converts a ratio of two integers into integer and fractional parts.
+     *
+     * This function calculates the ratio of two integers (numerator and denominator) and
+     * splits the result into its integer and fractional parts. The fractional part is
+     * represented as a value scaled by 1000 to maintain precision.
+     *
+     * @param numerator The numerator of the ratio.
+     * @param denominator The denominator of the ratio.
+     * @param integerPart Pointer to store the integer part of the resulting ratio.
+     * @param fractionalPart Pointer to store the fractional part of the resulting ratio,
+     *                       scaled by 1000.
+     */
+    void ConvertFloatingPoint(uint32_t numerator, uint32_t denominator, uint16_t* integerPart, uint16_t* fractionalPart);
 
     uint32_t uExecTimerFreq;
     uint32_t uUpdateTime;

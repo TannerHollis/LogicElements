@@ -104,8 +104,8 @@ uint16_t UARTTx::DataReadyToSend() const {
  * @brief Send the next data ready in the buffer.
  */
 void UARTTx::SendNextData() {
-    if (this->dataReadyToSend > 0 && this->_isUARTReady() && !this->_isUARTBusy()) {
-        this->_writeUART(&this->_buffer[this->uRead], this->dataReadyToSend);
+    if (this->dataReadyToSend > 0 && this->UARTTx_isUARTReady() && !this->UARTTx_isUARTBusy()) {
+        this->UARTTx_writeUART(&this->_buffer[this->uRead], this->dataReadyToSend);
         this->AdvancePointer(this->uRead, this->dataReadyToSend);
         this->UpdateDataReadyToSend();
     }
@@ -140,7 +140,7 @@ inline void UARTTx::UpdateDataReadyToSend() {
  * @param data Pointer to the data buffer to transmit.
  * @param len Length of the data to transmit.
  */
-WEAK_ATTR void UARTTx::_writeUART(const char* data, uint16_t len) {
+WEAK_ATTR void UARTTx::UARTTx_writeUART(const char* data, uint16_t len) {
     // Default implementation, can be overridden
     // For demonstration, print to standard output
     //printf("%.*s", len, data);
@@ -152,7 +152,7 @@ WEAK_ATTR void UARTTx::_writeUART(const char* data, uint16_t len) {
  *
  * @return true if the UART is ready, false otherwise.
  */
-WEAK_ATTR bool UARTTx::_isUARTReady() {
+WEAK_ATTR bool UARTTx::UARTTx_isUARTReady() {
     // Default implementation, always returns true
     return true;
 }
@@ -163,7 +163,7 @@ WEAK_ATTR bool UARTTx::_isUARTReady() {
  *
  * @return true if the UART is not busy, false otherwise.
  */
-WEAK_ATTR bool UARTTx::_isUARTBusy() {
+WEAK_ATTR bool UARTTx::UARTTx_isUARTBusy() {
     // Default implementation, always returns false
     return false;
 }

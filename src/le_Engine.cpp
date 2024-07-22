@@ -1,5 +1,12 @@
 #include "le_Engine.hpp"
 
+// Define a macro to handle weak attribute based on the compiler
+#if defined(_MSC_VER)
+#define WEAK_ATTR 
+#elif defined(__GNUC__) || defined(__clang__)
+#define WEAK_ATTR __attribute__((weak))
+#endif
+
 /**
  * @brief Parses the element type from a string.
  * @param type The string representing the type.
@@ -50,6 +57,7 @@ le_Engine::le_Engine(std::string name)
     // Set intrinsic variables
     this->_elements = std::vector<le_Element*>();
     this->_elementsByName = std::map<std::string, le_Element*>();
+    this->uDefaultNodeBufferLength = 0;
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
     this->uExecTimerFreq = 1; // Default for non divide by zero error
@@ -100,10 +108,20 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
         return this->AddElement(new le_FTrig(), compName);
 
     case le_Element_Type::LE_NODE_DIGITAL:
-        return this->AddElement(new le_Node<bool>(comp->args[0].uArg), compName);
+        return this->AddElement(
+            new le_Node<bool>(
+                this->uDefaultNodeBufferLength == 0 ? 
+                comp->args[0].uArg :
+                this->uDefaultNodeBufferLength),
+            compName);
 
     case le_Element_Type::LE_NODE_ANALOG:
-        return this->AddElement(new le_Node<float>(comp->args[0].uArg), compName);
+        return this->AddElement(
+            new le_Node<float>(
+                this->uDefaultNodeBufferLength == 0 ?
+                comp->args[0].uArg : 
+                this->uDefaultNodeBufferLength),
+            compName);
 
     case le_Element_Type::LE_TIMER:
         return this->AddElement(new le_Timer(comp->args[0].fArg, comp->args[1].fArg), compName);
@@ -185,16 +203,27 @@ void le_Engine::AddNet(le_Element_Net_TypeDef* net)
 void le_Engine::Update(float timeStep)
 {
 #ifdef LE_ENGINE_EXECUTION_DIAG
-    // Call each element update individually by lowest to highest order and calculate execution time
-    this->uUpdateTimePeriod = this->GetTime() - this->uUpdateTimeLast;
-    this->uUpdateTimeLast = this->GetTime();
-    for (le_Element* e : this->_elements)
+    // Get start time once
+    uint32_t startUpdateTime = this->GetTime();
+
+    // Calculate update period
+    this->uUpdateTimePeriod = startUpdateTime - this->uUpdateTimeLast;
+    this->uUpdateTimeLast = startUpdateTime;
+
+    uint32_t t;
+    uint16_t nElements = this->_elements.size();
+
+    // Update each element and measure execution time
+    for (uint16_t i = 0; i < nElements; i++)
     {
-        uint32_t t = this->GetTime();
+        le_Element* e = this->_elements[i];
+        t = this->GetTime();
         e->Update(timeStep);
         this->_elementExecTime[e] = this->GetTime() - t;
     }
-    this->uUpdateTime = this->GetTime() - this->uUpdateTimeLast;
+
+    // Calculate total update time once
+    this->uUpdateTime = this->GetTime() - startUpdateTime;
 #else
     // Call each element update individually by highest to lowest order
     for (le_Element* e : this->_elements)
@@ -241,16 +270,19 @@ std::string le_Engine::GetElementName(le_Element* e)
 /**
  * @brief Prints the current state of the engine.
  */
-void le_Engine::Print(char* buffer, uint16_t length)
+void le_Engine::GetInfo(char* buffer, uint16_t length)
 {
 #ifdef LE_ENGINE_EXECUTION_DIAG
     // Print engine name
     snprintf(buffer, length, "Engine Name: %s\r\n", sName);
 
+    // Variable for overhead
+    uint32_t overhead = this->uUpdateTime;
+
     // Calculate CPU usage
     uint16_t updateUsageInteger;
     uint16_t updateUsageFraction;
-    this->ConvertFloat(
+    this->ConvertFloatingPoint(
         this->uUpdateTime * 100,
         this->uUpdateTimePeriod, 
         &updateUsageInteger, 
@@ -259,7 +291,7 @@ void le_Engine::Print(char* buffer, uint16_t length)
     // Calculate Update Frequency
     uint16_t freqInteger;
     uint16_t freqFraction;
-    this->ConvertFloat(
+    this->ConvertFloatingPoint(
         this->uExecTimerFreq,
         this->uUpdateTimePeriod, 
         &freqInteger,
@@ -285,7 +317,7 @@ void le_Engine::Print(char* buffer, uint16_t length)
         // Calculate element CPU usage
         uint16_t usageInteger;
         uint16_t usageFraction;
-        this->ConvertFloat(
+        this->ConvertFloatingPoint(
             this->_elementExecTime[e] * 100, 
             this->uUpdateTime, 
             &usageInteger,
@@ -301,10 +333,41 @@ void le_Engine::Print(char* buffer, uint16_t length)
             e->GetOrder(),
             usageInteger,
             usageFraction);
+
+        overhead -= this->_elementExecTime[e];
 #else
         snprintf(buffer, length, "%s  Element: %-8s \tOrder: %-3u\r\n", buffer, elementName.c_str(), e->GetOrder());
 #endif
     }
+
+#ifdef LE_ENGINE_EXECUTION_DIAG
+    // Calculate overhead percentage
+    uint16_t overheadInteger;
+    uint16_t overheadFraction;
+    this->ConvertFloatingPoint(
+        overhead * 100,
+        this->uUpdateTime,
+        &overheadInteger,
+        &overheadFraction);
+
+    // Print to buffer
+    snprintf(
+        buffer, 
+        length, 
+        "%s  Engine Overhead:\t\t\tCPU_Update: %3u.%03u%%\r\n",
+        buffer,
+        overheadInteger, 
+        overheadFraction);
+#endif
+}
+
+/*
+* @brief Allows the user to define a default buffer length for nodes, used for event data logging.
+* @param Size of data buffer to be allocated.
+*/
+void le_Engine::SetDefaultNodeBufferLength(uint16_t length)
+{
+    this->uDefaultNodeBufferLength = length;
 }
 
 /**
@@ -363,19 +426,26 @@ void le_Engine::ConfigureTimer(uint32_t execTimerFreq)
     this->uExecTimerFreq = execTimerFreq;
 }
 
-/*
-* @brief Calculate function CPU usage.
-* @param execTime The execution time of the function.
-* @param totalTime The total time over which the execution time is measured.
-* @param integerPart Pointer to store the integer part of the CPU usage.
-* @param fractionalPart Pointer to store the fractional part of the CPU usage.
-*/
-inline void le_Engine::ConvertFloat(uint32_t execTime, uint32_t totalTime, uint16_t* integerPart, uint16_t* fractionalPart)
+/**
+ * @brief Converts a ratio of two integers into integer and fractional parts.
+ *
+ * This function calculates the ratio of two integers (numerator and denominator) and
+ * splits the result into its integer and fractional parts. The fractional part is
+ * represented as a value scaled by 1000 to maintain precision.
+ *
+ * @param numerator The numerator of the ratio.
+ * @param denominator The denominator of the ratio.
+ * @param integerPart Pointer to store the integer part of the resulting ratio.
+ * @param fractionalPart Pointer to store the fractional part of the resulting ratio,
+ *                       scaled by 1000.
+ */
+inline void le_Engine::ConvertFloatingPoint(uint32_t numerator, uint32_t denominator, uint16_t* integerPart, uint16_t* fractionalPart)
 {
-    float percentage = (float)execTime / (float)totalTime;
+    float percentage = (float)numerator / (float)denominator;
     *integerPart = (uint16_t)percentage;
     *fractionalPart = (uint16_t)((percentage - (float)*integerPart) * 1000.0f);
 }
+
 #endif
 
 /**

@@ -69,7 +69,7 @@ public:
      * @param data Pointer to the data buffer to transmit.
      * @param length Length of the data to transmit.
      */
-    void _writeUART(const char* data, uint16_t len);
+    void UARTTx_writeUART(const char* data, uint16_t len);
 
     /**
      * @brief Weak function declaration for checking if UART is ready.
@@ -77,7 +77,7 @@ public:
      *
      * @return true if the UART is ready, false otherwise.
      */
-    bool _isUARTReady();
+    bool UARTTx_isUARTReady();
 
     /**
      * @brief Weak function declaration for checking if UART is not busy.
@@ -85,7 +85,7 @@ public:
      *
      * @return true if the UART is not busy, false otherwise.
      */
-    bool _isUARTBusy();
+    bool UARTTx_isUARTBusy();
 
 private:
     /**
