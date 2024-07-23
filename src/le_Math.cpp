@@ -5,7 +5,7 @@
  * @param nInputs Number of inputs for the mathematical expression.
  * @param expr The mathematical expression to evaluate.
  */
-le_Math::le_Math(uint16_t nInputs, std::string expr) : le_Base<float>(nInputs, 1)
+le_Math::le_Math(uint8_t nInputs, std::string expr) : le_Base<float>(nInputs, 1)
 {
     // Declare extrinsic variables
     this->sExpr = expr;
@@ -13,7 +13,7 @@ le_Math::le_Math(uint16_t nInputs, std::string expr) : le_Base<float>(nInputs, 1
     // Declare intrinsic variables
     this->te_vars = new te_variable[nInputs];
     this->_vars = new double[nInputs];
-    for (uint16_t i = 0; i < nInputs; i++)
+    for (uint8_t i = 0; i < nInputs; i++)
     {
         // Initialize all to default (0)
         this->te_vars[i].context = 0;
@@ -60,7 +60,7 @@ void le_Math::Update(float timeStep)
     if (this->te_expression)
     {
         // Iterate through all input values
-        for (uint16_t i = 0; i < this->nInputs; i++)
+        for (uint8_t i = 0; i < this->nInputs; i++)
         {
             le_Base<float>* e = (le_Base<float>*)this->_inputs[i];
             if (e != nullptr)
@@ -82,7 +82,7 @@ void le_Math::Update(float timeStep)
  * @param outputSlot The output slot of the element providing the input.
  * @param inputSlot The input slot of this le_Math element to connect to.
  */
-void le_Math::SetInput(le_Base<float>* e, uint16_t outputSlot, uint16_t inputSlot)
+void le_Math::SetInput(le_Base<float>* e, uint8_t outputSlot, uint8_t inputSlot)
 {
     // Use default connection function
     le_Base<float>::Connect(e, outputSlot, this, inputSlot);

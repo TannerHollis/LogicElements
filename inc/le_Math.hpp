@@ -23,7 +23,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @param nInputs Number of inputs for the mathematical expression.
      * @param expr The mathematical expression to evaluate.
      */
-    le_Math(uint16_t nInputs, std::string expr);
+    le_Math(uint8_t nInputs, std::string expr);
 
     /**
      * @brief Destructor to clean up the le_Math.
@@ -43,7 +43,7 @@ public:
      * @param outputSlot The output slot of the element providing the input.
      * @param inputSlot The input slot of this le_Math element to connect to.
      */
-    void SetInput(le_Base<float>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<float>* e, uint8_t outputSlot, uint8_t inputSlot);
 
 private:
     std::string sExpr;    ///< The mathematical expression as a string.

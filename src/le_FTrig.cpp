@@ -37,7 +37,7 @@ void le_FTrig::Update(float timeStep)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_FTrig::SetInput(le_Base* e, uint16_t outputSlot)
+void le_FTrig::SetInput(le_Base* e, uint8_t outputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, 0);

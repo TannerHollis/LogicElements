@@ -13,7 +13,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @brief Constructor that initializes the AND element with a specified number of inputs.
      * @param nInputs Number of inputs for the AND element.
      */
-    le_AND(uint16_t nInputs);
+    le_AND(uint8_t nInputs);
 
     /**
      * @brief Updates the AND element. Calculates the logical AND of all inputs.
@@ -28,7 +28,7 @@ public:
      * @param outputSlot The output slot of the element to connect from.
      * @param inputSlot The input slot of this AND element to connect to.
      */
-    void SetInput(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<bool>* e, uint8_t outputSlot, uint8_t inputSlot);
 
 private:
     // Allow le_Engine to access private members

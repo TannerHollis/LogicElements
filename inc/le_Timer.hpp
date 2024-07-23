@@ -38,7 +38,7 @@ public:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void SetInput(le_Base<bool>* e, uint16_t outputSlot);
+    void SetInput(le_Base<bool>* e, uint8_t outputSlot);
 
 private:
     float fPickup;   ///< The pickup time.

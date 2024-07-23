@@ -33,7 +33,7 @@ protected:
      * @brief Constructor that initializes the element with a specified number of inputs.
      * @param nInputs Number of inputs for the element.
      */
-    le_Element(uint16_t nInputs);
+    le_Element(uint8_t nInputs);
 
     /**
      * @brief Virtual destructor to allow proper cleanup of derived classes.
@@ -68,7 +68,7 @@ public:
      * @param input The input element.
      * @param inputSlot The slot of the input element.
      */
-    static void Connect(le_Element* output, uint16_t outputSlot, le_Element* input, uint16_t inputSlot);
+    static void Connect(le_Element* output, uint8_t outputSlot, le_Element* input, uint8_t inputSlot);
 
 private:
     /**
@@ -81,9 +81,9 @@ private:
     uint16_t iOrder;              ///< The update order of the element.
 
 protected:
-    uint16_t nInputs;             ///< Number of inputs.
+    uint8_t nInputs;             ///< Number of inputs.
     le_Element** _inputs;         ///< Array of pointers to input elements.
-    uint16_t* _outputSlots;       ///< Array of output slots.
+    uint8_t* _outputSlots;       ///< Array of output slots.
 
     friend class le_Engine;
 };

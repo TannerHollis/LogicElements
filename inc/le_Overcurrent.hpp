@@ -60,8 +60,9 @@ public:
     /**
      * @brief Sets the input element for the overcurrent protection.
      * @param e The input element providing the current value.
+     * @param outputSlot The output slot of the provided element
      */
-    void SetInput(le_Base<float>* e);
+    void SetInput(le_Base<float>* e, uint8_t outputSlot);
 
 private:
     /**

@@ -41,7 +41,7 @@ public:
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void SetInput(le_Base<T>* e, uint16_t outputSlot);
+    void SetInput(le_Base<T>* e, uint8_t outputSlot);
 
     /**
      * @brief Overrides the current value of the node with a specified value for a given duration.
@@ -97,6 +97,7 @@ le_Node<T>::le_Node(uint16_t historyLength) : le_Base<T>(1, 1)
     this->bOverride = false;
     this->fOverrideDuration = 0.0f;
     this->fOverrideTimer = 0.0f;
+    this->_overrideValue = (T)0;
 }
 
 /**
@@ -158,7 +159,7 @@ void le_Node<T>::GetHistory(T* buffer, uint16_t* startOffset)
  * @param outputSlot The output slot of the element to connect from.
  */
 template<typename T>
-void le_Node<T>::SetInput(le_Base<T>* e, uint16_t outputSlot)
+void le_Node<T>::SetInput(le_Base<T>* e, uint8_t outputSlot)
 {
     // Use default connection function
     le_Element::Connect(e, outputSlot, this, 0);

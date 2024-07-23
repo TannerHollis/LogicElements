@@ -17,7 +17,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @param signalWidth The width of the signal.
      * @param nInputs The number of inputs to the multiplexer.
      */
-    le_Mux(uint8_t signalWidth, uint16_t nInputs);
+    le_Mux(uint8_t signalWidth, uint8_t nInputs);
 
     /**
      * @brief Destructor to clean up the multiplexer.
@@ -37,27 +37,29 @@ public:
      * @param outputSlot The output slot of the element to connect from.
      * @param inputSlot The input slot of this multiplexer to connect to.
      */
-    void SetInput(le_Base<T>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<T>* e, uint8_t outputSlot, uint8_t inputSlot);
 
     /**
      * @brief Connects an output slot of another element to the select input of this multiplexer.
      * @param e The element to connect from.
      * @param outputSlot The output slot of the element to connect from.
      */
-    void SetInput_Select(le_Base<T>* e, uint16_t outputSlot);
+    void SetInput_Select(le_Base<bool>* e, uint8_t outputSlot);
 
 private:
     uint8_t uSignalWidth; ///< The width of the signal.
+    uint8_t nInputs;      ///< Number of input signals.
 
     // Allow le_Engine to access private members
     friend class le_Engine;
 };
 
 template<typename T>
-le_Mux<T>::le_Mux(uint8_t signalWidth, uint16_t nInputs) : le_Base<T>(signalWidth * nInputs + 1, signalWidth)
+le_Mux<T>::le_Mux(uint8_t signalWidth, uint8_t nInputs) : le_Base<T>(signalWidth * nInputs + 1, signalWidth)
 {
     // Set extrinsic variables
     this->uSignalWidth = signalWidth;
+    this->nInputs = nInputs;
 }
 
 /**
@@ -81,10 +83,10 @@ void le_Mux<T>::Update(float timeStep)
 
     bool selector = sel->GetValue(this->_outputSlots[this->uSignalWidth - 1]);
 
-    for (uint16_t i = 0; i < this->uSignalWidth; i++)
+    for (uint8_t i = 0; i < this->uSignalWidth; i++)
     {
         // Get index based on selector
-        uint16_t index = selector ? i + this->uSignalWidth : i;
+        uint8_t index = selector ? i + this->uSignalWidth : i;
 
         // Get element
         le_Base<T>* e = (le_Base<T>*)(this->_inputs[index]);
@@ -107,7 +109,7 @@ void le_Mux<T>::Update(float timeStep)
 * @param inputSlot The input slot of this multiplexer to connect to.
 */
 template<typename T>
-void le_Mux<T>::SetInput(le_Base<T>* e, uint16_t outputSlot, uint16_t inputSlot)
+void le_Mux<T>::SetInput(le_Base<T>* e, uint8_t outputSlot, uint8_t inputSlot)
 {
     le_Element::Connect(e, outputSlot, this, inputSlot);
 }
@@ -118,7 +120,7 @@ void le_Mux<T>::SetInput(le_Base<T>* e, uint16_t outputSlot, uint16_t inputSlot)
 * @param outputSlot The output slot of the element to connect from.
 */
 template<typename T>
-void le_Mux<T>::SetInput_Select(le_Base<T>* e, uint16_t outputSlot)
+void le_Mux<T>::SetInput_Select(le_Base<bool>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, this->uSignalWidth - 1);
+    le_Element::Connect(e, outputSlot, this, this->uSignalWidth * this->nInputs - 1);
 }

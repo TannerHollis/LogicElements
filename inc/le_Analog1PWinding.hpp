@@ -35,21 +35,21 @@ public:
      * @param e The element providing the raw input value.
      * @param outputSlot The output slot of the element providing the raw input.
      */
-    void SetInput_Winding(le_Base<float>* e, uint16_t outputSlot);
+    void SetInput_Winding(le_Base<float>* e, uint8_t outputSlot);
 
     /**
      * @brief Sets the real part of the reference input for the winding.
      * @param e The element providing the reference real input value.
      * @param outputSlot The output slot of the element providing the reference real input.
      */
-    void SetInput_RefReal(le_Base<float>* e, uint16_t outputSlot);
+    void SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot);
 
     /**
      * @brief Sets the imaginary part of the reference input for the winding.
      * @param e The element providing the reference imaginary input value.
      * @param outputSlot The output slot of the element providing the reference imaginary input.
      */
-    void SetInput_RefImag(le_Base<float>* e, uint16_t outputSlot);
+    void SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot);
 
 private:
     /**

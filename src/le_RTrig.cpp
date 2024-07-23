@@ -37,7 +37,7 @@ void le_RTrig::Update(float timeStep)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_RTrig::SetInput(le_Base<bool>* e, uint16_t outputSlot)
+void le_RTrig::SetInput(le_Base<bool>* e, uint8_t outputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, 0);

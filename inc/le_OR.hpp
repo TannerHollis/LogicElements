@@ -13,7 +13,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @brief Constructor that initializes the OR element with a specified number of inputs.
      * @param nInputs Number of inputs for the OR element.
      */
-    le_OR(uint16_t nInputs);
+    le_OR(uint8_t nInputs);
 
     /**
      * @brief Updates the OR element. Calculates the logical OR of all inputs.
@@ -28,7 +28,7 @@ public:
      * @param outputSlot The output slot of the element to connect from.
      * @param inputSlot The input slot of this OR element to connect to.
      */
-    void SetInput(le_Base<bool>* e, uint16_t outputSlot, uint16_t inputSlot);
+    void SetInput(le_Base<bool>* e, uint8_t outputSlot, uint8_t inputSlot);
 
 private:
     // Allow le_Engine to access private members

@@ -133,8 +133,8 @@ void le_Overcurrent::Update(float timeStep)
  * @brief Sets the input element for the overcurrent protection.
  * @param e The input element providing the current value.
  */
-void le_Overcurrent::SetInput(le_Base<float>* e)
+void le_Overcurrent::SetInput(le_Base<float>* e, uint8_t outputSlot)
 {
     // Link input value
-    this->_inputs[0] = e;
+    le_Element::Connect(e, outputSlot, this, 0);
 }

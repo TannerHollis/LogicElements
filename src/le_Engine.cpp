@@ -93,10 +93,10 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     switch ((le_Element_Type)comp->type)
     {
     case le_Element_Type::LE_AND:
-        return this->AddElement(new le_AND(comp->args[0].uArg), compName);
+        return this->AddElement(new le_AND((uint8_t)comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_OR:
-        return this->AddElement(new le_OR(comp->args[0].uArg), compName);
+        return this->AddElement(new le_OR((uint8_t)comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_NOT:
         return this->AddElement(new le_NOT(), compName);
@@ -130,10 +130,10 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
         return this->AddElement(new le_Counter(comp->args[0].uArg), compName);
 
     case le_Element_Type::LE_MUX_DIGITAL:
-        return this->AddElement(new le_Mux<bool>((uint8_t)comp->args[0].uArg, comp->args[1].uArg), compName);
+        return this->AddElement(new le_Mux<bool>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
     case le_Element_Type::LE_MUX_ANALOG:
-        return this->AddElement(new le_Mux<float>((uint8_t)comp->args[0].uArg, comp->args[1].uArg), compName);
+        return this->AddElement(new le_Mux<float>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
     case le_Element_Type::LE_ANALOG_1P:
         return this->AddElement(new le_Analog1PWinding(comp->args[0].uArg), compName);
@@ -153,7 +153,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     }
 
     case le_Element_Type::LE_MATH:
-        return this->AddElement(new le_Math(comp->args[0].uArg, comp->args[1].sArg), compName);
+        return this->AddElement(new le_Math((uint8_t)comp->args[0].uArg, comp->args[1].sArg), compName);
 
     default:
         // TODO: implement printf() function
@@ -189,7 +189,7 @@ void le_Engine::AddNet(le_Element_Net_TypeDef* net)
             continue;
 
         // Connect elements
-        le_Element::Connect(outputElement, net->output.slot, inputElement, net->inputs[i].slot);
+        le_Element::Connect(outputElement, (uint8_t)net->output.slot, inputElement, (uint8_t)net->inputs[i].slot);
     }
 
     // Sort elements
@@ -211,7 +211,7 @@ void le_Engine::Update(float timeStep)
     this->uUpdateTimeLast = startUpdateTime;
 
     uint32_t t;
-    uint16_t nElements = this->_elements.size();
+    uint16_t nElements = (uint16_t)this->_elements.size();
 
     // Update each element and measure execution time
     for (uint16_t i = 0; i < nElements; i++)
@@ -408,13 +408,18 @@ void le_Engine::SortElements()
 }
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
+#include <chrono>
+
 /**
 * @brief Gets timestamp of a running timer to calculate function execute time.
 * @return Return the current timer CNT register
 */
 WEAK_ATTR inline uint32_t le_Engine::GetTime()
 {
-    return 0;
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    return nanoseconds;
 }
 
 /**
@@ -486,4 +491,9 @@ le_Engine::le_Element_TypeDef::le_Element_TypeDef(std::string name, le_Element_T
 {
     CopyAndClampString(name.c_str(), this->name, LE_ELEMENT_NAME_LENGTH);
     this->type = type;
+    this->args[0] = le_Element_Argument_TypeDef({ 0 });
+    this->args[1] = le_Element_Argument_TypeDef({ 0 });
+    this->args[2] = le_Element_Argument_TypeDef({ 0 });
+    this->args[3] = le_Element_Argument_TypeDef({ 0 });
+    this->args[4] = le_Element_Argument_TypeDef({ 0 });
 }

@@ -52,7 +52,7 @@ void le_Analog3PWinding::Update(float timeStep)
  * @param e The element providing the input value for Winding A.
  * @param outputSlot The output slot of the element providing the input.
  */
-void le_Analog3PWinding::SetInput_WindingA(le_Base<float>* e, uint16_t outputSlot)
+void le_Analog3PWinding::SetInput_WindingA(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 0);
 }
@@ -62,7 +62,7 @@ void le_Analog3PWinding::SetInput_WindingA(le_Base<float>* e, uint16_t outputSlo
  * @param e The element providing the input value for Winding B.
  * @param outputSlot The output slot of the element providing the input.
  */
-void le_Analog3PWinding::SetInput_WindingB(le_Base<float>* e, uint16_t outputSlot)
+void le_Analog3PWinding::SetInput_WindingB(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 1);
 }
@@ -72,7 +72,7 @@ void le_Analog3PWinding::SetInput_WindingB(le_Base<float>* e, uint16_t outputSlo
  * @param e The element providing the input value for Winding C.
  * @param outputSlot The output slot of the element providing the input.
  */
-void le_Analog3PWinding::SetInput_WindingC(le_Base<float>* e, uint16_t outputSlot)
+void le_Analog3PWinding::SetInput_WindingC(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 2);
 }
@@ -82,7 +82,7 @@ void le_Analog3PWinding::SetInput_WindingC(le_Base<float>* e, uint16_t outputSlo
  * @param e The element providing the reference real input value.
  * @param outputSlot The output slot of the element providing the reference real input.
  */
-void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint16_t outputSlot)
+void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 3);
 }
@@ -92,7 +92,7 @@ void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint16_t outputSlot
  * @param e The element providing the reference imaginary input value.
  * @param outputSlot The output slot of the element providing the reference imaginary input.
  */
-void le_Analog3PWinding::SetInput_RefImag(le_Base<float>* e, uint16_t outputSlot)
+void le_Analog3PWinding::SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 4);
 }

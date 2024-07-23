@@ -4,7 +4,7 @@
  * @brief Constructor implementation that initializes the OR element with a specified number of inputs.
  * @param nInputs Number of inputs for the OR element.
  */
-le_OR::le_OR(uint16_t nInputs) : le_Base(nInputs, 1)
+le_OR::le_OR(uint8_t nInputs) : le_Base(nInputs, 1)
 {
     // Do nothing...
 }
@@ -39,7 +39,7 @@ void le_OR::Update(float timeStep)
  * @param outputSlot The output slot of the element to connect from.
  * @param inputSlot The input slot of this OR element to connect to.
  */
-void le_OR::SetInput(le_Base* e, uint16_t outputSlot, uint16_t inputSlot)
+void le_OR::SetInput(le_Base* e, uint8_t outputSlot, uint8_t inputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, inputSlot);

@@ -22,7 +22,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @param nInputs Number of inputs for the element.
      * @param nOutputs Number of outputs for the element.
      */
-    le_Base(uint16_t nInputs, uint16_t nOutputs);
+    le_Base(uint8_t nInputs, uint8_t nOutputs);
 
     /**
      * @brief Destructor to clean up allocated memory.
@@ -40,17 +40,17 @@ LE_ELEMENT_ACCESS_MOD:
      * @param outputSlot The slot of the output.
      * @return The value of the specified output slot.
      */
-    const T GetValue(uint16_t outputSlot);
+    const T GetValue(uint8_t outputSlot);
 
     /**
      * @brief Sets the value of the specified output slot.
      * @param outputSlot The slot of the output.
      * @param value The value to set.
      */
-    void SetValue(uint16_t outputSlot, T value);
+    void SetValue(uint8_t outputSlot, T value);
 
 private:
-    uint16_t nOutputs;  ///< Number of outputs.
+    uint8_t nOutputs;  ///< Number of outputs.
 
     T* _outputs;  ///< Array of output values.
 
@@ -84,7 +84,7 @@ private:
  * @param nOutputs Number of outputs for the element.
  */
 template<typename T>
-le_Base<T>::le_Base(uint16_t nInputs, uint16_t nOutputs) : le_Element(nInputs)
+le_Base<T>::le_Base(uint8_t nInputs, uint8_t nOutputs) : le_Element(nInputs)
 {
     // Set the number of outputs
     this->nOutputs = nOutputs;
@@ -93,7 +93,7 @@ le_Base<T>::le_Base(uint16_t nInputs, uint16_t nOutputs) : le_Element(nInputs)
     this->_outputs = new T[nOutputs];
 
     // Initialize output values
-    for (uint16_t i = 0; i < nOutputs; i++)
+    for (uint8_t i = 0; i < nOutputs; i++)
     {
         this->_outputs[i] = (T)0;
     }
@@ -117,7 +117,7 @@ le_Base<T>::~le_Base()
  * @return The value of the specified output slot.
  */
 template<typename T>
-const T le_Base<T>::GetValue(uint16_t outputSlot)
+const T le_Base<T>::GetValue(uint8_t outputSlot)
 {
     return this->_outputs[outputSlot];
 }
@@ -129,7 +129,7 @@ const T le_Base<T>::GetValue(uint16_t outputSlot)
  * @param value The value to set.
  */
 template<typename T>
-void le_Base<T>::SetValue(uint16_t outputSlot, T value)
+void le_Base<T>::SetValue(uint8_t outputSlot, T value)
 {
     this->_outputs[outputSlot] = value;
 }

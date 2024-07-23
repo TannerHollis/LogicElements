@@ -51,7 +51,7 @@ void le_Counter::Update(float timeStep)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_Counter::SetInput_CountUp(le_Base<bool>* e, uint16_t outputSlot)
+void le_Counter::SetInput_CountUp(le_Base<bool>* e, uint8_t outputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, 0);
@@ -62,7 +62,7 @@ void le_Counter::SetInput_CountUp(le_Base<bool>* e, uint16_t outputSlot)
  * @param e The element to connect from.
  * @param outputSlot The output slot of the element to connect from.
  */
-void le_Counter::SetInput_Reset(le_Base<bool>* e, uint16_t outputSlot)
+void le_Counter::SetInput_Reset(le_Base<bool>* e, uint8_t outputSlot)
 {
     // Use the base class connection function
     le_Base::Connect(e, outputSlot, this, 1);
