@@ -239,6 +239,6 @@ private:
     uint32_t uUpdateTime;
     uint32_t uUpdateTimeLast;
     uint32_t uUpdateTimePeriod;
-    std::map<le_Element*, uint32_t> _elementExecTime;
+    std::vector<uint32_t> _elementExecTime;
 #endif
 };

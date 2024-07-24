@@ -43,7 +43,7 @@ inline le_Math::~le_Math()
     // Free allocated memory
 	for(uint16_t i = 0; i < this->nInputs; i++)
 	{
-		delete[] this->te_vars->name;
+		delete[] this->te_vars[i].name;
 	}
     delete[] this->te_vars;
     delete[] this->_vars;

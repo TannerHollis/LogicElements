@@ -43,6 +43,7 @@ void le_Engine::CopyAndClampString(std::string src, char* dst, uint16_t dstLengt
 {
     std::memset(dst, 0, dstLength);
     std::memcpy(dst, src.c_str(), std::min((int)src.size(), dstLength - 1));
+    dst[dstLength - 1] = '\0';
 }
 
 /**
@@ -64,7 +65,7 @@ le_Engine::le_Engine(std::string name)
     this->uUpdateTime = 1; // Default for non divide by zero error
     this->uUpdateTimeLast = 0;
     this->uUpdateTimePeriod = 0;
-    this->_elementExecTime = std::map<le_Element*, uint32_t>();
+    this->_elementExecTime = std::vector<uint32_t>();
 #endif
 }
 
@@ -74,10 +75,15 @@ le_Engine::le_Engine(std::string name)
 le_Engine::~le_Engine()
 {
     // Iterate through elements and call destructor
-    for (le_Element* e : this->_elements)
+    uint16_t nElements = (uint16_t)this->_elements.size();
+    for (uint16_t i = 0; i < nElements; i++)
     {
-        delete e;
+        le_Element* e = (le_Element*)this->_elements[i];
+        if (e != nullptr)
+            delete e;
     }
+
+    this->_elements.clear();
 }
 
 /**
@@ -219,7 +225,8 @@ void le_Engine::Update(float timeStep)
         le_Element* e = this->_elements[i];
         t = this->GetTime();
         e->Update(timeStep);
-        this->_elementExecTime[e] = this->GetTime() - t;
+        uint32_t* updateTime = &this->_elementExecTime[i];
+        *updateTime = this->GetTime() - t;
     }
 
     // Calculate total update time once
@@ -310,15 +317,17 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
 #else
     snprintf(buffer, length, "Engine Name: %s\r\n", sName);
 #endif
-    for (le_Element* e : this->_elements)
+    uint16_t nElements = (uint16_t)this->_elements.size();
+    for (uint16_t i = 0; i < nElements; i++)
     {
+        le_Element* e = this->_elements[i];
         std::string elementName = this->GetElementName(e);
 #ifdef LE_ENGINE_EXECUTION_DIAG
         // Calculate element CPU usage
         uint16_t usageInteger;
         uint16_t usageFraction;
         this->ConvertFloatingPoint(
-            this->_elementExecTime[e] * 100, 
+            this->_elementExecTime[i] * 100, 
             this->uUpdateTime, 
             &usageInteger,
             &usageFraction);
@@ -334,7 +343,7 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
             usageInteger,
             usageFraction);
 
-        overhead -= this->_elementExecTime[e];
+        overhead -= this->_elementExecTime[i];
 #else
         snprintf(buffer, length, "%s  Element: %-8s \tOrder: %-3u\r\n", buffer, elementName.c_str(), e->GetOrder());
 #endif
@@ -392,8 +401,7 @@ le_Element* le_Engine::AddElement(le_Element* e, const std::string& name)
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
     // Add element to execution time map
-    std::pair<le_Element*, uint32_t> execTime = std::make_pair(e, 0);
-    this->_elementExecTime.insert(execTime);
+    this->_elementExecTime.push_back(0);
 #endif
 
     return insertResult.first->second;
@@ -408,7 +416,6 @@ void le_Engine::SortElements()
 }
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
-#include <chrono>
 
 /**
 * @brief Gets timestamp of a running timer to calculate function execute time.
@@ -416,10 +423,7 @@ void le_Engine::SortElements()
 */
 WEAK_ATTR inline uint32_t le_Engine::GetTime()
 {
-    auto now = std::chrono::high_resolution_clock::now();
-    auto duration = now.time_since_epoch();
-    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-    return nanoseconds;
+    return 0;
 }
 
 /**

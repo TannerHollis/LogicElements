@@ -22,6 +22,11 @@ le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float
 le_Analog3PWinding::~le_Analog3PWinding()
 {
     // Deallocate arrays
+    for (uint8_t i = 0; i < 3; i++)
+    {
+        delete this->_windings[i];
+    }
+
     delete[] this->_windings;
 }
 
@@ -146,12 +151,12 @@ void le_Analog3PWinding::CalculateSequenceComponents()
     std::complex<float> v2 = (vA + a2 * vB + a * vC) / 3.0f;
 
     // Save sequence components
-    this->SetValue(7, v0.real());  // Zero-Sequence (Real)
-    this->SetValue(8, v0.imag());  // Zero-Sequence (Imag)
-    this->SetValue(9, v1.real());  // Positive-Sequence (Real)
-    this->SetValue(10, v1.imag()); // Positive-Sequence (Imag)
-    this->SetValue(11, v2.real()); // Negative-Sequence (Real)
-    this->SetValue(12, v2.imag()); // Negative-Sequence (Imag)
+    this->SetValue(6, v0.real());  // Zero-Sequence (Real)
+    this->SetValue(7, v0.imag());  // Zero-Sequence (Imag)
+    this->SetValue(8, v1.real());  // Positive-Sequence (Real)
+    this->SetValue(9, v1.imag()); // Positive-Sequence (Imag)
+    this->SetValue(10, v2.real()); // Negative-Sequence (Real)
+    this->SetValue(11, v2.imag()); // Negative-Sequence (Imag)
 }
 
 const std::complex<float> le_Analog3PWinding::a = std::polar(1.0f, (float)(2.0 * M_PI / 3.0)); ///< Constant phasor component.
