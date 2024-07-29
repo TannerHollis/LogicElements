@@ -12,7 +12,7 @@
  */
 class le_Overcurrent : protected le_Base<bool>
 {
-LE_ELEMENT_ACCESS_MOD:
+private:
     /**
      * @brief Enum representing different overcurrent curve types.
      */
@@ -39,7 +39,7 @@ LE_ELEMENT_ACCESS_MOD:
      */
     le_Overcurrent_Curve ParseCurveType(std::string& curve);
 
-protected:
+LE_ELEMENT_ACCESS_MOD:
     /**
      * @brief Constructor that initializes the overcurrent element.
      * @param curve The curve type as a string.
