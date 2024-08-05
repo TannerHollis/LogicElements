@@ -12,7 +12,7 @@
  */
 class le_PID : protected le_Base<float>
 {
-protected:
+LE_ELEMENT_ACCESS_MOD:
     le_PID(float p, float i, float d, float outputMin, float outputMax, uint8_t derivativeTerms = 3) : le_Base<float>(2, 1)
     {
         // Set extrinsic variables

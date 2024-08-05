@@ -10,10 +10,21 @@
 #include "le_Timer.hpp"
 #include "le_Counter.hpp"
 #include "le_Mux.hpp"
+
+// Check if analog elements are enabled
+#ifdef LE_ELEMENTS_ANALOG
 #include "le_Math.hpp"
 #include "le_Overcurrent.hpp"
 #include "le_Analog1PWinding.hpp"
 #include "le_Analog3PWinding.hpp"
+#include "le_Rect2Polar.hpp"
+#include "le_Polar2Rect.hpp"
+#include "le_PhasorShift.hpp"
+
+#ifdef LE_ELEMENTS_PID
+#include "le_PID.hpp"
+#endif // LE_ELEMENTS_PID
+#endif // LE_ELEMNTS_ANALOG
 
 // Include standard C++ libraries
 #include <string>
@@ -29,23 +40,39 @@
 
 /**
  * @brief Enum class to define the types of elements.
+ *          0 : Base digital element le_Base<bool>
+ *          10 - 29 : Simple digital elements
+ *          30 - 49 : Complex digital elements
+ *          40 - 49 : Undefined
+ *
+ *          50 : Base analog element le_Base<float>
+ *          60 - 79 : Simple analog elements
+ *          80 - 99 : Complex analog elements
+ *
+ *          100 - 119 : Protective Functions
+ *
+ *          -1 : Invalid
  */
 enum class le_Element_Type : int8_t {
-    LE_AND = 0,
-    LE_OR = 1,
-    LE_NOT = 2,
-    LE_RTRIG = 3,
-    LE_FTRIG = 4,
-    LE_NODE_DIGITAL = 10,
-    LE_NODE_ANALOG = 11,
-    LE_TIMER = 20,
-    LE_COUNTER = 21,
-    LE_MUX_DIGITAL = 22,
-    LE_MUX_ANALOG = 23,
-    LE_ANALOG_1P = 30,
-    LE_ANALOG_3P = 31,
-    LE_OVERCURRENT = 40,
-    LE_MATH = 100,
+    LE_NODE_DIGITAL = 0,
+    LE_AND = 10,
+    LE_OR = 11,
+    LE_NOT = 12,
+    LE_RTRIG = 13,
+    LE_FTRIG = 14,
+    LE_TIMER = 30,
+    LE_COUNTER = 31,
+    LE_MUX_DIGITAL = 32,
+    LE_NODE_ANALOG = 50,
+    LE_R2P = 60,
+    LE_P2R = 61,
+    LE_PHASOR_SHIFT = 62,
+    LE_MUX_ANALOG = 63,
+    LE_MATH = 80,
+    LE_ANALOG_1P = 81,
+    LE_ANALOG_3P = 82,
+    LE_PID = 83,
+    LE_OVERCURRENT = 100,
     LE_INVALID = -1
 };
 

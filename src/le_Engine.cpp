@@ -29,6 +29,10 @@ le_Element_Type le_Engine::ParseElementType(std::string& type)
     if (type == "LE_ANALOG_3P") return le_Element_Type::LE_ANALOG_3P;
     if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
     if (type == "LE_MATH") return le_Element_Type::LE_MATH;
+    if (type == "LE_R2P") return le_Element_Type::LE_R2P;
+    if (type == "LE_P2R") return le_Element_Type::LE_P2R;
+    if (type == "LE_PHASOR_SHIFT") return le_Element_Type::LE_PHASOR_SHIFT;
+    if (type == "LE_PID") return le_Element_Type::LE_PID;
 
     return le_Element_Type::LE_INVALID;
 }
@@ -121,6 +125,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
                 this->uDefaultNodeBufferLength),
             compName);
 
+#ifdef LE_ELEMENTS_ANALOG
     case le_Element_Type::LE_NODE_ANALOG:
         return this->AddElement(
             new le_Node<float>(
@@ -128,6 +133,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
                 comp->args[0].uArg : 
                 this->uDefaultNodeBufferLength),
             compName);
+#endif
 
     case le_Element_Type::LE_TIMER:
         return this->AddElement(new le_Timer(comp->args[0].fArg, comp->args[1].fArg), compName);
@@ -138,6 +144,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     case le_Element_Type::LE_MUX_DIGITAL:
         return this->AddElement(new le_Mux<bool>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
+#ifdef LE_ELEMENTS_ANALOG
     case le_Element_Type::LE_MUX_ANALOG:
         return this->AddElement(new le_Mux<float>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
@@ -146,6 +153,15 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
 
     case le_Element_Type::LE_ANALOG_3P:
         return this->AddElement(new le_Analog3PWinding(comp->args[0].uArg), compName);
+
+    case le_Element_Type::LE_R2P:
+        return this->AddElement(new le_Rect2Polar(), compName);
+
+    case le_Element_Type::LE_P2R:
+        return this->AddElement(new le_Polar2Rect(), compName);
+
+    case le_Element_Type::LE_PHASOR_SHIFT:
+        return this->AddElement(new le_PhasorShift(comp->args[0].fArg), compName);
 
     case le_Element_Type::LE_OVERCURRENT:
     {
@@ -160,6 +176,17 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
 
     case le_Element_Type::LE_MATH:
         return this->AddElement(new le_Math((uint8_t)comp->args[0].uArg, comp->args[1].sArg), compName);
+
+#ifdef LE_ELEMENTS_PID
+    case le_Element_Type::LE_PID:
+        return this->AddElement(new le_PID(
+            comp->args[0].fArg, // Proportional constant
+            comp->args[1].fArg, // Integral constant
+            comp->args[2].fArg, // Derivative constant
+            comp->args[3].fArg, // Output minimum
+            comp->args[4].fArg), compName); // Output maximum
+#endif
+#endif
 
     default:
         // TODO: implement printf() function
