@@ -132,7 +132,7 @@ void le_Analog1PWinding::ApplyCosineFilter()
 }
 
 /**
-* @brief Applies an anglular shift with reference to the reference input.
+* @brief Applies an angular shift with reference to the reference input.
 */
 void le_Analog1PWinding::AdjustOutputAngleWithReference()
 {
@@ -143,16 +143,18 @@ void le_Analog1PWinding::AdjustOutputAngleWithReference()
     {
         // Get reference signal components
         float refReal = eReal->GetValue(this->_outputSlots[1]);
-        float refImag = eReal->GetValue(this->_outputSlots[2]);
+        float refImag = eImag->GetValue(this->_outputSlots[2]);
 
         // Check domain error
         if (refReal == 0.0f && refImag == 0.0f)
             return;
 
-        // Get reference signal angle
-        float refAngle = std::atan2(refImag, refReal);
+        // Normalize the reference vector to a unit vector
+        float refMag = std::sqrt(refReal * refReal + refImag * refImag);
+        float refUnitReal = refReal / refMag;
+        float refUnitImag = refImag / refMag;
 
-        // Get current angle and magnitude
+        // Get current real and imaginary parts
         float real = this->GetValue(0);
         float imag = this->GetValue(1);
 
@@ -160,12 +162,13 @@ void le_Analog1PWinding::AdjustOutputAngleWithReference()
         if (real == 0.0f && imag == 0.0f)
             return;
 
-        float thisMag = std::sqrt(real * real + imag * imag);
-        float thisAngle = std::atan2(imag, real);
+        // Rotate the vector by the negative of the reference angle
+        float newReal = real * refUnitReal + imag * refUnitImag;
+        float newImag = imag * refUnitReal - real * refUnitImag;
 
-        // Adjust angle
-        float newAngle = thisAngle - refAngle;
-        this->SetValue(0, thisMag * cosf(newAngle));
-        this->SetValue(1, thisMag * sinf(newAngle));
+        // Set the new values
+        this->SetValue(0, newReal);
+        this->SetValue(1, newImag);
     }
 }
+
