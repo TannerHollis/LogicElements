@@ -161,7 +161,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
         return this->AddElement(new le_Polar2Rect(), compName);
 
     case le_Element_Type::LE_PHASOR_SHIFT:
-        return this->AddElement(new le_PhasorShift(comp->args[0].fArg), compName);
+        return this->AddElement(new le_PhasorShift(comp->args[0].fArg, comp->args[1].fArg), compName);
 
     case le_Element_Type::LE_OVERCURRENT:
     {

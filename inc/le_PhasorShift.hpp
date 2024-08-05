@@ -11,14 +11,15 @@
 class le_PhasorShift : protected le_Base<float>
 {
 LE_ELEMENT_ACCESS_MOD:
-    le_PhasorShift(float shiftAngleClockwise) : le_Base<float>(2, 2) 
+    le_PhasorShift(float shiftMagnitude, float shiftAngleClockwise) : le_Base<float>(2, 2) 
     {
         // Set explicit variables
+        this->shiftMag = shiftMagnitude;
         this->shiftAngle = shiftAngleClockwise;
 
         // Set implicit variables
-        this->unitShiftReal = cosf(shiftAngleClockwise / 180.0f * M_PI);
-        this->unitShiftImag = -sinf(shiftAngleClockwise / 180.0f * M_PI);
+        this->unitShiftReal = shiftMagnitude * cosf(shiftAngleClockwise / 180.0f * M_PI);
+        this->unitShiftImag = shiftMagnitude * -sinf(shiftAngleClockwise / 180.0f * M_PI);
     }
 
     void Update(float timeStep)
@@ -52,6 +53,7 @@ public:
     }
 
 private:
+    float shiftMag;
     float shiftAngle;
     float unitShiftReal;
     float unitShiftImag;
