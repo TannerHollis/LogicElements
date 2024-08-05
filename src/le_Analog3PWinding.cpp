@@ -1,5 +1,23 @@
 #include "le_Analog3PWinding.hpp"
 
+#define IO_INPUT_RAW_A 0
+#define IO_INPUT_RAW_B 1
+#define IO_INPUT_RAW_C 2
+#define IO_INPUT_REF_REAL 3
+#define IO_INPUT_REF_IMAG 4
+#define IO_OUTPUT_A_REAL 0
+#define IO_OUTPUT_A_IMAG 1
+#define IO_OUTPUT_B_REAL 2
+#define IO_OUTPUT_B_IMAG 3
+#define IO_OUTPUT_C_REAL 4
+#define IO_OUTPUT_C_IMAG 5
+#define IO_OUTPUT_POS_SEQ_REAL 6
+#define IO_OUTPUT_POS_SEQ_IMAG 7
+#define IO_OUTPUT_NEG_SEQ_REAL 8
+#define IO_OUTPUT_NEG_SEQ_IMAG 9
+#define IO_OUTPUT_ZERO_SEQ_REAL 10
+#define IO_OUTPUT_ZERO_SEQ_IMAG 11
+
 /**
  * @brief Constructor that initializes the le_Analog3PWinding with specified samples per cycle.
  * @param samplesPerCycle Number of samples per cycle.
