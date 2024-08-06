@@ -15,16 +15,18 @@ le_OR::le_OR(uint8_t nInputs) : le_Base(nInputs, 1)
  */
 void le_OR::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     // Set default to false
     bool nextValue = false;
 
     // Iterate through all input values and apply logical OR
-    for (uint16_t i = 0; i < this->nInputs; i++)
+    for (uint8_t i = 0; i < this->nInputs; i++)
     {
-        le_Base<bool>* e = (le_Base<bool>*)this->_inputs[i];
+        le_Base<bool>* e = this->GetInput<le_Base<bool>>(i);
         if (e != nullptr)
         {
-            bool inputValue = e->GetValue(this->_outputSlots[i]);
+            bool inputValue = e->GetValue(this->GetOutputSlot(i));
             nextValue |= inputValue;
         }
     }

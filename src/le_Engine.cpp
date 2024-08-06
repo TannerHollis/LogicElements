@@ -504,12 +504,12 @@ le_Engine::le_Element_Net_TypeDef::le_Element_Net_TypeDef(std::string elementNam
 void le_Engine::le_Element_Net_TypeDef::AddInput(std::string elementName, uint16_t inputSlot)
 {
     // Create connection
-    le_Element_Net_Connection_TypeDef c;
-    le_Engine::CopyAndClampString(elementName, c.name, LE_ELEMENT_NAME_LENGTH);
-    c.slot = inputSlot; // Set slot
+    le_Element_Net_Connection_TypeDef net = { .name = {"DEFAULT"}, .slot = 0};
+    le_Engine::CopyAndClampString(elementName, net.name, LE_ELEMENT_NAME_LENGTH);
+    net.slot = inputSlot; // Set slot
 
     // Add to inputs
-    this->inputs.push_back(c);
+    this->inputs.push_back(net);
 }
 
 /**

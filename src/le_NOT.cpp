@@ -14,11 +14,13 @@ le_NOT::le_NOT() : le_Base<bool>(1, 1)
  */
 void le_NOT::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     // Get input value
-    le_Base<bool>* e = (le_Base<bool>*)this->_inputs[0];
+    le_Base<bool>* e = this->GetInput<le_Base<bool>>(0);
     if (e != nullptr)
     {
-        bool inputValue = e->GetValue(this->_outputSlots[0]);
+        bool inputValue = e->GetValue(this->GetOutputSlot(0));
 
         // Set next value
         this->SetValue(0, !inputValue);

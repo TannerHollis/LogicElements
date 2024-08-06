@@ -78,7 +78,7 @@ public:
      * @brief Attaches an engine to the board.
      * @param e The engine to attach.
      */
-    void AttachEngine(le_Engine* e);
+    void AttachEngine(le_Engine* engine);
 
     /**
      * @brief Runs the board for the specified time step.
@@ -100,7 +100,7 @@ public:
      * @brief Checks if the engine is paused.
      * @return True if the engine is paused, false otherwise.
      */
-    bool IsPaused()
+    bool IsPaused() const
     {
         return this->bEnginePaused;
     }

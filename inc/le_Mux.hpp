@@ -75,13 +75,16 @@ le_Mux<T>::~le_Mux() {}
 template<typename T>
 void le_Mux<T>::Update(float timeStep)
 {
-    le_Base<bool>* sel = (le_Base<bool>*)(this->_inputs[this->uSignalWidth - 1]);
+    UNUSED(timeStep);
+
+    uint8_t selectorIndex = this->uSignalWidth - 1;
+    le_Base<bool>* sel = this->GetInput<le_Base<bool>>(selectorIndex)
 
     // Check null reference
     if (sel == nullptr)
         return;
 
-    bool selector = sel->GetValue(this->_outputSlots[this->uSignalWidth - 1]);
+    bool selector = sel->GetValue(this->GetOutputSlot(selectorIndex);
 
     for (uint8_t i = 0; i < this->uSignalWidth; i++)
     {
@@ -89,12 +92,12 @@ void le_Mux<T>::Update(float timeStep)
         uint8_t index = selector ? i + this->uSignalWidth : i;
 
         // Get element
-        le_Base<T>* e = (le_Base<T>*)(this->_inputs[index]);
+        le_Base<T>* e = this->GetInput<le_Base<T>>(index);
 
         // Check null reference
         if (e != nullptr)
         {
-            T inputValue = e->GetValue(this->_outputSlots[index]);
+            T inputValue = e->GetValue(this->GetOutputSlot(index));
 
             // Set next value
             this->SetValue(i, inputValue);

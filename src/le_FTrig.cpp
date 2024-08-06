@@ -16,12 +16,14 @@ le_FTrig::le_FTrig() : le_Base<bool>(1, 1)
  */
 void le_FTrig::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     // Get the input element
-    le_Base<bool>* e = (le_Base<bool>*)this->_inputs[0];
+    le_Base<bool>* e = this->GetInput<le_Base<bool>>(0);
     if (e != nullptr)
     {
         // Get the input value
-        bool inputValue = e->GetValue(this->_outputSlots[0]);
+        bool inputValue = e->GetValue(this->GetOutputSlot(0));
 
         // Shift input states
         this->_inputStates[1] = this->_inputStates[0];

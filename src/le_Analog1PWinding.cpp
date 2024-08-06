@@ -55,6 +55,8 @@ le_Analog1PWinding::~le_Analog1PWinding()
  */
 void le_Analog1PWinding::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     ApplyCosineFilter();
     CalculatePhasor();
     AdjustOutputAngleWithReference();

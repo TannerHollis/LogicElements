@@ -85,9 +85,9 @@ void le_Board::AddOutput(uint16_t slot, const char* name, void* gpioPort, uint16
  * @brief Attaches an engine to the board.
  * @param e The engine to attach.
  */
-void le_Board::AttachEngine(le_Engine* e)
+void le_Board::AttachEngine(le_Engine* engine)
 {
-    this->e = e;
+    this->e = engine;
     this->bIOInvalidated = true;
 }
 
@@ -144,6 +144,7 @@ void le_Board::FlagInputForUpdate()
  */
 WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Digital* io)
 {
+    UNUSED(io);
     // Implement board specific read
 }
 
@@ -153,6 +154,7 @@ WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Digital* io)
  */
 WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Analog* io)
 {
+    UNUSED(io);
     // Implement board specific read
 }
 
@@ -162,6 +164,7 @@ WEAK_ATTR void le_Board::le_Board_UpdateInput(le_Board_IO_Analog* io)
  */
 WEAK_ATTR void le_Board::le_Board_UpdateOutput(le_Board_IO_Digital* io)
 {
+    UNUSED(io);
     // Implement board specific write
 }
 
@@ -239,8 +242,8 @@ void le_Board::UpdateInputs()
     for (uint16_t i = 0; i < this->nInputs_Analog; i++)
     {
         // Get element
-        le_Node<float>* e = (le_Node<float>*)this->_inputs_Analog[i].element;
-        if (e == nullptr)
+        le_Node<float>* element = (le_Node<float>*)this->_inputs_Analog[i].element;
+        if (element == nullptr)
             continue;
 
         le_Board_UpdateInput(&_inputs_Analog[i]);
@@ -250,8 +253,8 @@ void le_Board::UpdateInputs()
     for (uint16_t i = 0; i < this->nInputs_Digital; i++)
     {
         // Get element
-        le_Node<bool>* e = (le_Node<bool>*)this->_inputs_Digital[i].element;
-        if (e == nullptr)
+        le_Node<bool>* element = (le_Node<bool>*)this->_inputs_Digital[i].element;
+        if (element == nullptr)
             continue;
 
         le_Board_UpdateInput(&_inputs_Digital[i]);
@@ -267,8 +270,8 @@ void le_Board::UpdateOutputs()
     for (uint16_t i = 0; i < this->nOutputs; i++)
     {
         // Get the element associated with the current output
-        le_Node<bool>* e = (le_Node<bool>*)this->_outputs[i].element;
-        if (e == nullptr)
+        le_Node<bool>* element = (le_Node<bool>*)this->_outputs[i].element;
+        if (element == nullptr)
             continue;
 
         // Update the output using the board-specific implementation

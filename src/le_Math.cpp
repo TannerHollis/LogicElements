@@ -56,16 +56,18 @@ inline le_Math::~le_Math()
  */
 void le_Math::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     // Attempt expression
     if (this->te_expression)
     {
         // Iterate through all input values
         for (uint8_t i = 0; i < this->nInputs; i++)
         {
-            le_Base<float>* e = (le_Base<float>*)this->_inputs[i];
+            le_Base<float>* e = this->GetInput<le_Base<float>>(i);
             if (e != nullptr)
             {
-                this->_vars[i] = (double)e->GetValue(this->_outputSlots[i]);
+                this->_vars[i] = (double)e->GetValue(this->GetOutputSlot(i));
             }
         }
 

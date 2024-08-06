@@ -37,7 +37,7 @@ private:
      * @param curve The string representing the curve type.
      * @return The corresponding le_Overcurrent_Curve type.
      */
-    le_Overcurrent_Curve ParseCurveType(std::string& curve);
+    static le_Overcurrent_Curve ParseCurveType(std::string& curve);
 
 LE_ELEMENT_ACCESS_MOD:
     /**
@@ -70,7 +70,7 @@ private:
      * @param curve The curve type.
      * @param parameters The array to store the curve parameters.
      */
-    void SetCurveParameters(le_Overcurrent_Curve curve, float* parameters);
+    static void SetCurveParameters(le_Overcurrent_Curve curve, float* parameters);
 
     le_Overcurrent_Curve curve; ///< The type of the overcurrent curve.
     float fPickup;              ///< The pickup current value.

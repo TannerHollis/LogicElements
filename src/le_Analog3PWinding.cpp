@@ -129,13 +129,13 @@ void le_Analog3PWinding::VerifyInputs()
         return;
 
     // Check reference signal inputs
-    le_Base<float>* refReal = (le_Base<float>*)this->_inputs[3];
-    le_Base<float>* refImag = (le_Base<float>*)this->_inputs[4];
+    le_Base<float>* refReal = this->GetInput<le_Base<float>>(3);
+    le_Base<float>* refImag = this->GetInput<le_Base<float>>(4);
 
     // Verify inputs for phases
     for (uint8_t phase = 0; phase < 3; phase++)
     {
-        le_Base<float>* phaseInput = (le_Base<float>*)this->_inputs[phase];
+        le_Base<float>* phaseInput = this->GetInput<le_Base<float>>(phase);
         le_Base<float>* phaseWinding = (le_Base<float>*)this->_windings[phase];
         if (phaseInput != nullptr)
         {
@@ -157,16 +157,16 @@ void le_Analog3PWinding::VerifyInputs()
 void le_Analog3PWinding::CalculateSequenceComponents()
 {
     // Get all complex values
-    std::complex<float> a = this->a;
-    std::complex<float> a2 = this->a2;
+    std::complex<float> _a = this->a;
+    std::complex<float> _a2 = this->a2;
     std::complex<float> vA = std::complex<float>(this->GetValue(0), this->GetValue(1));
     std::complex<float> vB = std::complex<float>(this->GetValue(2), this->GetValue(3));
     std::complex<float> vC = std::complex<float>(this->GetValue(4), this->GetValue(5));
 
     // Calculate sequence components
     std::complex<float> v0 = vA + vB + vC;
-    std::complex<float> v1 = (vA + a * vB + a2 * vC) / 3.0f;
-    std::complex<float> v2 = (vA + a2 * vB + a * vC) / 3.0f;
+    std::complex<float> v1 = (vA + _a * vB + _a2 * vC) / 3.0f;
+    std::complex<float> v2 = (vA + _a2 * vB + _a * vC) / 3.0f;
 
     // Save sequence components
     this->SetValue(6, v0.real());  // Zero-Sequence (Real)

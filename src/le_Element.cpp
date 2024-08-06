@@ -62,8 +62,9 @@ bool le_Element::CompareElementOrders(le_Element* left, le_Element* right)
  * @brief Virtual function to update the element. Can be overridden by derived classes.
  * @param timeStamp The current timestamp.
  */
-void le_Element::Update(float timeStamp)
+void le_Element::Update(float timeStep)
 {
+    UNUSED(timeStep);
     // Default implementation does nothing
 }
 

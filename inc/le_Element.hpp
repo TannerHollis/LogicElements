@@ -13,8 +13,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Enable le_Element test mode
-//#define LE_ELEMENT_TEST_MODE
+// Unused assert parameters
+#ifndef UNUSED
+#define UNUSED(x) (void)(x)
+#endif
 
 // Whether or not test mode is enabled, public functions will be available
 #ifdef LE_ELEMENT_TEST_MODE
@@ -44,7 +46,7 @@ protected:
      * @brief Virtual function to update the element. Can be overridden by derived classes.
      * @param timeStamp The current timestamp.
      */
-    virtual void Update(float timeStamp);
+    virtual void Update(float timeStep);
 
 public:
     /**

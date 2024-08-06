@@ -29,7 +29,7 @@ le_Overcurrent::le_Overcurrent_Curve le_Overcurrent::ParseCurveType(std::string&
  */
 void le_Overcurrent::SetCurveParameters(le_Overcurrent_Curve curve, float* parameters)
 {
-    switch (this->curve)
+    switch (curve)
     {
     case le_Overcurrent_Curve::LE_C1:
         parameters[0] = 0.0f;  // Adder inside 
@@ -85,31 +85,30 @@ le_Overcurrent::le_Overcurrent(std::string curve, float pickup, float timeDial, 
  */
 void le_Overcurrent::Update(float timeStep)
 {
-    le_Base<float>* e = (le_Base<float>*)this->_inputs[0];
+    le_Base<float>* e = this->GetInput<le_Base<float>>(0);
     if (e != nullptr)
     {
         // Aliasing frequently accessed member variables to local variables
-        float fPickup = this->fPickup;
-        float fTimeDial = this->fTimeDial;
-        float fTimeAdder = this->fTimeAdder;
-        bool bEMReset = this->bEMReset;
+        float timeDial = this->fTimeDial;
+        float timeAdder = this->fTimeAdder;
+        bool emReset = this->bEMReset;
         float* ps = this->_fParameters;
 
         // Calculate multiple
-        float m = e->GetValue(this->_outputSlots[0]) / fPickup;
+        float m = e->GetValue(this->GetOutputSlot(0)) / this->fPickup;
 
         // Calculate trip/reset time and update percentage
         if (m > 1.0f)
         {
-            float tripTime = fTimeAdder + fTimeDial * (ps[0] + ps[1] / (powf(m, ps[2]) - 1.0f));
+            float tripTime = timeAdder + timeDial * (ps[0] + ps[1] / (powf(m, ps[2]) - 1.0f));
             this->fPercent += timeStep / tripTime; // Increment dial spin percentage
         }
-        else if (m < 1.0f && bEMReset)
+        else if (m < 1.0f && emReset)
         {
-            float tripTime = fTimeDial * ps[3] / (1.0f - powf(m, ps[4]));
+            float tripTime = timeDial * ps[3] / (1.0f - powf(m, ps[4]));
             this->fPercent -= timeStep / tripTime; // Decrement dial spin percentage
         }
-        else if (m == 1.0f || !bEMReset)
+        else if (m == 1.0f || !emReset)
         {
             this->fPercent = 0.0f;
         }

@@ -2,8 +2,6 @@
 
 #include "le_Base.hpp"
 
-#include <cmath>
-
 /**
  * @brief Class representing a basic shift, using rectangular input.
  *        Inherits from le_Base with float type.
@@ -11,50 +9,39 @@
 class le_PhasorShift : protected le_Base<float>
 {
 LE_ELEMENT_ACCESS_MOD:
-    le_PhasorShift(float shiftMagnitude, float shiftAngleClockwise) : le_Base<float>(2, 2) 
-    {
-        // Set explicit variables
-        this->shiftMag = shiftMagnitude;
-        this->shiftAngle = shiftAngleClockwise;
+    /**
+     * @brief Constructs a PhasorShift object with given parameters.
+     * @param shiftMagnitude Magnitude of the shift.
+     * @param shiftAngleClockwise Angle of the shift in degrees clockwise.
+     */
+    le_PhasorShift(float shiftMagnitude, float shiftAngleClockwise);
 
-        // Set implicit variables
-        this->unitShiftReal = shiftMagnitude * cosf(shiftAngleClockwise / 180.0f * M_PI);
-        this->unitShiftImag = shiftMagnitude * -sinf(shiftAngleClockwise / 180.0f * M_PI);
-    }
-
-    void Update(float timeStep)
-    {
-        le_Base<float>* eReal = this->_inputs[0];
-        le_Base<float>* eImag = this->_inputs[1];
-        
-        // Check null reference
-        if(eReal != nullptr || eImag != nullptr)
-        {
-            float real = eReal->GetValue(this->_outputSlots[0]);
-            float imag = eImag->GetValue(this->_outputSlots[1]);
-
-            float newReal = real * unitShiftReal + imag * unitShiftImag;
-            float newImag = imag * unitShiftReal - real * unitShiftImag;
-
-            this->SetValue(0, newReal);
-            this->SetValue(1, newImag);
-        }
-    }
+    /**
+     * @brief Updates the PhasorShift element.
+     * @param timeStep The current timestamp.
+     */
+    void Update(float timeStep);
 
 public:
-    void SetInput_Real(le_Base<float>* e, uint8_t outputSlot)
-    {
-        le_Element::Connect(e, outputSlot, this, 0);
-    }
+    /**
+     * @brief Sets the real input for the PhasorShift element.
+     * @param e Pointer to the element providing the real part.
+     * @param outputSlot The slot of the output in the providing element.
+     */
+    void SetInput_Real(le_Base<float>* e, uint8_t outputSlot);
 
-    void SetInput_Imag(le_Base<float>* e, uint8_t outputSlot)
-    {
-        le_Element::Connect(e, outputSlot, this, 1);
-    }
+    /**
+     * @brief Sets the imaginary input for the PhasorShift element.
+     * @param e Pointer to the element providing the imaginary part.
+     * @param outputSlot The slot of the output in the providing element.
+     */
+    void SetInput_Imag(le_Base<float>* e, uint8_t outputSlot);
 
 private:
-    float shiftMag;
-    float shiftAngle;
-    float unitShiftReal;
-    float unitShiftImag;
+    float shiftMag;       ///< Magnitude of the shift.
+    float shiftAngle;     ///< Angle of the shift in degrees clockwise.
+    float unitShiftReal;  ///< Real part of the unit shift.
+    float unitShiftImag;  ///< Imaginary part of the unit shift.
+
+    friend class le_Engine;
 };

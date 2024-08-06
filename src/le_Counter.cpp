@@ -21,9 +21,11 @@ le_Counter::le_Counter(uint16_t countFinal) : le_Base<bool>(2, 1)
  */
 void le_Counter::Update(float timeStep)
 {
+    UNUSED(timeStep);
+
     // Get input components for count-up and reset
-    le_Base<bool>* cu = (le_Base<bool>*)this->_inputs[0];
-    le_Base<bool>* reset = (le_Base<bool>*)this->_inputs[1];
+    le_Base<bool>* cu = this->GetInput<le_Base<bool>>(0);
+    le_Base<bool>* reset = this->GetInput<le_Base<bool>>(1);
 
     // If inputs are invalid, skip update
     if (cu == nullptr || reset == nullptr)
@@ -31,13 +33,13 @@ void le_Counter::Update(float timeStep)
 
     // Update input states for rising trigger detection
     this->_inputStates[1] = this->_inputStates[0];
-    this->_inputStates[0] = cu->GetValue(this->_outputSlots[0]);
+    this->_inputStates[0] = cu->GetValue(this->GetOutputSlot(0));
 
     // Detect rising edge trigger
     bool rtrig = this->_inputStates[0] && !this->_inputStates[1];
 
     // Reset dominant logic
-    if (reset->GetValue(this->_outputSlots[1]))
+    if (reset->GetValue(this->GetOutputSlot(1)))
         this->uCount = 0;
     else if (rtrig)
         this->uCount += 1;
