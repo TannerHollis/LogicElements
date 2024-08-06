@@ -71,11 +71,6 @@ private:
 
     T* _outputs; ///< Array of output values.
 
-    // Friend classes for access to protected members (Make friends, shake hands)
-    friend class le_Node<T>;
-    friend class le_Mux<float>; // Special case since le_Mux<float> always requires a boolean (le_Base<bool>) input
-    friend class le_Mux<T>;
-
     // Make le_Engine a friend for factory
     friend class le_Engine;
 };

@@ -78,13 +78,13 @@ void le_Mux<T>::Update(float timeStep)
     UNUSED(timeStep);
 
     uint8_t selectorIndex = this->uSignalWidth - 1;
-    le_Base<bool>* sel = this->GetInput<le_Base<bool>>(selectorIndex)
+    le_Base<bool>* sel = this->GetInput<le_Base<bool>>(selectorIndex);
 
     // Check null reference
     if (sel == nullptr)
         return;
 
-    bool selector = sel->GetValue(this->GetOutputSlot(selectorIndex);
+    bool selector = sel->GetValue(this->GetOutputSlot(selectorIndex));
 
     for (uint8_t i = 0; i < this->uSignalWidth; i++)
     {
