@@ -204,8 +204,11 @@ public:
 
     /**
      * @brief Prints the current state of the engine.
+     * @param buffer Pointer to the character buffer
+     * @param length Length of the character buffer
+     * @return the character count written to buffer
      */
-    void GetInfo(char* buffer, uint16_t length);
+    uint16_t GetInfo(char* buffer, uint16_t length);
 
     /*
     * @brief Allows the user to define a default buffer length for nodes, used for event data logging.

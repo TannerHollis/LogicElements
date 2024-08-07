@@ -78,7 +78,7 @@ void le_Mux<T>::Update(float timeStep)
     UNUSED(timeStep);
 
     uint8_t selectorIndex = this->uSignalWidth - 1;
-    le_Base<bool>* sel = this->GetInput<le_Base<bool>>(selectorIndex);
+    le_Base<bool>* sel = this->template GetInput<le_Base<bool>>(selectorIndex);
 
     // Check null reference
     if (sel == nullptr)
@@ -92,7 +92,7 @@ void le_Mux<T>::Update(float timeStep)
         uint8_t index = selector ? i + this->uSignalWidth : i;
 
         // Get element
-        le_Base<T>* e = this->GetInput<le_Base<T>>(index);
+        le_Base<T>* e = this->template GetInput<le_Base<T>>(index);
 
         // Check null reference
         if (e != nullptr)

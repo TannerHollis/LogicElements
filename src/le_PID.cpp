@@ -36,8 +36,8 @@ le_PID::~le_PID()
 void le_PID::Update(float timeStep)
 {
     // Get input components for count-up and reset
-    le_Base<float>* setpoint = this->GetInput<le_Base<float>>(0);
-    le_Base<float>* feedback = this->GetInput<le_Base<float>>(1);
+    le_Base<float>* setpoint = this->template GetInput<le_Base<float>>(0);
+    le_Base<float>* feedback = this->template GetInput<le_Base<float>>(1);
 
     // If inputs are invalid, skip update
     if (setpoint == nullptr || feedback == nullptr)

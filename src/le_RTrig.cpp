@@ -19,7 +19,7 @@ void le_RTrig::Update(float timeStep)
     UNUSED(timeStep);
 
     // Get the input element
-    le_Base<bool>* e = this->GetInput<le_Base<bool>>(0);
+    le_Base<bool>* e = this->template GetInput<le_Base<bool>>(0);
     if (e != nullptr)
     {
         // Get the input value

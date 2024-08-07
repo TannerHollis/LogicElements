@@ -3,27 +3,27 @@
 	"elements": [
 		{
 			"name": "IN1",
-			"type": 10,
+			"type": "LE_NODE_DIGITAL",
 			"args": []
 		},
 		{
 			"name": "AND1",
-			"type": 0,
+			"type": "LE_AND",
 			"args": [ 2 ]
 		},
 		{
 			"name": "TIM1",
-			"type": 1,
+			"type": "LE_TIMER",
 			"args": [ 2 ]
 		},
 		{
 			"name": "NOT1",
-			"type": 2,
+			"type": "LE_NOT",
 			"args": []
 		},
 		{
 			"name": "LATCH1",
-			"type": 10,
+			"type": "LE_LATCH",
 			"args": []
 		}
 	],

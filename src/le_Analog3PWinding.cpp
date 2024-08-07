@@ -129,13 +129,13 @@ void le_Analog3PWinding::VerifyInputs()
         return;
 
     // Check reference signal inputs
-    le_Base<float>* refReal = this->GetInput<le_Base<float>>(3);
-    le_Base<float>* refImag = this->GetInput<le_Base<float>>(4);
+    le_Base<float>* refReal = this->template GetInput<le_Base<float>>(3);
+    le_Base<float>* refImag = this->template GetInput<le_Base<float>>(4);
 
     // Verify inputs for phases
     for (uint8_t phase = 0; phase < 3; phase++)
     {
-        le_Base<float>* phaseInput = this->GetInput<le_Base<float>>(phase);
+        le_Base<float>* phaseInput = this->template GetInput<le_Base<float>>(phase);
         le_Base<float>* phaseWinding = (le_Base<float>*)this->_windings[phase];
         if (phaseInput != nullptr)
         {

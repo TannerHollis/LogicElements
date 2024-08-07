@@ -128,7 +128,7 @@ void le_Node<T>::Update(float timeStep)
     }
 
     // Get input value
-    le_Base<T>* e = this->GetInput<le_Base<T>>(0);
+    le_Base<T>* e = this->template GetInput<le_Base<T>>(0);
     if (e != nullptr && !this->bOverride)
     {
         T inputValue = e->GetValue(this->GetOutputSlot(0));

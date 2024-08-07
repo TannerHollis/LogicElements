@@ -24,8 +24,8 @@ void le_Counter::Update(float timeStep)
     UNUSED(timeStep);
 
     // Get input components for count-up and reset
-    le_Base<bool>* cu = this->GetInput<le_Base<bool>>(0);
-    le_Base<bool>* reset = this->GetInput<le_Base<bool>>(1);
+    le_Base<bool>* cu = this->template GetInput<le_Base<bool>>(0);
+    le_Base<bool>* reset = this->template GetInput<le_Base<bool>>(1);
 
     // If inputs are invalid, skip update
     if (cu == nullptr || reset == nullptr)

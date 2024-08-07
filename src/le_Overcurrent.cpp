@@ -85,7 +85,7 @@ le_Overcurrent::le_Overcurrent(std::string curve, float pickup, float timeDial, 
  */
 void le_Overcurrent::Update(float timeStep)
 {
-    le_Base<float>* e = this->GetInput<le_Base<float>>(0);
+    le_Base<float>* e = this->template GetInput<le_Base<float>>(0);
     if (e != nullptr)
     {
         // Aliasing frequently accessed member variables to local variables

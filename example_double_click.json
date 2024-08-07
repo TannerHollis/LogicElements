@@ -3,67 +3,67 @@
 	"elements": [
 		{
 			"name": "IN1",
-			"type": 10,
+			"type": "LE_NODE_DIGITAL",
 			"args": []
 		},
 		{
 			"name": "NOT1",
-			"type": 2,
+			"type": "LE_NOT",
 			"args": []
 		},
 		{
 			"name": "RTRIG1",
-			"type": 3,
+			"type": "LE_RTRIG",
 			"args": []
 		},
 		{
 			"name": "TIM1",
-			"type": 20,
+			"type": "LE_TIMER",
 			"args": [ 0.5, 0.0 ]
 		},
 		{
 			"name": "TIM2",
-			"type": 20,
+			"type": "LE_TIMER",
 			"args": [ 0.0, 0.5 ]
 		},
 		{
 			"name": "CNT1",
-			"type": 21,
+			"type": "LE_COUNTER",
 			"args": [ 2 ]
 		},
 		{
 			"name": "NOT2",
-			"type": 2,
+			"type": "LE_NOT",
 			"args": []
 		},
 		{
 			"name": "NOT3",
-			"type": 2,
+			"type": "LE_NOT",
 			"args": []
 		},
 		{
 			"name": "NOT4",
-			"type": 2,
+			"type": "LE_NOT",
 			"args": []
 		},
 		{
 			"name": "AND1",
-			"type": 0,
+			"type": "LE_AND",
 			"args": [ 3 ]
 		},
 		{
 			"name": "AND2",
-			"type": 0,
+			"type": "LE_AND",
 			"args": [ 2 ]
 		},
 		{
 			"name": "DBL",
-			"type": 10,
+			"type": "LE_NODE_DIGITAL",
 			"args": []
 		},
 		{
 			"name": "SNGL",
-			"type": 10,
+			"type": "LE_NODE_DIGITAL",
 			"args": []
 		}
 	],
@@ -219,6 +219,6 @@
 					"slot": 1
 				}
 			]
-		}
+		}		
 	]
 }

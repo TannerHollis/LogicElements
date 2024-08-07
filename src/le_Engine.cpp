@@ -304,12 +304,14 @@ std::string le_Engine::GetElementName(le_Element* e)
 /**
  * @brief Prints the current state of the engine.
  */
-void le_Engine::GetInfo(char* buffer, uint16_t length)
+uint16_t le_Engine::GetInfo(char* buffer, uint16_t length)
 {
-#ifdef LE_ENGINE_EXECUTION_DIAG
-    // Print engine name
-    snprintf(buffer, length, "Engine Name: %s\r\n", sName);
+    uint16_t offset = 0;
 
+    // Print engine name
+    offset += snprintf(buffer, length, "Engine Name: %s\r\n", sName);
+
+#ifdef LE_ENGINE_EXECUTION_DIAG
     // Variable for overhead
     uint32_t overhead = this->uUpdateTime;
 
@@ -332,17 +334,14 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
         &freqFraction);
 
     // Print to buffer
-    snprintf(
-        buffer, 
-        length, 
-        "%sCPU_Total: %3u.%03u%%\tFreq: %5u.%03u Hz\r\n",
-        buffer,
+    offset += snprintf(
+        buffer + offset,
+        length - offset,
+        "CPU_Total: %3u.%03u%%\tFreq: %5u.%03u Hz\r\n",
         updateUsageInteger,
         updateUsageFraction,
         freqInteger,
         freqFraction);
-#else
-    snprintf(buffer, length, "Engine Name: %s\r\n", sName);
 #endif
     uint16_t nElements = (uint16_t)this->_elements.size();
     for (uint16_t i = 0; i < nElements; i++)
@@ -360,11 +359,10 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
             &usageFraction);
 
         // Print to buffer
-        snprintf(
-            buffer, 
-            length, 
-            "%s  Element: %-8s\tOrder: %-3u\tCPU_Update: %3u.%03u%%\r\n",
-            buffer, 
+        offset += snprintf(
+            buffer + offset, 
+            length - offset, 
+            "  Element: %-8s\tOrder: %-3u\tCPU_Update: %3u.%03u%%\r\n",
             elementName.c_str(), 
             e->GetOrder(),
             usageInteger,
@@ -372,8 +370,9 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
 
         overhead -= this->_elementExecTime[i];
 #else
-        snprintf(buffer, length, "%s  Element: %-8s \tOrder: %-3u\r\n", buffer, elementName.c_str(), e->GetOrder());
+        offset += snprintf(buffer + offset, length - offset, "%s  Element: %-8s \tOrder: %-3u\r\n", buffer, elementName.c_str(), e->GetOrder());
 #endif
+        return offset;
     }
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
@@ -387,11 +386,10 @@ void le_Engine::GetInfo(char* buffer, uint16_t length)
         &overheadFraction);
 
     // Print to buffer
-    snprintf(
-        buffer, 
-        length, 
-        "%s  Engine Overhead:\t\t\tCPU_Update: %3u.%03u%%\r\n",
-        buffer,
+    offset += snprintf(
+        buffer + offset, 
+        length - offset, 
+        "  Engine Overhead:\t\t\tCPU_Update: %3u.%03u%%\r\n",
         overheadInteger, 
         overheadFraction);
 #endif

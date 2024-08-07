@@ -17,7 +17,7 @@ void le_NOT::Update(float timeStep)
     UNUSED(timeStep);
 
     // Get input value
-    le_Base<bool>* e = this->GetInput<le_Base<bool>>(0);
+    le_Base<bool>* e = this->template GetInput<le_Base<bool>>(0);
     if (e != nullptr)
     {
         bool inputValue = e->GetValue(this->GetOutputSlot(0));

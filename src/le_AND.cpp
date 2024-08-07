@@ -23,7 +23,7 @@ void le_AND::Update(float timeStep)
     // Iterate through all input values and apply logical AND
     for (uint8_t i = 0; i < this->nInputs; i++)
     {
-        le_Base<bool>* e = this->GetInput<le_Base<bool>>(i);
+        le_Base<bool>* e = this->template GetInput<le_Base<bool>>(i);
         if (e != nullptr)
         {
             bool inputValue = e->GetValue(this->GetOutputSlot(i));
