@@ -26,7 +26,9 @@ public:
         INV_ENGINE_NAME,       ///< Missing or invalid engine name in JSON.
         INV_ENGINE_COMPONENTS, ///< Invalid or missing engine components in JSON.
         INV_ENGINE_NETS,       ///< Invalid or missing engine nets in JSON.
+#ifdef LE_DNP3
         INV_DNP3_CONFIG        ///< Invalid or missing DNP3 configuration in JSON.
+#endif
     };
 
     /**
@@ -37,8 +39,10 @@ public:
         NONE = 0,
         INV_COMPONENTS_OUTPUT, ///< Invalid component output in JSON.
         INV_ENGINE_NETS,       ///< Invalid engine nets in JSON.
+#ifdef LE_DNP3
         INV_DNP3_SESSION,      ///< Invalid or missing DNP3 session in JSON.
         INV_DNP3_POINT         ///< Invalid or missing DNP3 point in JSON.
+#endif
     };
 
     /**
@@ -48,7 +52,13 @@ public:
      * @param dnp3Config Reference to a pointer that will point to the loaded le_DNP3Outstation_Config, or nullptr if not present.
      * @return True if the configuration was loaded successfully, otherwise false.
      */
-    static bool LoadFromFile(const std::string& filePath, le_Engine*& engine, le_DNP3Outstation_Config*& dnp3Config);
+    static bool LoadFromFile(const std::string& filePath, le_Engine*& engine,
+#ifdef LE_DNP3
+        le_DNP3Outstation_Config*& dnp3Config
+#else
+        void*& dnp3Config
+#endif
+    );
 
     /**
      * @brief Loads an engine configuration and optional DNP3 configuration from a JSON string.
@@ -57,7 +67,13 @@ public:
      * @param dnp3Config Reference to a pointer that will point to the loaded le_DNP3Outstation_Config, or nullptr if not present.
      * @return True if the configuration was loaded successfully, otherwise false.
      */
-    static bool LoadConfig(const char* jsonString, le_Engine*& engine, le_DNP3Outstation_Config*& dnp3Config);
+    static bool LoadConfig(const char* jsonString, le_Engine*& engine,
+#ifdef LE_DNP3
+        le_DNP3Outstation_Config*& dnp3Config
+#else
+        void*& dnp3Config
+#endif
+    );
 
     /**
      * @brief Combines all error information into a single string.
@@ -148,6 +164,7 @@ private:
      */
     static bool ParseNetConnection(le_Engine::le_Element_Net_Connection_TypeDef* connection, json_t const* j);
 
+#ifdef LE_DNP3
     /**
      * @brief Parses the outstation configuration for DNP3.
      * @param config Pointer to the le_DNP3Outstation_Config to populate.
@@ -181,4 +198,5 @@ private:
     static EventAnalogVariation StringToEventAnalogVariation(const char* str);
     static StaticAnalogOutputStatusVariation StringToStaticAnalogOutputStatusVariation(const char* str);
     static EventAnalogOutputStatusVariation StringToEventAnalogOutputStatusVariation(const char* str);
+#endif
 };

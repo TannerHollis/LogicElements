@@ -21,4 +21,4 @@
 /**
  * Enable DNP session via Logic_Elements
  */
-#define LE_DNP3
+//#define LE_DNP3

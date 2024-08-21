@@ -7,7 +7,13 @@ char le_Builder::sErrorMessage[MAX_ERROR_LENGTH] = "";
 char le_Builder::sErroneousJson[MAX_ERROR_LENGTH] = "";
 
 // Load configuration from file
-bool le_Builder::LoadFromFile(const std::string& filePath, le_Engine*& engine, le_DNP3Outstation_Config*& dnp3Config)
+bool le_Builder::LoadFromFile(const std::string& filePath, le_Engine*& engine,
+#ifdef LE_DNP3
+    le_DNP3Outstation_Config*& dnp3Config
+#else
+    void*& dnp3Config
+#endif
+)
 {
     ClearErrors();
     std::string fileContent = readFile(filePath);
@@ -15,26 +21,27 @@ bool le_Builder::LoadFromFile(const std::string& filePath, le_Engine*& engine, l
 }
 
 // Load configuration from JSON string
-bool le_Builder::LoadConfig(const char* jsonString, le_Engine*& engine, le_DNP3Outstation_Config*& dnp3Config)
+bool le_Builder::LoadConfig(const char* jsonString, le_Engine*& engine,
+#ifdef LE_DNP3
+    le_DNP3Outstation_Config*& dnp3Config
+#else
+    void*& dnp3Config
+#endif
+)
 {
     ClearErrors();
-
-    // Allocate the json_t pool on the heap
     json_t* pool = new json_t[MAX_POOL_SIZE];
-
-    // Create the root JSON object
     json_t const* root = json_create((char*)jsonString, pool, MAX_POOL_SIZE);
     if (!root)
     {
-        delete[] pool; // Clean up the heap-allocated pool
+        delete[] pool;
         return SetError(MajorError::INV_JSON_FILE, MinorError::NONE, jsonString), false;
     }
 
-    // Parse le_Engine
     const char* engineName = json_getValue(json_getProperty(root, "name"));
     if (!engineName)
     {
-        delete[] pool; // Clean up the heap-allocated pool
+        delete[] pool;
         return SetError(MajorError::INV_ENGINE_NAME, MinorError::NONE, jsonString), false;
     }
     engine = new le_Engine(engineName);
@@ -43,11 +50,11 @@ bool le_Builder::LoadConfig(const char* jsonString, le_Engine*& engine, le_DNP3O
         !ParseNets(engine, json_getProperty(root, "nets")))
     {
         delete engine;
-        delete[] pool; // Clean up the heap-allocated pool
+        delete[] pool;
         return false;
     }
 
-    // Parse le_DNP3Outstation_Config (optional)
+#ifdef LE_DNP3
     json_t const* dnp3Field = json_getProperty(root, "dnp3");
     if (dnp3Field)
     {
@@ -56,16 +63,17 @@ bool le_Builder::LoadConfig(const char* jsonString, le_Engine*& engine, le_DNP3O
         {
             delete dnp3Config;
             dnp3Config = nullptr;
-            delete[] pool; // Clean up the heap-allocated pool
+            delete[] pool;
             return false;
         }
     }
     else
     {
-        dnp3Config = nullptr;  // No DNP3 configuration found, set to nullptr
+        dnp3Config = nullptr;
     }
+#endif
 
-    delete[] pool; // Clean up the heap-allocated pool
+    delete[] pool;
     return true;
 }
 
@@ -233,6 +241,7 @@ bool le_Builder::ParseNetConnection(le_Engine::le_Element_Net_Connection_TypeDef
     return true;
 }
 
+#ifdef LE_DNP3
 // Parse outstation configuration
 bool le_Builder::ParseOutstationConfig(le_DNP3Outstation_Config* config, json_t const* outstationField)
 {
@@ -441,3 +450,4 @@ EventAnalogOutputStatusVariation le_Builder::StringToEventAnalogOutputStatusVari
     auto it = map.find(str);
     return it != map.end() ? it->second : EventAnalogOutputStatusVariation::Group42Var1;  // Default or error handling
 }
+#endif

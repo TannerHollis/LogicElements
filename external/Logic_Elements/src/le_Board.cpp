@@ -293,8 +293,10 @@ void le_Board::UpdateOutputs()
     this->bOutputsNeedUpdated = false;
 }
 
+#ifdef LE_DNP3
 void le_Board::AttachDNP3Outstation(le_DNP3Outstation* outstation)
 {
     this->bIOInvalidated = true;
     this->outstation = outstation;
 }
+#endif
