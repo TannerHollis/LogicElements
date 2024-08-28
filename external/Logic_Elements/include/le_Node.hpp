@@ -15,7 +15,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @brief Constructor that initializes the node with a specified history length.
      * @param historyLength The length of the history buffer.
      */
-    le_Node(uint16_t historyLength);
+    le_Node(le_Element_Type type, uint16_t historyLength);
 
     /**
      * @brief Destructor to clean up the node.
@@ -24,9 +24,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the node with the current input value.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    virtual void Update(const le_Time& timeStamp) override;
 
 public:
     /**
@@ -78,9 +78,38 @@ private:
     T _overrideValue;
     T _overrideOriginalValue;
     bool bOverride;
+    le_Time lastTimeStamp;   ///< The last timestamp when Update was called.
 
     // Allow le_Engine to access private members
     friend class le_Engine;
+};
+
+// Helper instantiations for digital and analog nodes
+
+/**
+ * @brief Digital node class inheriting from le_Node with bool type.
+ */
+class le_Node_Digital : public le_Node<bool>
+{
+public:
+    /**
+     * @brief Constructor for le_Node_Digital.
+     * @param historyLength The length of the history buffer.
+     */
+    le_Node_Digital(uint16_t historyLength) : le_Node<bool>(le_Element_Type::LE_NODE_DIGITAL, historyLength) {}
+};
+
+/**
+ * @brief Analog node class inheriting from le_Node with float type.
+ */
+class le_Node_Analog : public le_Node<float>
+{
+public:
+    /**
+     * @brief Constructor for le_Node_Analog.
+     * @param historyLength The length of the history buffer.
+     */
+    le_Node_Analog(uint16_t historyLength) : le_Node<float>(le_Element_Type::LE_NODE_ANALOG, historyLength) {}
 };
 
 // Implementation of the le_Node class
@@ -91,7 +120,7 @@ private:
  * @param historyLength The length of the history buffer.
  */
 template<typename T>
-le_Node<T>::le_Node(uint16_t historyLength) : le_Base<T>(1, 1)
+le_Node<T>::le_Node(le_Element_Type type, uint16_t historyLength) : le_Base<T>(type, 1, 1)
 {
     // Fixed length
     if (historyLength <= 0)
@@ -110,6 +139,9 @@ le_Node<T>::le_Node(uint16_t historyLength) : le_Base<T>(1, 1)
     this->fOverrideTimer = 0.0f;
     this->_overrideOriginalValue = (T)0;
     this->_overrideValue = (T)0;
+
+    // Initialize last timestamp
+    this->lastTimeStamp = le_Time();
 }
 
 /**
@@ -124,11 +156,15 @@ le_Node<T>::~le_Node()
 
 /**
  * @brief Updates the node with the current input value.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
 template<typename T>
-void le_Node<T>::Update(float timeStep)
+void le_Node<T>::Update(const le_Time& timeStamp)
 {
+    // Calculate timeStep
+    float timeStep = static_cast<float>((le_Time&)timeStamp - this->lastTimeStamp) / 1000000.0f; // Convert microseconds to seconds
+    this->lastTimeStamp = timeStamp;
+
     // If override is set
     if (this->bOverride)
     {

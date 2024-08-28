@@ -55,6 +55,11 @@ public:
     le_Time(uint32_t subSecondFraction, uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint16_t day, uint16_t year);
 
     /**
+     * @brief Default constructor to initialize the le_Time object with zero values.
+     */
+    le_Time();
+
+    /**
      * @brief Gets a future le_Time object based on the current time plus the specified seconds.
      * @param seconds The number of seconds to add to the current time.
      * @return A new le_Time object representing the future time.
@@ -68,11 +73,18 @@ public:
     void Update(uint32_t subSeconds);
 
     /**
-     * @brief Calculates the elapsed time in microseconds since the specified le_Time object.
-     * @param other The reference le_Time object to compare against.
+     * @brief Subtracts the specified le_Time object from the current le_Time object.
+     * @param other The reference le_Time object to subtract.
      * @return The elapsed time in microseconds.
      */
-    int32_t GetElapsedTimeSince(le_Time& other);
+    int32_t operator-(le_Time& other);
+
+    /**
+     * @brief Adds the specified le_Time object to the current le_Time object.
+     * @param other The reference le_Time object to add.
+     * @return A new le_Time object representing the sum of the two times.
+     */
+    le_Time operator+(le_Time& other);
 
     /**
      * @brief Aligns the current le_Time object to the specified time components and calculates the drift.
@@ -84,16 +96,28 @@ public:
      * @param year The new year part of the time.
      * @return The drift in microseconds.
      */
-    int32_t Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint16_t day, uint8_t year);
+    int32_t Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint16_t day, uint16_t year);
 
     /**
      * @brief Prints a short representation of the current time into the provided buffer.
      * @param buffer The buffer to print the time into.
      * @param length The length of the buffer.
      */
-    void PrintShortTime(char* buffer, uint32_t length);
+    uint16_t PrintShortTime(char* buffer, uint32_t length);
 
-protected:
+    /**
+     * @brief Gets the current time as an le_Time object.
+     * @return A new le_Time object representing the current time.
+     */
+    static le_Time GetTime();
+
+    /**
+     * @brief Checks if the specified time has elapsed compared to the current time.
+     * @param other The reference le_Time object to compare.
+     * @return True if the specified time has elapsed, false otherwise.
+     */
+    bool HasElapsed(const le_Time& other) const;
+
     /**
      * @brief Determines if the specified year is a leap year.
      * @param year The year to check.
@@ -134,4 +158,16 @@ protected:
     uint32_t uSubSecondFraction;
 
     static const uint8_t _daysInMonth[12];
+
+    /**
+     * @brief Converts the le_Time object to microseconds since the epoch (1970-01-01 00:00:00).
+     * @return The number of microseconds since the epoch.
+     */
+    uint64_t ToMicrosecondsSinceEpoch() const;
+
+    /**
+     * @brief Converts the le_Time object to nanoseconds since the epoch (1970-01-01 00:00:00).
+     * @return The number of nanoseconds since the epoch.
+     */
+    uint64_t ToNanosecondsSinceEpoch() const;
 };

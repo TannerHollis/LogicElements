@@ -1,5 +1,11 @@
 //Include project files
+#include "le_DeviceSettings.hpp"
 #include "le_Builder/le_Builder.hpp"
+#include "le_Board.hpp"
+#include "le_DeviceUtility.hpp"
+#include "le_DeviceCommandHandler.hpp"
+
+// Include test cases
 #include "le_Engine_Test.hpp"
 #include "le_DNP3Outstation_Test.hpp"
 
@@ -8,70 +14,67 @@
 
 int main(int argc, char* argv[])
 {
-    if (argc > 1)
+    // Set board configuration
+    le_Board::le_Board_Config boardConfig("Offset Power Relay Test Bench", "OS-A1-B0-C0-D0-E1");
+    le_Board* board = new le_Board(boardConfig);
+    
+    // Test le_Time
+    le_Time time = le_Time::GetTime();
+    char timeStringBuffer[64];
+    time.PrintShortTime(timeStringBuffer, sizeof(timeStringBuffer));
+    printf("Time: %s\n", timeStringBuffer);
+
+    if (argc == 2)
     {
-        printf("Loading file: %s\n", argv[1]);
+        // Instantiate le_DeviceSettings
+        le_DeviceSettings deviceSettings("settings.json");
 
-        // Pointers to hold the engine and DNP3 configuration
-        le_Engine* engine = nullptr;
-        le_DNP3Outstation_Config* dnp3Config = nullptr;
+        // Start Serial command handler
+        le_SerialConnectionServer serialPort(deviceSettings.getSerialPort(), deviceSettings.getSerialSpeed());
+        le_DeviceCommandHandler serialCommandHandler(&serialPort, board);
+        if (deviceSettings.getSerialPortEnable())
+            serialCommandHandler.start();
 
-        // Load engine and DNP3 configuration from file
-        if (le_Builder::LoadFromFile(argv[1], engine, dnp3Config))
+        // Start TCP command handler
+        le_TcpConnectionServer tcpConnectionServer(deviceSettings.getSocketPort());
+        le_DeviceCommandHandler socketCommandHandler(&tcpConnectionServer, board);
+        if (deviceSettings.getSocketEnable())
+            socketCommandHandler.start();
+
+        // Load the active configuration
+        std::string configPath = deviceSettings.getActiveConfig();
+        bool configParseResult = le_Builder::LoadFromFile(configPath, board);
+
+        if (!configParseResult)
         {
-            printf("Engine loaded successfully.\n");
-
-            if (engine)
-            {
-                engine->ConfigureTimer(1e6);
-                engine->Update(0.0001f);
-
-                char buffer[1024];
-
-                engine->GetInfo(buffer, 1024);
-
-                printf("%s", buffer);
-
-                bool running = true;
-
-                // Check if DNP3 configuration was loaded
-                if (dnp3Config)
-                {
-                    printf("DNP3 configuration loaded successfully.\n");
-
-                    // Load DNP3 outstation with the configuration
-                    le_DNP3Outstation outstation(*dnp3Config);
-                    outstation.ValidatePoints(engine);
-                    outstation.Enable();
-
-                    while (running)
-                    {
-                        engine->Update(0.020f);
-                        outstation.Update();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                    }
-                }
-                else
-                {
-                    printf("No DNP3 configuration found.\n");
-                }
-            }
-            else
-            {
-                printf("Failed to load engine.\n");
-            }
+            char errorBuffer[512];
+            le_Builder::GetErrorString(errorBuffer, sizeof(errorBuffer));
+            printf("Failed to load configuration: %s\n", errorBuffer);
         }
         else
         {
-            // Error occurred, retrieve and print the error details
-            char errorBuffer[512];
-            le_Builder::GetErrorString(errorBuffer, sizeof(errorBuffer));
-            printf("Error: %s\n", errorBuffer);
-        }
+            // Check for major and minor errors
+            if (le_Builder::GetMajorError() != le_Builder::MajorError::NONE || le_Builder::GetMinorError() != le_Builder::MinorError::NONE)
+            {
+                char errorBuffer[512];
+                le_Builder::GetErrorString(errorBuffer, sizeof(errorBuffer));
+                printf("Configuration loaded with errors: %s\n", errorBuffer);
+            }
+            else
+            {
+                board->UnpauseEngine();
+                bool running = true;
 
-        // Clean up resources if necessary
-        delete engine;
-        delete dnp3Config;
+                auto nextFrame = std::chrono::steady_clock::now();
+                while (running)
+                {
+                    nextFrame += std::chrono::microseconds(100000); // 10 Hz
+                    le_Time timeStamp = le_Time::GetTime();
+                    board->Update(timeStamp);
+                    std::this_thread::sleep_until(nextFrame);
+                }
+            }
+        }
     }
 	else
 	{
@@ -84,13 +87,18 @@ int main(int argc, char* argv[])
 		dnp3Session.ValidatePoints(&engine);
 		dnp3Session.Enable();
 
-		while (running)
-		{
-			engine.Update(0.020f);
+		auto nextFrame = std::chrono::steady_clock::now();
+        while (running)
+        {
+            nextFrame += std::chrono::microseconds(16667); // 60 Hz
+            le_Time timeStamp = le_Time::GetTime();
+			engine.Update(timeStamp);
 			dnp3Session.Update();
-			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+			std::this_thread::sleep_until(nextFrame);
 		}
 	}
+
+    delete board;
 
 	return 0;
 }

@@ -15,10 +15,19 @@ add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PUBLIC 
-	"../tiny-json"
-	"../tinyexpr"
-	"../opendnp3/cpp/lib/include"
-	"./include")
+    ../tinyexpr
+    ../opendnp3/cpp/lib/include
+    ../Minimal-Socket/src/header
+    ../serialib
+    ../nlohmann_json/include
+    ./include
+)
 
 # Link external libraries to the executable
-target_link_libraries(${PROJECT_NAME} PRIVATE tiny-json tinyexpr opendnp3)
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+    tinyexpr 
+    opendnp3 
+    MinimalSocket 
+    serialib 
+    nlohmann_json
+)

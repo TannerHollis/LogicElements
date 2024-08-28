@@ -67,11 +67,11 @@ le_Engine::le_Engine(std::string name)
     this->uDefaultNodeBufferLength = 0;
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
-    this->uExecTimerFreq = 1; // Default for non divide by zero error
+    this->uExecTimerFreq = 1000000000; // 1e9
     this->uUpdateTime = 1; // Default for non divide by zero error
     this->uUpdateTimeLast = 0;
     this->uUpdateTimePeriod = 0;
-    this->_elementExecTime = std::vector<uint32_t>();
+    this->_elementExecTime = std::vector<uint64_t>();
 #endif
 }
 
@@ -121,7 +121,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
 
     case le_Element_Type::LE_NODE_DIGITAL:
         return this->AddElement(
-            new le_Node<bool>(
+            new le_Node_Digital(
                 this->uDefaultNodeBufferLength == 0 ? 
                 comp->args[0].uArg :
                 this->uDefaultNodeBufferLength),
@@ -130,7 +130,7 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
 #ifdef LE_ELEMENTS_ANALOG
     case le_Element_Type::LE_NODE_ANALOG:
         return this->AddElement(
-            new le_Node<float>(
+            new le_Node_Analog(
                 this->uDefaultNodeBufferLength == 0 ?
                 comp->args[0].uArg : 
                 this->uDefaultNodeBufferLength),
@@ -143,12 +143,15 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
     case le_Element_Type::LE_COUNTER:
         return this->AddElement(new le_Counter(comp->args[0].uArg), compName);
 
+    case le_Element_Type::LE_SER:
+        return this->AddElement(new le_SER(comp->args[0].uArg), compName);
+
     case le_Element_Type::LE_MUX_DIGITAL:
-        return this->AddElement(new le_Mux<bool>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
+        return this->AddElement(new le_Mux_Digital((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
 #ifdef LE_ELEMENTS_ANALOG
     case le_Element_Type::LE_MUX_ANALOG:
-        return this->AddElement(new le_Mux<float>((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
+        return this->AddElement(new le_Mux_Analog((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
 
     case le_Element_Type::LE_ANALOG_1P:
         return this->AddElement(new le_Analog1PWinding(comp->args[0].uArg), compName);
@@ -233,38 +236,36 @@ void le_Engine::AddNet(le_Element_Net_TypeDef* net)
 
 /**
  * @brief Updates all elements in the engine.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Engine::Update(float timeStep)
+void le_Engine::Update(const le_Time& timeStamp)
 {
 #ifdef LE_ENGINE_EXECUTION_DIAG
-    // Get start time once
-    uint32_t startUpdateTime = this->GetTime();
+    // Record the start time of the update
+    uint64_t startUpdateTime = timeStamp.ToNanosecondsSinceEpoch();
 
-    // Calculate update period
+    // Calculate the time period since the last update
     this->uUpdateTimePeriod = startUpdateTime - this->uUpdateTimeLast;
     this->uUpdateTimeLast = startUpdateTime;
 
-    uint32_t t;
-    uint16_t nElements = (uint16_t)this->_elements.size();
+    uint16_t nElements = static_cast<uint16_t>(this->_elements.size());
 
-    // Update each element and measure execution time
+    // Update each element and measure its execution time
     for (uint16_t i = 0; i < nElements; i++)
     {
-        le_Element* e = this->_elements[i];
-        t = this->GetTime();
-        e->Update(timeStep);
-        uint32_t* updateTime = &this->_elementExecTime[i];
-        *updateTime = this->GetTime() - t;
+        le_Element* element = this->_elements[i];
+        uint64_t elementStartTime = le_Time::GetTime().ToNanosecondsSinceEpoch();
+        element->Update(timeStamp);
+        this->_elementExecTime[i] = le_Time::GetTime().ToNanosecondsSinceEpoch() - elementStartTime;
     }
 
-    // Calculate total update time once
-    this->uUpdateTime = this->GetTime() - startUpdateTime;
+    // Calculate the total update time
+    this->uUpdateTime = le_Time::GetTime().ToNanosecondsSinceEpoch() - startUpdateTime;
 #else
-    // Call each element update individually by highest to lowest order
-    for (le_Element* e : this->_elements)
+    // Update each element in the order they are stored
+    for (le_Element* element : this->_elements)
     {
-        e->Update(timeStep);
+        element->Update(timeStamp);
     }
 #endif
 }
@@ -443,30 +444,6 @@ void le_Engine::SortElements()
 }
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
-
-/**
-* @brief Gets timestamp of a running timer to calculate function execute time.
-* @return Return the current timer CNT register
-*/
-WEAK_ATTR inline uint32_t le_Engine::GetTime()
-{
-    // Get the current time
-    auto now = std::chrono::high_resolution_clock::now();
-
-    // Get the time since epoch in microseconds
-    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-
-    return microseconds;
-}
-
-/**
-* @brief Configures the execution timer with a specified frequency.
-* @param execTimerFreq Frequency to set for the execution timer.
-*/
-void le_Engine::ConfigureTimer(uint32_t execTimerFreq)
-{
-    this->uExecTimerFreq = execTimerFreq;
-}
 
 /**
  * @brief Converts a ratio of two integers into integer and fractional parts.

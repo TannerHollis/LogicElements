@@ -1,6 +1,7 @@
 #pragma once
 
 #include "le_Base.hpp"
+#include "le_Time.hpp"
 
 /**
  * @brief Class representing a timer element.
@@ -21,16 +22,16 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Constructor that initializes the timer element with specified pickup and dropout times.
-     * @param pickup The pickup time.
-     * @param dropout The dropout time.
+     * @param pickup The pickup time in seconds.
+     * @param dropout The dropout time in seconds.
      */
     le_Timer(float pickup, float dropout);
 
     /**
      * @brief Updates the timer element.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**
@@ -41,11 +42,15 @@ public:
     void SetInput(le_Base<bool>* e, uint8_t outputSlot);
 
 private:
-    float fPickup;   ///< The pickup time.
-    float fDropout;  ///< The dropout time.
+    le_Time fPickup;   ///< The pickup time.
+    le_Time fDropout;  ///< The dropout time.
 
-    float fTimer;    ///< The timer value.
+    le_Time pickupTime;  ///< The future time when pickup condition is met.
+    le_Time dropoutTime; ///< The future time when dropout condition is met.
     le_Timer_State state; ///< The current state of the timer.
+
+    // Last timestamp
+    le_Time lastTimeStamp;
 
     // Allow le_Engine to access private members
     friend class le_Engine;

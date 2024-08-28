@@ -1,4 +1,5 @@
 #include "le_Builder/le_Builder.hpp"
+#include <fstream>
 
 // Static member initialization
 le_Builder::MajorError le_Builder::majorError = le_Builder::MajorError::NONE;
@@ -7,97 +8,89 @@ char le_Builder::sErrorMessage[MAX_ERROR_LENGTH] = "";
 char le_Builder::sErroneousJson[MAX_ERROR_LENGTH] = "";
 
 // Load configuration from file
-bool le_Builder::LoadFromFile(const std::string& filePath, le_Engine*& engine,
-#ifdef LE_DNP3
-    le_DNP3Outstation_Config*& dnp3Config
-#else
-    void*& dnp3Config
-#endif
-)
+bool le_Builder::LoadFromFile(const std::string& filePath, le_Board*& board)
 {
     ClearErrors();
     std::string fileContent = readFile(filePath);
-    return fileContent.empty() ? false : LoadConfig(fileContent.c_str(), engine, dnp3Config);
+    return fileContent.empty() ? false : LoadConfig(fileContent.c_str(), board);
 }
 
 // Load configuration from JSON string
-bool le_Builder::LoadConfig(const char* jsonString, le_Engine*& engine,
-#ifdef LE_DNP3
-    le_DNP3Outstation_Config*& dnp3Config
-#else
-    void*& dnp3Config
-#endif
-)
+bool le_Builder::LoadConfig(const char* jsonString, le_Board*& board)
 {
+    // Clear any previous errors
     ClearErrors();
-    json_t* pool = new json_t[MAX_POOL_SIZE];
-    json_t const* root = json_create((char*)jsonString, pool, MAX_POOL_SIZE);
-    if (!root)
-    {
-        delete[] pool;
+    nlohmann::json json;
+    try {
+        // Parse the JSON string
+        json = nlohmann::json::parse(jsonString);
+    } catch (const nlohmann::json::parse_error& e) {
+        // Set error if JSON parsing fails
         return SetError(MajorError::INV_JSON_FILE, MinorError::NONE, jsonString), false;
     }
 
-    const char* engineName = json_getValue(json_getProperty(root, "name"));
-    if (!engineName)
-    {
-        delete[] pool;
+    // Check if the JSON contains a valid "name" field
+    if (!json.contains("name") || !json["name"].is_string()) {
+        // Set error if "name" field is missing or invalid
         return SetError(MajorError::INV_ENGINE_NAME, MinorError::NONE, jsonString), false;
     }
-    engine = new le_Engine(engineName);
 
-    if (!ParseElements(engine, json_getProperty(root, "elements")) ||
-        !ParseNets(engine, json_getProperty(root, "nets")))
-    {
+    // Create a new engine with the name from the JSON
+    le_Engine* engine = new le_Engine(json["name"].get<std::string>());
+
+    // Attach the engine to the board
+    board->AttachEngine(engine);
+
+    // Parse elements and nets from the JSON
+    if (!ParseElements(board, json["elements"]) || !ParseNets(board, json["nets"])) {
+        // Delete the engine and return false if parsing fails
         delete engine;
-        delete[] pool;
+        engine = nullptr;
         return false;
     }
 
-#ifdef LE_DNP3
-    json_t const* dnp3Field = json_getProperty(root, "dnp3");
-    if (dnp3Field)
-    {
-        dnp3Config = new le_DNP3Outstation_Config();
-        if (!ParseOutstationConfig(dnp3Config, json_getProperty(dnp3Field, "oustation")))
-        {
-            delete dnp3Config;
-            dnp3Config = nullptr;
-            delete[] pool;
+    // Check if the JSON contains "ser" field and parse it
+    if (json.contains("ser")) {
+        if (!ParseSER(board, json["ser"])) {
+            // Delete the engine and return false if parsing fails
+            delete engine;
+            engine = nullptr;
             return false;
         }
     }
-    else
-    {
-        dnp3Config = nullptr;
+
+#ifdef LE_DNP3
+    // Check if the JSON contains "dnp3" field and parse it
+    if (json.contains("dnp3")) {
+        le_DNP3Outstation_Config dnp3Config = le_DNP3Outstation_Config();
+        if (!ParseOutstationConfig(&dnp3Config, json["dnp3"]["outstation"])) {
+            return false;
+        }
+        // Create and attach the DNP3 outstation to the board
+        le_DNP3Outstation* dnp3 = new le_DNP3Outstation(dnp3Config);
+        board->AttachDNP3Outstation(dnp3);
     }
 #endif
 
-    delete[] pool;
+    // Return true if configuration is successfully loaded
     return true;
 }
 
-
 // Get error information
-void le_Builder::GetErrorString(char* buffer, uint16_t length)
+uint16_t le_Builder::GetErrorString(char* buffer, uint16_t length)
 {
     if (buffer == nullptr || length == 0) {
-        return;
+        return 0;
     }
 
-    // Retrieve individual error information
-    MajorError major = GetMajorError();
-    MinorError minor = GetMinorError();
+    // Retrieve the static error message
     const char* errorMessage = GetErrorMessage();
-    const char* erroneousJson = GetErroneousJson();
 
-    // Format the combined error string
-    snprintf(buffer, length,
-        "Major Error: %d, Minor Error: %d\nError Message: %s\nErroneous JSON: %.200s",
-        static_cast<int>(major),
-        static_cast<int>(minor),
-        errorMessage ? errorMessage : "None",
-        erroneousJson ? erroneousJson : "None");
+    // Copy the static error message to the buffer
+    uint16_t copiedLength = snprintf(buffer, length, "%s", errorMessage ? errorMessage : "None");
+
+    // Return the length of the copied characters
+    return copiedLength;
 }
 
 // Retrieve the last major error
@@ -134,14 +127,17 @@ void le_Builder::ClearErrors()
 }
 
 // Set error state and return nullptr
-le_Engine* le_Builder::SetError(MajorError major, MinorError minor, const char* erroneousJson)
+void le_Builder::SetError(MajorError major, MinorError minor, const char* erroneousJson)
 {
     majorError = major;
     minorError = minor;
-    snprintf(sErrorMessage, MAX_ERROR_LENGTH, "Major Error: %d, Minor Error: %d", static_cast<int>(major), static_cast<int>(minor));
-    if (erroneousJson)
+
+    const char* majorErrorStr = MajorErrorToString(major);
+    const char* minorErrorStr = MinorErrorToString(minor);
+
+    snprintf(sErrorMessage, MAX_ERROR_LENGTH, "Major Error: %s, Minor Error: %s", majorErrorStr, minorErrorStr);
+    if (erroneousJson && erroneousJson[0] != '\0')
         snprintf(sErroneousJson, MAX_ERROR_LENGTH, "Erroneous JSON: %.500s", erroneousJson);
-    return nullptr;
 }
 
 // Read file into string
@@ -160,105 +156,241 @@ std::string le_Builder::readFile(const std::string& filePath)
 }
 
 // Parse elements section
-bool le_Builder::ParseElements(le_Engine* engine, json_t const* elementsField)
+bool le_Builder::ParseElements(le_Board* board, const nlohmann::json& elementsField)
 {
-    if (!elementsField || JSON_ARRAY != json_getType(elementsField))
-        return SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::NONE, json_getValue(elementsField)), false;
-
-    for (json_t const* element = json_getChild(elementsField); element; element = json_getSibling(element))
+    // Check if elementsField is an array
+    if (!elementsField.is_array())
     {
-        const char* name = json_getValue(json_getProperty(element, "name"));
-        const char* type = json_getValue(json_getProperty(element, "type"));
+        SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::NONE, elementsField.dump().c_str());
+        return false;
+    }
 
-        if (!name || !type) return SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::INV_COMPONENTS_OUTPUT, json_getValue(element)), false;
+    // Iterate through each element in the elementsField array
+    for (const auto& element : elementsField)
+    {
+        // Check if element contains "name" and "type" fields and they are strings
+        if (!element.contains("name") || !element["name"].is_string() ||
+            !element.contains("type") || !element["type"].is_string())
+        {
+            SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::INV_COMPONENTS_OUTPUT, element.dump().c_str());
+            return false;
+        }
 
-        le_Element_Type compType = le_Engine::ParseElementType(std::string(type));
-        if (compType == le_Element_Type::LE_INVALID) return SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::INV_COMPONENTS_OUTPUT, type), false;
+        // Parse the element type
+        std::string compTypeString = element["type"].get<std::string>();
+        le_Element_Type compType = le_Engine::ParseElementType(compTypeString);
+        if (compType == le_Element_Type::LE_INVALID)
+        {
+            SetError(MajorError::INV_ENGINE_COMPONENTS, MinorError::INV_COMPONENTS_OUTPUT, element["type"].get<std::string>().c_str());
+            return false;
+        }
 
-        le_Engine::le_Element_TypeDef comp(name, compType);
-        ParseElementArguments(&comp, json_getProperty(element, "args"));
-        engine->AddElement(&comp);
+        // Create a new element and parse its arguments
+        le_Engine::le_Element_TypeDef comp(element["name"].get<std::string>(), compType);
+        ParseElementArguments(&comp, element["args"]);
+
+        // Finally, add the element to the engine
+        board->GetEngine()->AddElement(&comp);
     }
     return true;
 }
 
 // Parse element arguments
-void le_Builder::ParseElementArguments(le_Engine::le_Element_TypeDef* comp, json_t const* args)
+void le_Builder::ParseElementArguments(le_Engine::le_Element_TypeDef* comp, const nlohmann::json& args)
 {
     uint8_t i = 0;
-    for (json_t const* arg = json_getChild(args); arg && i < 5; arg = json_getSibling(arg), ++i)
+    for (const auto& arg : args)
     {
-        switch (json_getType(arg))
-        {
-        case JSON_INTEGER: comp->args[i].uArg = (uint16_t)json_getInteger(arg); break;
-        case JSON_REAL: comp->args[i].fArg = (float)json_getReal(arg); break;
-        case JSON_BOOLEAN: comp->args[i].bArg = json_getBoolean(arg); break;
-        case JSON_TEXT: strncpy(comp->args[i].sArg, json_getValue(arg), LE_ELEMENT_ARGUMENT_LENGTH); break;
-        default: --i; break;
-        }
+        if (i >= 5) break;
+        if (arg.is_number_integer()) comp->args[i].uArg = arg.get<uint16_t>();
+        else if (arg.is_number_float()) comp->args[i].fArg = arg.get<float>();
+        else if (arg.is_boolean()) comp->args[i].bArg = arg.get<bool>();
+        else if (arg.is_string()) strncpy(comp->args[i].sArg, arg.get<std::string>().c_str(), LE_ELEMENT_ARGUMENT_LENGTH);
+        else continue;
+        ++i;
     }
 }
 
 // Parse nets section
-bool le_Builder::ParseNets(le_Engine* engine, json_t const* netsField)
+bool le_Builder::ParseNets(le_Board* board, const nlohmann::json& netsField)
 {
-    if (!netsField || JSON_ARRAY != json_getType(netsField))
-        return SetError(MajorError::INV_ENGINE_NETS, MinorError::NONE, json_getValue(netsField)), false;
-
-    for (json_t const* net = json_getChild(netsField); net; net = json_getSibling(net))
+    // Check if netsField is an array
+    if (!netsField.is_array())
     {
+        // Set error if netsField is not an array
+        SetError(MajorError::INV_ENGINE_NETS, MinorError::NONE, netsField.dump().c_str());
+        return false;
+    }
+
+    // Iterate through each net in the netsField array
+    for (const auto& net : netsField)
+    {
+        // Initialize net definition
         le_Engine::le_Element_Net_TypeDef netDef("", 0);
-        if (!ParseNetConnection(&netDef.output, json_getProperty(net, "output"))) return false;
 
-        json_t const* inputs = json_getProperty(net, "inputs");
-        if (!inputs || JSON_ARRAY != json_getType(inputs))
-            return SetError(MajorError::INV_ENGINE_NETS, MinorError::NONE, json_getValue(inputs)), false;
-
-        for (json_t const* input = json_getChild(inputs); input; input = json_getSibling(input))
+        // Parse the output connection of the net
+        if (!net.contains("output") || !net["output"].is_object())
         {
-            le_Engine::le_Element_Net_Connection_TypeDef connection;
-            if (ParseNetConnection(&connection, input))
-                netDef.inputs.push_back(connection);
+            SetError(MajorError::INV_ENGINE_NETS, MinorError::NONE, net.dump().c_str());
+            return false;
         }
 
-        engine->AddNet(&netDef);
+        if (!ParseNetConnection(&netDef.output, net["output"]))
+            return false;
+
+        // Check if net contains "inputs" field and it is an array
+        if (!net.contains("inputs") || !net["inputs"].is_array())
+        {
+            // Set error if "inputs" field is missing or not an array
+            SetError(MajorError::INV_ENGINE_NETS, MinorError::NONE, net.dump().c_str());
+            return false;
+        }
+
+        // Iterate through each input in the "inputs" array
+        for (const auto& input : net["inputs"])
+        {
+            // Initialize net connection
+            le_Engine::le_Element_Net_Connection_TypeDef connection;
+
+            // Parse the input connection and add to net definition
+            if (ParseNetConnection(&connection, input))
+                netDef.inputs.push_back(connection);
+            else
+                return false;
+        }
+
+        // Add the net definition to the engine
+        board->GetEngine()->AddNet(&netDef);
     }
     return true;
 }
 
 // Parse a single net connection
-bool le_Builder::ParseNetConnection(le_Engine::le_Element_Net_Connection_TypeDef* connection, json_t const* j)
+bool le_Builder::ParseNetConnection(le_Engine::le_Element_Net_Connection_TypeDef* connection, const nlohmann::json& j)
 {
-    const char* name = json_getValue(json_getProperty(j, "name"));
-    int64_t slot = json_getInteger(json_getProperty(j, "slot"));
+    if (!j.contains("name") || !j["name"].is_string() || !j.contains("slot") || !j["slot"].is_number_integer())
+    {
+        SetError(MajorError::INV_ENGINE_NETS, MinorError::INV_ENGINE_NETS, j.dump().c_str());
+        return false;
+    }
 
-    if (!name || slot < 0)
-        return SetError(MajorError::INV_ENGINE_NETS, MinorError::INV_ENGINE_NETS, json_getValue(j)), false;
-
-    strncpy(connection->name, name, LE_ELEMENT_NAME_LENGTH);
-    connection->slot = static_cast<uint16_t>(slot);
+    le_Engine::CopyAndClampString(j["name"].get<std::string>(), connection->name, LE_ELEMENT_NAME_LENGTH);
+    connection->slot = static_cast<uint16_t>(j["slot"].get<int64_t>());
 
     return true;
 }
 
+bool le_Builder::ParseSER(le_Board* board, const nlohmann::json& serField)
+{
+    // Check if the serField is an array
+    if (!serField.is_array())
+    {
+        // Set error if serField is not an array
+        SetError(MajorError::INV_SER, MinorError::NONE, serField.dump().c_str());
+        return false;
+    }
+
+    uint8_t serElementCount = 0; // Counter for SER elements
+    std::vector<le_Engine::le_Element_Net_TypeDef> nets; // Vector to store net definitions
+
+    // Iterate through each SER element in the array
+    for (const auto& serElement : serField)
+    {
+        // Check if the SER element contains "name" and "slot" fields
+        if (!serElement.contains("name") || !serElement["name"].is_string() ||
+            !serElement.contains("slot") || !serElement["slot"].is_number_integer())
+        {
+            // Set error if required fields are missing or invalid
+            SetError(MajorError::INV_SER, MinorError::INV_SER_POINT, serElement.dump().c_str());
+            return false;
+        }
+
+        // Extract the name and slot of the SER element
+        std::string elementName = serElement["name"].get<std::string>();
+        uint8_t outputSlot = serElement["slot"].get<int>();
+
+        // Create a new net definition and add the input
+        le_Engine::le_Element_Net_TypeDef net(elementName, outputSlot);
+        net.AddInput(DEFAULT_SER_NAME, serElementCount);
+
+        // Add the net definition to the vector
+        nets.push_back(net);
+
+        serElementCount++; // Increment the SER element counter
+    }
+
+    // Create the SER element and set the number of inputs
+    le_Engine::le_Element_TypeDef ser(DEFAULT_SER_NAME, le_Element_Type::LE_SER);
+    ser.args[0].uArg = serElementCount;
+
+    // Add the SER element to the engine
+    board->GetEngine()->AddElement(&ser);
+
+    // Add all net definitions to the engine
+    for (le_Engine::le_Element_Net_TypeDef net : nets)
+    {
+        board->GetEngine()->AddNet(&net);
+    }
+
+    return true;
+}
+
+
 #ifdef LE_DNP3
 // Parse outstation configuration
-bool le_Builder::ParseOutstationConfig(le_DNP3Outstation_Config* config, json_t const* outstationField)
+bool le_Builder::ParseOutstationConfig(le_DNP3Outstation_Config* config, const nlohmann::json& outstationField)
 {
-    if (!outstationField) return SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, json_getValue(outstationField)), false;
-
-    config->name = json_getValue(json_getProperty(outstationField, "name"));
-    if (!ParseDNP3Address(config->outstation, json_getProperty(outstationField, "address"))) return false;
-
-    json_t const* sessionsField = json_getProperty(outstationField, "sessions");
-    if (!sessionsField || JSON_ARRAY != json_getType(sessionsField)) return SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_SESSION, json_getValue(sessionsField)), false;
-
-    for (json_t const* sessionField = json_getChild(sessionsField); sessionField; sessionField = json_getSibling(sessionField))
+    // Check if the outstationField is an object
+    if (!outstationField.is_object())
     {
+        // Set error if outstationField is not an object
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, outstationField.dump().c_str());
+        return false;
+    }
+
+    // Parse the name of the outstation
+    if (outstationField.contains("name") && outstationField["name"].is_string())
+    {
+        config->name = outstationField["name"].get<std::string>();
+    }
+    else
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, outstationField.dump().c_str());
+        return false;
+    }
+
+    // Parse the DNP3 address of the outstation
+    if (!ParseDNP3Address(config->outstation, outstationField["address"]))
+    {
+        return false;
+    };
+
+    // Check if the outstationField contains "sessions" field and it is an array
+    if (!outstationField.contains("sessions") || !outstationField["sessions"].is_array())
+    {
+        // Set error if "sessions" field is missing or not an array
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_SESSION, outstationField.dump().c_str());
+        return false;
+    }
+
+    // Iterate through each session in the "sessions" array
+    for (const auto& sessionField : outstationField["sessions"])
+    {
+        // Initialize session configuration
         le_DNP3Outstation_Session_Config session;
-        session.name = json_getValue(json_getProperty(sessionField, "name"));
-        if (!ParseDNP3Address(session.client, json_getProperty(sessionField, "address"))) return false;
-        if (!ParsePoints(session, json_getProperty(sessionField, "points"))) return false;
+
+        // Parse the name of the session
+        session.name = sessionField["name"].get<std::string>();
+
+        // Parse the DNP3 address of the session client
+        if (!ParseDNP3Address(session.client, sessionField["address"]))
+            return false;
+
+        // Parse the points configuration of the session
+        if (!ParsePoints(session, sessionField["points"]))
+            return false;
+        
+        // Add session to outstation
         config->AddSession(session);
     }
 
@@ -266,87 +398,204 @@ bool le_Builder::ParseOutstationConfig(le_DNP3Outstation_Config* config, json_t 
 }
 
 // Parse DNP3 address configuration
-bool le_Builder::ParseDNP3Address(le_DNP3_Address& address, json_t const* addressField)
+bool le_Builder::ParseDNP3Address(le_DNP3_Address& address, const nlohmann::json& addressField)
 {
-    if (!addressField) return SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, json_getValue(addressField)), false;
+    // Check if the addressField is an object
+    if (!addressField.is_object())
+    {
+        // Set error if addressField is not an object
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, addressField.dump().c_str());
+        return false;
+    }
 
-    address.ip = json_getValue(json_getProperty(addressField, "ip"));
-    address.dnp = json_getInteger(json_getProperty(addressField, "dnp"));
-    address.port = json_getInteger(json_getProperty(addressField, "port"));
+    // Check if the "ip" field exists and is a string
+    if (!addressField.contains("ip") || !addressField["ip"].is_string())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, addressField.dump().c_str());
+        return false;
+    }
+
+    // Check if the "dnp" field exists and is an integer
+    if (!addressField.contains("dnp") || !addressField["dnp"].is_number_integer())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, addressField.dump().c_str());
+        return false;
+    }
+
+    // Check if the "port" field exists and is an integer
+    if (!addressField.contains("port") || !addressField["port"].is_number_integer())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::NONE, addressField.dump().c_str());
+        return false;
+    }
+
+    // Parse the IP address
+    address.ip = addressField["ip"].get<std::string>();
+    
+    // Parse the DNP3 address
+    address.dnp = addressField["dnp"].get<int>();
+    
+    // Parse the port number
+    address.port = addressField["port"].get<int>();
 
     return true;
 }
 
 // Parse points for a DNP3 session
-bool le_Builder::ParsePoints(le_DNP3Outstation_Session_Config& session, json_t const* pointsField)
+bool le_Builder::ParsePoints(le_DNP3Outstation_Session_Config& session, const nlohmann::json& pointsField)
 {
-    if (!pointsField) return SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, json_getValue(pointsField)), false;
+    if (!pointsField.is_object())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, pointsField.dump().c_str());
+        return false;
+    }
 
     // Parse Binary Inputs
-    json_t const* binaryInputsField = json_getProperty(pointsField, "binary_inputs");
-    if (binaryInputsField && JSON_ARRAY == json_getType(binaryInputsField))
+    if (pointsField.contains("binary_inputs") && pointsField["binary_inputs"].is_array())
     {
-        for (json_t const* pointField = json_getChild(binaryInputsField); pointField; pointField = json_getSibling(pointField))
+        for (const auto& pointField : pointsField["binary_inputs"])
         {
-            int index = json_getInteger(json_getProperty(pointField, "index"));
-            const char* name = json_getValue(json_getProperty(pointField, "name"));
-            StaticBinaryVariation sVar = StringToStaticBinaryVariation(json_getValue(json_getProperty(pointField, "sVar")));
-            EventBinaryVariation eVar = StringToEventBinaryVariation(json_getValue(json_getProperty(pointField, "eVar")));
-
-            session.AddBinaryInput(index, name, PointClass::Class1, sVar, eVar);
+            if (!ParseBinaryInput(session, pointField))
+                return false;
         }
     }
 
     // Parse Binary Outputs
-    json_t const* binaryOutputsField = json_getProperty(pointsField, "binary_outputs");
-    if (binaryOutputsField && JSON_ARRAY == json_getType(binaryOutputsField))
+    if (pointsField.contains("binary_outputs") && pointsField["binary_outputs"].is_array())
     {
-        for (json_t const* pointField = json_getChild(binaryOutputsField); pointField; pointField = json_getSibling(pointField))
+        for (const auto& pointField : pointsField["binary_outputs"])
         {
-            int index = json_getInteger(json_getProperty(pointField, "index"));
-            const char* name = json_getValue(json_getProperty(pointField, "name"));
-            StaticBinaryOutputStatusVariation sVar = StringToStaticBinaryOutputStatusVariation(json_getValue(json_getProperty(pointField, "sVar")));
-            EventBinaryOutputStatusVariation eVar = StringToEventBinaryOutputStatusVariation(json_getValue(json_getProperty(pointField, "eVar")));
-
-            session.AddBinaryOutput(index, name, PointClass::Class1, sVar, eVar);
+            if (!ParseBinaryOutput(session, pointField))
+                return false;
         }
     }
 
     // Parse Analog Inputs
-    json_t const* analogInputsField = json_getProperty(pointsField, "analog_inputs");
-    if (analogInputsField && JSON_ARRAY == json_getType(analogInputsField))
+    if (pointsField.contains("analog_inputs") && pointsField["analog_inputs"].is_array())
     {
-        for (json_t const* pointField = json_getChild(analogInputsField); pointField; pointField = json_getSibling(pointField))
+        for (const auto& pointField : pointsField["analog_inputs"])
         {
-            int index = json_getInteger(json_getProperty(pointField, "index"));
-            const char* name = json_getValue(json_getProperty(pointField, "name"));
-            StaticAnalogVariation sVar = StringToStaticAnalogVariation(json_getValue(json_getProperty(pointField, "sVar")));
-            EventAnalogVariation eVar = StringToEventAnalogVariation(json_getValue(json_getProperty(pointField, "eVar")));
-
-            session.AddAnalogInput(index, name, PointClass::Class1, sVar, eVar);
+            if (!ParseAnalogInput(session, pointField))
+                return false;
         }
     }
 
     // Parse Analog Outputs
-    json_t const* analogOutputsField = json_getProperty(pointsField, "analog_outputs");
-    if (analogOutputsField && JSON_ARRAY == json_getType(analogOutputsField))
+    if (pointsField.contains("analog_outputs") && pointsField["analog_outputs"].is_array())
     {
-        for (json_t const* pointField = json_getChild(analogOutputsField); pointField; pointField = json_getSibling(pointField))
+        for (const auto& pointField : pointsField["analog_outputs"])
         {
-            int index = json_getInteger(json_getProperty(pointField, "index"));
-            const char* name = json_getValue(json_getProperty(pointField, "name"));
-            StaticAnalogOutputStatusVariation sVar = StringToStaticAnalogOutputStatusVariation(json_getValue(json_getProperty(pointField, "sVar")));
-            EventAnalogOutputStatusVariation eVar = StringToEventAnalogOutputStatusVariation(json_getValue(json_getProperty(pointField, "eVar")));
-
-            session.AddAnalogOutput(index, name, PointClass::Class1, sVar, eVar);
+            if (!ParseAnalogOutput(session, pointField))
+                return false;
         }
     }
 
     return true;
 }
 
+bool le_Builder::ParseBinaryInput(le_DNP3Outstation_Session_Config& session, const nlohmann::json& pointField)
+{
+    if (!pointField.contains("index") || !pointField["index"].is_number_integer() ||
+        !pointField.contains("name") || !pointField["name"].is_string() ||
+        !pointField.contains("class") || !pointField["class"].is_string() ||
+        !pointField.contains("sVar") || !pointField["sVar"].is_string() ||
+        !pointField.contains("eVar") || !pointField["eVar"].is_string())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, pointField.dump().c_str());
+        return false;
+    }
+
+    int index = pointField["index"].get<int>();
+    const std::string& name = pointField["name"].get<std::string>();
+    PointClass pointClass = ParsePointClass(pointField["class"].get<std::string>());
+    StaticBinaryVariation sVar = StringToStaticBinaryVariation(pointField["sVar"].get<std::string>().c_str());
+    EventBinaryVariation eVar = StringToEventBinaryVariation(pointField["eVar"].get<std::string>().c_str());
+
+    session.AddBinaryInput(index, name.c_str(), pointClass, sVar, eVar);
+    return true;
+}
+
+bool le_Builder::ParseBinaryOutput(le_DNP3Outstation_Session_Config& session, const nlohmann::json& pointField)
+{
+    if (!pointField.contains("index") || !pointField["index"].is_number_integer() ||
+        !pointField.contains("name") || !pointField["name"].is_string() ||
+        !pointField.contains("class") || !pointField["class"].is_string() ||
+        !pointField.contains("sVar") || !pointField["sVar"].is_string() ||
+        !pointField.contains("eVar") || !pointField["eVar"].is_string())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, pointField.dump().c_str());
+        return false;
+    }
+
+    int index = pointField["index"].get<int>();
+    const std::string& name = pointField["name"].get<std::string>();
+    PointClass pointClass = ParsePointClass(pointField["class"].get<std::string>());
+    StaticBinaryOutputStatusVariation sVar = StringToStaticBinaryOutputStatusVariation(pointField["sVar"].get<std::string>().c_str());
+    EventBinaryOutputStatusVariation eVar = StringToEventBinaryOutputStatusVariation(pointField["eVar"].get<std::string>().c_str());
+
+    session.AddBinaryOutput(index, name.c_str(), pointClass, sVar, eVar);
+    return true;
+}
+
+bool le_Builder::ParseAnalogInput(le_DNP3Outstation_Session_Config& session, const nlohmann::json& pointField)
+{
+    if (!pointField.contains("index") || !pointField["index"].is_number_integer() ||
+        !pointField.contains("name") || !pointField["name"].is_string() ||
+        !pointField.contains("class") || !pointField["class"].is_string() ||
+        !pointField.contains("sVar") || !pointField["sVar"].is_string() ||
+        !pointField.contains("eVar") || !pointField["eVar"].is_string())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, pointField.dump().c_str());
+        return false;
+    }
+
+    int index = pointField["index"].get<int>();
+    const std::string& name = pointField["name"].get<std::string>();
+    PointClass pointClass = ParsePointClass(pointField["class"].get<std::string>());
+    StaticAnalogVariation sVar = StringToStaticAnalogVariation(pointField["sVar"].get<std::string>().c_str());
+    EventAnalogVariation eVar = StringToEventAnalogVariation(pointField["eVar"].get<std::string>().c_str());
+
+    session.AddAnalogInput(index, name.c_str(), pointClass, 0.0f, sVar, eVar);
+    return true;
+}
+
+bool le_Builder::ParseAnalogOutput(le_DNP3Outstation_Session_Config& session, const nlohmann::json& pointField)
+{
+    if (!pointField.contains("index") || !pointField["index"].is_number_integer() ||
+        !pointField.contains("name") || !pointField["name"].is_string() ||
+        !pointField.contains("class") || !pointField["class"].is_string() ||
+        !pointField.contains("sVar") || !pointField["sVar"].is_string() ||
+        !pointField.contains("eVar") || !pointField["eVar"].is_string())
+    {
+        SetError(MajorError::INV_DNP3_CONFIG, MinorError::INV_DNP3_POINT, pointField.dump().c_str());
+        return false;
+    }
+
+    int index = pointField["index"].get<int>();
+    const std::string& name = pointField["name"].get<std::string>();
+    PointClass pointClass = ParsePointClass(pointField["class"].get<std::string>());
+    StaticAnalogOutputStatusVariation sVar = StringToStaticAnalogOutputStatusVariation(pointField["sVar"].get<std::string>().c_str());
+    EventAnalogOutputStatusVariation eVar = StringToEventAnalogOutputStatusVariation(pointField["eVar"].get<std::string>().c_str());
+
+    session.AddAnalogOutput(index, name.c_str(), pointClass, 0.0f, sVar, eVar);
+    return true;
+}
+
+PointClass le_Builder::ParsePointClass(const std::string& str)
+{
+    static const std::unordered_map<std::string, PointClass> map = {
+        {"Class0", PointClass::Class0},
+        {"Class1", PointClass::Class1},
+        {"Class2", PointClass::Class2},
+        {"Class3", PointClass::Class3}
+    };
+
+    auto it = map.find(str);
+    return it != map.end() ? it->second : PointClass::Class1;  // Default or error handling
+}
+
 // String-to-enum conversion for StaticBinaryVariation
-StaticBinaryVariation le_Builder::StringToStaticBinaryVariation(const char* str)
+StaticBinaryVariation le_Builder::StringToStaticBinaryVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, StaticBinaryVariation> map = {
         {"Group1Var1", StaticBinaryVariation::Group1Var1},
@@ -357,7 +606,7 @@ StaticBinaryVariation le_Builder::StringToStaticBinaryVariation(const char* str)
 }
 
 // String-to-enum conversion for EventBinaryVariation
-EventBinaryVariation le_Builder::StringToEventBinaryVariation(const char* str)
+EventBinaryVariation le_Builder::StringToEventBinaryVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, EventBinaryVariation> map = {
         {"Group2Var1", EventBinaryVariation::Group2Var1},
@@ -369,7 +618,7 @@ EventBinaryVariation le_Builder::StringToEventBinaryVariation(const char* str)
 }
 
 // String-to-enum conversion for StaticBinaryOutputStatusVariation
-StaticBinaryOutputStatusVariation le_Builder::StringToStaticBinaryOutputStatusVariation(const char* str)
+StaticBinaryOutputStatusVariation le_Builder::StringToStaticBinaryOutputStatusVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, StaticBinaryOutputStatusVariation> map = {
         {"Group10Var2", StaticBinaryOutputStatusVariation::Group10Var2}
@@ -379,7 +628,7 @@ StaticBinaryOutputStatusVariation le_Builder::StringToStaticBinaryOutputStatusVa
 }
 
 // String-to-enum conversion for EventBinaryOutputStatusVariation
-EventBinaryOutputStatusVariation le_Builder::StringToEventBinaryOutputStatusVariation(const char* str)
+EventBinaryOutputStatusVariation le_Builder::StringToEventBinaryOutputStatusVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, EventBinaryOutputStatusVariation> map = {
         {"Group11Var1", EventBinaryOutputStatusVariation::Group11Var1},
@@ -390,7 +639,7 @@ EventBinaryOutputStatusVariation le_Builder::StringToEventBinaryOutputStatusVari
 }
 
 // String-to-enum conversion for StaticAnalogVariation
-StaticAnalogVariation le_Builder::StringToStaticAnalogVariation(const char* str)
+StaticAnalogVariation le_Builder::StringToStaticAnalogVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, StaticAnalogVariation> map = {
         {"Group30Var1", StaticAnalogVariation::Group30Var1},
@@ -405,7 +654,7 @@ StaticAnalogVariation le_Builder::StringToStaticAnalogVariation(const char* str)
 }
 
 // String-to-enum conversion for EventAnalogVariation
-EventAnalogVariation le_Builder::StringToEventAnalogVariation(const char* str)
+EventAnalogVariation le_Builder::StringToEventAnalogVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, EventAnalogVariation> map = {
         {"Group32Var1", EventAnalogVariation::Group32Var1},
@@ -422,7 +671,7 @@ EventAnalogVariation le_Builder::StringToEventAnalogVariation(const char* str)
 }
 
 // String-to-enum conversion for StaticAnalogOutputStatusVariation
-StaticAnalogOutputStatusVariation le_Builder::StringToStaticAnalogOutputStatusVariation(const char* str)
+StaticAnalogOutputStatusVariation le_Builder::StringToStaticAnalogOutputStatusVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, StaticAnalogOutputStatusVariation> map = {
         {"Group40Var1", StaticAnalogOutputStatusVariation::Group40Var1},
@@ -435,7 +684,7 @@ StaticAnalogOutputStatusVariation le_Builder::StringToStaticAnalogOutputStatusVa
 }
 
 // String-to-enum conversion for EventAnalogOutputStatusVariation
-EventAnalogOutputStatusVariation le_Builder::StringToEventAnalogOutputStatusVariation(const char* str)
+EventAnalogOutputStatusVariation le_Builder::StringToEventAnalogOutputStatusVariation(const std::string& str)
 {
     static const std::unordered_map<std::string, EventAnalogOutputStatusVariation> map = {
         {"Group42Var1", EventAnalogOutputStatusVariation::Group42Var1},
@@ -451,3 +700,39 @@ EventAnalogOutputStatusVariation le_Builder::StringToEventAnalogOutputStatusVari
     return it != map.end() ? it->second : EventAnalogOutputStatusVariation::Group42Var1;  // Default or error handling
 }
 #endif
+
+// Convert MajorError to string
+const char* le_Builder::MajorErrorToString(MajorError error)
+{
+    switch (error)
+    {
+        case MajorError::NONE: return "No error";
+        case MajorError::INV_FILE: return "Invalid file path or file cannot be opened";
+        case MajorError::INV_JSON_FILE: return "Invalid JSON format";
+        case MajorError::INV_ENGINE_NAME: return "Missing or invalid engine name in JSON";
+        case MajorError::INV_ENGINE_COMPONENTS: return "Invalid or missing engine components in JSON";
+        case MajorError::INV_ENGINE_NETS: return "Invalid or missing engine nets in JSON";
+        case MajorError::INV_SER: return "Invalid or missing SER configuration";
+#ifdef LE_DNP3
+        case MajorError::INV_DNP3_CONFIG: return "Invalid or missing DNP3 configuration in JSON";
+#endif
+        default: return "Unknown major error";
+    }
+}
+
+// Convert MinorError to string
+const char* le_Builder::MinorErrorToString(MinorError error)
+{
+    switch (error)
+    {
+        case MinorError::NONE: return "No error";
+        case MinorError::INV_COMPONENTS_OUTPUT: return "Invalid component output in JSON";
+        case MinorError::INV_ENGINE_NETS: return "Invalid engine nets in JSON";
+        case MinorError::INV_SER_POINT: return "Invalid ser point";
+#ifdef LE_DNP3
+        case MinorError::INV_DNP3_SESSION: return "Invalid or missing DNP3 session in JSON";
+        case MinorError::INV_DNP3_POINT: return "Invalid or missing DNP3 point in JSON";
+#endif
+        default: return "Unknown minor error";
+    }
+}

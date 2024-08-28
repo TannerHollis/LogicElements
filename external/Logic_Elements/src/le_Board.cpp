@@ -1,5 +1,7 @@
 #include "le_Board.hpp"
 
+#include "le_Version.hpp"
+
 // Define a macro to handle weak attribute based on the compiler
 #if defined(_MSC_VER)
 #define WEAK_ATTR 
@@ -13,23 +15,16 @@
  * @param nInputs_Analog Number of analog inputs.
  * @param nOutputs Number of outputs.
  */
-    le_Board::le_Board(uint16_t nInputs_Digital, uint16_t nInputs_Analog, uint16_t nOutputs)
+    le_Board::le_Board(le_Board_Config config) : 
+        config(config),
+        _inputs_Digital(new le_Board_IO_Digital[config.digitalInputs]),
+        _inputs_Analog(new le_Board_IO_Analog[config.analogInputs]),
+        _outputs(new le_Board_IO_Digital[config.digitalOutputs]),
+        engine(nullptr),
+        bEnginePaused(true),
+        bIOInvalidated(true),
+        bInputsNeedUpdated(false)
 {
-    // Declare extrinsic variables
-    this->nInputs_Digital = nInputs_Digital;
-    this->nInputs_Analog = nInputs_Analog;
-    this->nOutputs = nOutputs;
-
-    // Declare intrinsic variables
-    this->_inputs_Digital = new le_Board_IO_Digital[nInputs_Digital];
-    this->_inputs_Analog = new le_Board_IO_Analog[nInputs_Analog];
-    this->_outputs = new le_Board_IO_Digital[nOutputs];
-    this->e = nullptr;
-    this->bEnginePaused = true;
-    this->bIOInvalidated = true;
-    this->bInputsNeedUpdated = false;
-    this->bOutputsNeedUpdated = false;
-
 #ifdef LE_DNP3
     outstation = nullptr;
 #endif
@@ -95,15 +90,15 @@ void le_Board::AddOutput(uint16_t slot, const char* name, void* gpioPort, uint16
  */
 void le_Board::AttachEngine(le_Engine* engine)
 {
-    this->e = engine;
+    this->engine = engine;
     this->bIOInvalidated = true;
 }
 
 /**
  * @brief Runs the board for the specified time step.
- * @param timeStep The time step for running the board.
+ * @param timeStamp The current timestamp.
  */
-void le_Board::Run(float timeStep)
+void le_Board::Update(const le_Time& timeStamp)
 {
     // Check IO Validation
     if (this->bIOInvalidated)
@@ -113,21 +108,15 @@ void le_Board::Run(float timeStep)
     if (this->bIOInvalidated)
         return;
 
-    // Update inputs if needed
-    if (this->bInputsNeedUpdated)
-        this->UpdateInputs();
-
     // Run engine if not paused
     if (!this->bEnginePaused)
     {
-        this->e->Update(timeStep);
-        this->bEnginePaused = true;
-        this->bOutputsNeedUpdated = true;
+        this->engine->Update(timeStamp);
+#ifdef LE_DNP3
+        if (this->outstation != nullptr)
+            this->outstation->Update();
+#endif
     }
-
-    // Update outputs if needed
-    if (this->bOutputsNeedUpdated)
-        this->UpdateOutputs();
 }
 
 /**
@@ -139,11 +128,43 @@ void le_Board::UnpauseEngine()
 }
 
 /**
+ * @brief Pauses the engine.
+ */
+void le_Board::PauseEngine()
+{
+    this->bEnginePaused = true;
+}
+
+/**
  * @brief Flags the input for update.
  */
 void le_Board::FlagInputForUpdate()
 {
     this->bInputsNeedUpdated = true;
+}
+
+bool le_Board::IsPaused() const
+{
+    return this->bEnginePaused;
+}
+
+le_Engine* le_Board::GetEngine()
+{
+    return this->engine;
+}
+
+uint16_t le_Board::GetInfo(char* buffer, uint16_t length)
+{
+    return snprintf(
+        buffer,
+        length,
+        "Device Name: %s\r\nDevice PN: %s\r\nFirmware: %s\r\nDigital Inputs: %u\r\nDigital Outputs: %u\r\nAnalog Inputs: %u\r\n",
+        this->config.deviceName,
+        this->config.devicePN,
+        le_Version::GetVersion(),
+        this->config.digitalInputs,
+        this->config.digitalOutputs,
+        this->config.analogInputs);
 }
 
 /**
@@ -211,36 +232,39 @@ inline void le_Board::AddIO(uint16_t slot, const char* name, void* gpioPort, uin
 void le_Board::ValidateIO()
 {
     // Check if engine is valid
-    if (this->e == nullptr)
+    if (this->engine == nullptr)
         return;
 
     // Validate Analog Inputs
-    for (uint16_t i = 0; i < this->nInputs_Analog; i++)
+    for (uint16_t i = 0; i < this->config.analogInputs; i++)
     {
-        this->_inputs_Analog[i].element = (le_Base<float>*)this->e->GetElement(this->_inputs_Analog[i].name);
+        this->_inputs_Analog[i].element = (le_Base<float>*)this->engine->GetElement(this->_inputs_Analog[i].name);
         if (this->_inputs_Analog[i].element == nullptr)
             return;
     }
 
     // Validate Digital Inputs
-    for (uint16_t i = 0; i < this->nInputs_Digital; i++)
+    for (uint16_t i = 0; i < this->config.digitalInputs; i++)
     {
-        this->_inputs_Digital[i].element = (le_Base<bool>*)this->e->GetElement(this->_inputs_Digital[i].name);
+        this->_inputs_Digital[i].element = (le_Base<bool>*)this->engine->GetElement(this->_inputs_Digital[i].name);
         if (this->_inputs_Digital[i].element == nullptr)
             return;
     }
 
     // Validate Outputs
-    for (uint16_t i = 0; i < this->nOutputs; i++)
+    for (uint16_t i = 0; i < this->config.digitalOutputs; i++)
     {
-        this->_outputs[i].element = (le_Base<bool>*)this->e->GetElement(this->_outputs[i].name);
+        this->_outputs[i].element = (le_Base<bool>*)this->engine->GetElement(this->_outputs[i].name);
         if (this->_outputs[i].element == nullptr)
             return;
     }
 
 #ifdef LE_DNP3
     if (outstation != nullptr)
-        outstation->ValidatePoints(this->e);
+    {
+        outstation->ValidatePoints(this->engine);
+        outstation->Enable();
+    }
 #endif
 
     this->bIOInvalidated = false;
@@ -252,7 +276,7 @@ void le_Board::ValidateIO()
 void le_Board::UpdateInputs()
 {
     // Update analogs
-    for (uint16_t i = 0; i < this->nInputs_Analog; i++)
+    for (uint16_t i = 0; i < this->config.analogInputs; i++)
     {
         // Get element
         le_Node<float>* element = (le_Node<float>*)this->_inputs_Analog[i].element;
@@ -263,7 +287,7 @@ void le_Board::UpdateInputs()
     }
 
     // Update digitals
-    for (uint16_t i = 0; i < this->nInputs_Digital; i++)
+    for (uint16_t i = 0; i < this->config.digitalInputs; i++)
     {
         // Get element
         le_Node<bool>* element = (le_Node<bool>*)this->_inputs_Digital[i].element;
@@ -280,7 +304,7 @@ void le_Board::UpdateInputs()
  */
 void le_Board::UpdateOutputs()
 {
-    for (uint16_t i = 0; i < this->nOutputs; i++)
+    for (uint16_t i = 0; i < this->config.digitalOutputs; i++)
     {
         // Get the element associated with the current output
         le_Node<bool>* element = (le_Node<bool>*)this->_outputs[i].element;
@@ -290,7 +314,6 @@ void le_Board::UpdateOutputs()
         // Update the output using the board-specific implementation
         le_Board_UpdateOutput(&_outputs[i]);
     }
-    this->bOutputsNeedUpdated = false;
 }
 
 #ifdef LE_DNP3

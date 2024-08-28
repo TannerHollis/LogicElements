@@ -104,6 +104,7 @@ typedef struct le_DNP3Outstation_Session_Config
         uint16_t index,
         std::string elementName,
         PointClass pointClass = PointClass::Class2,
+        float deadband = 0.0f,
         StaticAnalogVariation sVar = StaticAnalogVariation::Group30Var1,
         EventAnalogVariation eVar = EventAnalogVariation::Group32Var1
     );
@@ -122,6 +123,7 @@ typedef struct le_DNP3Outstation_Session_Config
         uint16_t index,
         std::string elementName,
         PointClass pointClass = PointClass::Class2,
+        float deadband = 0.0f,
         StaticAnalogOutputStatusVariation sVar = StaticAnalogOutputStatusVariation::Group40Var1,
         EventAnalogOutputStatusVariation eVar = EventAnalogOutputStatusVariation::Group42Var1
     );

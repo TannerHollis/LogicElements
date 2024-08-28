@@ -1,5 +1,14 @@
 #include "le_Time.hpp"
 
+#ifdef _WIN32
+#include <chrono>
+#elif defined(__linux__)
+#include <chrono>
+#else
+#include <mach/mach_time.h>
+#include <ctime> // Add this line
+#endif
+
 /**
  * @brief Array containing the number of days in each month for a non-leap year.
  */
@@ -25,7 +34,14 @@ le_Time::le_Time(uint32_t subSecondFraction, uint32_t subSecond, uint8_t second,
     this->uHour = hour;
     this->uDay = day;
     this->uYear = year;
+
+    this->Update(0);
 }
+
+ /**
+  * @brief Default constructor to initialize the le_Time object with zero values.
+  */
+ le_Time::le_Time() : le_Time(1000000000, 0, 0, 0, 0, 0, 0) {}
 
 /**
  * @brief Gets a future le_Time object based on the current time plus the specified seconds.
@@ -100,11 +116,11 @@ void le_Time::Update(uint32_t subSeconds)
 }
 
 /**
- * @brief Calculates the elapsed time in microseconds since the specified le_Time object.
- * @param other The reference le_Time object to compare against.
+ * @brief Subtracts the specified le_Time object from the current le_Time object.
+ * @param other The reference le_Time object to subtract.
  * @return The elapsed time in microseconds.
  */
-int32_t le_Time::GetElapsedTimeSince(le_Time& other)
+int32_t le_Time::operator-(le_Time& other)
 {
     int32_t totalTime = 0;
     totalTime += ((int32_t)this->uSubSecond - (int32_t)other.uSubSecond) * 1000000 / (int32_t)this->uSubSecondFraction;
@@ -113,6 +129,56 @@ int32_t le_Time::GetElapsedTimeSince(le_Time& other)
     totalTime += ((int32_t)this->uHour - (int32_t)other.uHour) * 3600 * 1000000;
     totalTime += ((int32_t)this->uDay - (int32_t)other.uDay) * 86400 * 1000000;
     return totalTime;
+}
+
+/**
+ * @brief Adds the specified le_Time object to the current le_Time object.
+ * @param other The reference le_Time object to add.
+ * @return A new le_Time object representing the sum of the two times.
+ */
+le_Time le_Time::operator+(le_Time& other)
+{
+    le_Time result = *this;
+    result.uSubSecond += other.uSubSecond;
+    if (result.uSubSecond >= result.uSubSecondFraction)
+    {
+        result.uSecond += result.uSubSecond / result.uSubSecondFraction;
+        result.uSubSecond %= result.uSubSecondFraction;
+    }
+
+    result.uSecond += other.uSecond;
+    if (result.uSecond >= 60)
+    {
+        result.uMinute += result.uSecond / 60;
+        result.uSecond %= 60;
+    }
+
+    result.uMinute += other.uMinute;
+    if (result.uMinute >= 60)
+    {
+        result.uHour += result.uMinute / 60;
+        result.uMinute %= 60;
+    }
+
+    result.uHour += other.uHour;
+    if (result.uHour >= 24)
+    {
+        result.uDay += result.uHour / 24;
+        result.uHour %= 24;
+    }
+
+    result.uDay += other.uDay;
+    uint16_t daysInYear = result.GetDaysInYear(result.uYear + 1970);
+    while (result.uDay >= daysInYear)
+    {
+        result.uYear++;
+        result.uDay -= daysInYear;
+        daysInYear = result.GetDaysInYear(result.uYear + 1970);
+    }
+
+    result.uYear += other.uYear;
+
+    return result;
 }
 
 /**
@@ -125,10 +191,10 @@ int32_t le_Time::GetElapsedTimeSince(le_Time& other)
  * @param year The new year part of the time.
  * @return The drift in microseconds.
  */
-int32_t le_Time::Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint16_t day, uint8_t year)
+int32_t le_Time::Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8_t hour, uint16_t day, uint16_t year)
 {
     le_Time time(this->uSubSecondFraction, subSecond, second, minute, hour, day, year);
-    int32_t drift = time.GetElapsedTimeSince(*this);
+    int32_t drift = time - (*this);
 
     this->uSubSecond = subSecond;
     this->uSecond = second;
@@ -145,13 +211,36 @@ int32_t le_Time::Align(uint32_t subSecond, uint8_t second, uint8_t minute, uint8
  * @param buffer The buffer to print the time into.
  * @param length The length of the buffer.
  */
-void le_Time::PrintShortTime(char* buffer, uint32_t length)
+uint16_t le_Time::PrintShortTime(char* buffer, uint32_t length)
 {
     uint8_t month;
     uint8_t monthDay;
     ConvertDayOfYearToMonthDay(this->uYear + 1970, this->uDay, &month, &monthDay);
 
-    snprintf(buffer, length, "%4u-%02u-%02u %02u:%02u:%02u", this->uYear + 1970, month + 1, monthDay + 1, this->uHour, this->uMinute, this->uSecond);
+    return snprintf(buffer, length, "%4u-%02u-%02u %02u:%02u:%02u", this->uYear + 1970, month + 1, monthDay + 1, this->uHour, this->uMinute, this->uSecond);
+}
+
+/**
+ * @brief Gets the current time as an le_Time object.
+ * @return A new le_Time object representing the current time.
+ */
+le_Time le_Time::GetTime()
+{
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    uint32_t subSecondFraction = 1000000000; // Nanoseconds
+    uint32_t subSecond = nanoseconds % subSecondFraction;
+    time_t seconds = nanoseconds / subSecondFraction;
+    struct tm* tm_info = gmtime(&seconds);
+    uint8_t second = tm_info->tm_sec;
+    uint8_t minute = tm_info->tm_min;
+    uint8_t hour = tm_info->tm_hour;
+    uint16_t day = tm_info->tm_yday + 1;
+    uint16_t year = tm_info->tm_year + 1900 - 1970;
+
+    return le_Time(subSecondFraction, subSecond, second, minute, hour, day, year);
 }
 
 /**
@@ -210,4 +299,53 @@ inline void le_Time::ConvertDayOfYearToMonthDay(uint16_t year, uint16_t dayOfYea
         (*month)++;
     }
     *day = (uint8_t)dayOfYear;
+}
+
+/**
+ * @brief Checks if the specified time has elapsed compared to the current time.
+ * @param other The reference le_Time object to compare.
+ * @return True if the specified time has elapsed, false otherwise.
+ */
+bool le_Time::HasElapsed(const le_Time& other) const
+{
+    return ((le_Time&)*this - (le_Time&)other) >= 0;
+}
+
+/**
+ * @brief Converts the le_Time object to microseconds since the epoch (1970-01-01 00:00:00).
+ * @return The number of microseconds since the epoch.
+ */
+uint64_t le_Time::ToMicrosecondsSinceEpoch() const
+{
+    uint64_t totalMicroseconds = 0;
+
+    // Calculate the number of days since the epoch
+    for (uint16_t year = 1970; year < this->uYear + 1970; ++year)
+    {
+        totalMicroseconds += GetDaysInYear(year) * 86400ULL * 1000000ULL;
+    }
+
+    // Add the number of days in the current year
+    totalMicroseconds += this->uDay * 86400ULL * 1000000ULL;
+
+    // Add the number of hours, minutes, seconds, and sub-seconds
+    totalMicroseconds += this->uHour * 3600ULL * 1000000ULL;
+    totalMicroseconds += this->uMinute * 60ULL * 1000000ULL;
+    totalMicroseconds += this->uSecond * 1000000ULL;
+    totalMicroseconds += this->uSubSecond * (1000000ULL / this->uSubSecondFraction);
+
+    return totalMicroseconds;
+}
+
+/**
+ * @brief Converts the le_Time object to nanoseconds since the epoch (1970-01-01 00:00:00).
+ * @return The number of nanoseconds since the epoch.
+ */
+uint64_t le_Time::ToNanosecondsSinceEpoch() const
+{
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+
+    return nanoseconds;
 }

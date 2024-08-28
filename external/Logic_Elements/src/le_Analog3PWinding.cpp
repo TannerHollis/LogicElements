@@ -22,7 +22,7 @@
  * @brief Constructor that initializes the le_Analog3PWinding with specified samples per cycle.
  * @param samplesPerCycle Number of samples per cycle.
  */
-le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float>(5, 12)
+le_Analog3PWinding::le_Analog3PWinding(uint16_t samplesPerCycle) : le_Base<float>(le_Element_Type::LE_ANALOG_3P, 5, 12)
 {
     // Allocate memory for all windings
     this->_windings = new le_Analog1PWinding*[3];
@@ -50,16 +50,16 @@ le_Analog3PWinding::~le_Analog3PWinding()
 
 /**
  * @brief Updates the le_Analog3PWinding.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Analog3PWinding::Update(float timeStep)
+void le_Analog3PWinding::Update(const le_Time& timeStamp)
 {
     VerifyInputs();
 
     // Update each winding
     for (uint8_t i = 0; i < 3; i++)
     {
-        this->_windings[i]->Update(timeStep);
+        this->_windings[i]->Update(timeStamp);
 
         // Set phase values
         this->SetValue(i * 2, this->_windings[i]->GetValue(0));

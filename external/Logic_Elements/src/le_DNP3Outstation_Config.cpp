@@ -82,6 +82,7 @@ le_DNP3_Point<AnalogConfig>* le_DNP3Outstation_Session_Config::AddAnalogInput(
     uint16_t index,
     std::string elementName,
     PointClass pointClass,
+    float deadband,
     StaticAnalogVariation sVar,
     EventAnalogVariation eVar
 )
@@ -104,6 +105,7 @@ le_DNP3_Point<AnalogConfig>* le_DNP3Outstation_Session_Config::AddAnalogInput(
     point.point->clazz = pointClass;
     point.point->svariation = sVar;
     point.point->evariation = eVar;
+    point.point->deadband = deadband;
 
     // Add the point to the map of analog inputs
     auto result2 = _analogInputs.insert(std::make_pair(index, point));
@@ -119,6 +121,7 @@ le_DNP3_Point<AOStatusConfig>* le_DNP3Outstation_Session_Config::AddAnalogOutput
     uint16_t index,
     std::string elementName,
     PointClass pointClass,
+    float deadband,
     StaticAnalogOutputStatusVariation sVar,
     EventAnalogOutputStatusVariation eVar
 )
@@ -141,6 +144,7 @@ le_DNP3_Point<AOStatusConfig>* le_DNP3Outstation_Session_Config::AddAnalogOutput
     point.point->clazz = pointClass;
     point.point->svariation = sVar;
     point.point->evariation = eVar;
+    point.point->deadband = deadband;
 
     // Add the point to the map of analog outputs
     auto result2 = _analogOutputs.insert(std::make_pair(index, point));

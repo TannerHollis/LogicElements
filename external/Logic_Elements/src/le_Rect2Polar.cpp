@@ -4,15 +4,15 @@
 /**
  * @brief Constructs a le_Rect2Polar object.
  */
-le_Rect2Polar::le_Rect2Polar() : le_Base<float>(2, 2) {}
+le_Rect2Polar::le_Rect2Polar() : le_Base<float>(le_Element_Type::LE_R2P, 2, 2) {}
 
 /**
  * @brief Updates the le_Rect2Polar element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Rect2Polar::Update(float timeStep)
+void le_Rect2Polar::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     le_Base<float>* eReal = (le_Base<float>*)this->_inputs[0];
     le_Base<float>* eImag = (le_Base<float>*)this->_inputs[1];

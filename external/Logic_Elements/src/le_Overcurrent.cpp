@@ -65,7 +65,7 @@ void le_Overcurrent::SetCurveParameters(le_Overcurrent_Curve curve, float* param
  * @param emReset Flag indicating if electromechanical reset is enabled.
  */
 le_Overcurrent::le_Overcurrent(std::string curve, float pickup, float timeDial, float timeAdder, bool emReset)
-    : le_Base<bool>(1, 1)
+    : le_Base<bool>(le_Element_Type::LE_OVERCURRENT, 1, 1)
 {
     // Set extrinsic variables
     this->curve = ParseCurveType(curve);
@@ -81,10 +81,13 @@ le_Overcurrent::le_Overcurrent(std::string curve, float pickup, float timeDial, 
 
 /**
  * @brief Updates the overcurrent element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Overcurrent::Update(float timeStep)
+void le_Overcurrent::Update(const le_Time& timeStamp)
 {
+    float timeStep = static_cast<float>((le_Time&)timeStamp - this->lastTimeStamp) / 1000000.0f; // Convert microseconds to seconds
+    this->lastTimeStamp = timeStamp;
+
     le_Base<float>* e = this->template GetInput<le_Base<float>>(0);
     if (e != nullptr)
     {
@@ -126,6 +129,9 @@ void le_Overcurrent::Update(float timeStep)
         // Set the output of the timer
         this->SetValue(0, this->fPercent == 100.0f);
     }
+
+    // Update the last timestamp
+    this->lastTimeStamp = timeStamp;
 }
 
 /**

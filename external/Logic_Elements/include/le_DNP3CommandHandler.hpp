@@ -49,7 +49,6 @@ public:
     virtual void Begin() override
     {
         // No action needed
-        (void)this;
     }
 
     /**

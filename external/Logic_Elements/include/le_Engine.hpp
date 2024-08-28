@@ -10,6 +10,7 @@
 #include "le_Timer.hpp"
 #include "le_Counter.hpp"
 #include "le_Mux.hpp"
+#include "le_SER.hpp"
 
 // Check if analog elements are enabled
 #ifdef LE_ELEMENTS_ANALOG
@@ -41,44 +42,6 @@
 #define LE_ELEMENT_NAME_LENGTH 8
 #define LE_ENGINE_NAME_LENGTH 32
 #define LE_ELEMENT_ARGUMENT_LENGTH 64
-
-/**
- * @brief Enum class to define the types of elements.
- *          0 : Base digital element le_Base<bool>
- *          10 - 29 : Simple digital elements
- *          30 - 49 : Complex digital elements
- *          40 - 49 : Undefined
- *
- *          50 : Base analog element le_Base<float>
- *          60 - 79 : Simple analog elements
- *          80 - 99 : Complex analog elements
- *
- *          100 - 119 : Protective Functions
- *
- *          -1 : Invalid
- */
-enum class le_Element_Type : int8_t {
-    LE_NODE_DIGITAL = 0,
-    LE_AND = 10,
-    LE_OR = 11,
-    LE_NOT = 12,
-    LE_RTRIG = 13,
-    LE_FTRIG = 14,
-    LE_TIMER = 30,
-    LE_COUNTER = 31,
-    LE_MUX_DIGITAL = 32,
-    LE_NODE_ANALOG = 50,
-    LE_R2P = 60,
-    LE_P2R = 61,
-    LE_PHASOR_SHIFT = 62,
-    LE_MUX_ANALOG = 63,
-    LE_MATH = 80,
-    LE_ANALOG_1P = 81,
-    LE_ANALOG_3P = 82,
-    LE_PID = 83,
-    LE_OVERCURRENT = 100,
-    LE_INVALID = -1
-};
 
 /**
  * @brief The engine class that manages elements and their connections.
@@ -188,9 +151,9 @@ public:
 
     /**
      * @brief Updates all elements in the engine.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
     /**
      * @brief Gets an element by its name.
@@ -240,19 +203,6 @@ private:
     uint16_t uDefaultNodeBufferLength;
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
-public:
-    /**
-     * @brief Gets timestamp of a running timer to calculate function execute time.
-     * @return Return the current timer CNT register
-     */
-    uint32_t GetTime();
-
-    /**
-     * @brief Configures the execution timer with a specified frequency.
-     * @param execTimerFreq Frequency to set for the execution timer.
-     */
-    void ConfigureTimer(uint32_t execTimerFreq);
-
 private:
     /**
      * @brief Converts a ratio of two integers into integer and fractional parts.
@@ -269,10 +219,10 @@ private:
      */
     void ConvertFloatingPoint(uint32_t numerator, uint32_t denominator, uint16_t* integerPart, uint16_t* fractionalPart);
 
-    uint32_t uExecTimerFreq;
-    uint32_t uUpdateTime;
-    uint32_t uUpdateTimeLast;
-    uint32_t uUpdateTimePeriod;
-    std::vector<uint32_t> _elementExecTime;
+    uint64_t uExecTimerFreq;
+    uint64_t uUpdateTime;
+    uint64_t uUpdateTimeLast;
+    uint64_t uUpdateTimePeriod;
+    std::vector<uint64_t> _elementExecTime;
 #endif
 };

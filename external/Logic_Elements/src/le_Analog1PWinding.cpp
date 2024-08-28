@@ -10,7 +10,7 @@
  * @brief Constructor that initializes the le_Analog1PWinding with specified samples per cycle.
  * @param samplesPerCycle Number of samples per cycle.
  */
-le_Analog1PWinding::le_Analog1PWinding(uint16_t samplesPerCycle) : le_Base<float>(3, 2)
+le_Analog1PWinding::le_Analog1PWinding(uint16_t samplesPerCycle) : le_Base<float>(le_Element_Type::LE_ANALOG_1P, 3, 2)
 {
     // Set extrinsic variables
     this->uSamplesPerCycle = samplesPerCycle;
@@ -53,9 +53,9 @@ le_Analog1PWinding::~le_Analog1PWinding()
  * @brief Updates the le_Analog1PWinding.
  * @param timeStamp The current timestamp.
  */
-void le_Analog1PWinding::Update(float timeStep)
+void le_Analog1PWinding::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     ApplyCosineFilter();
     CalculatePhasor();

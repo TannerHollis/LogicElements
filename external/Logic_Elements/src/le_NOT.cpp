@@ -3,18 +3,18 @@
 /**
  * @brief Constructor that initializes the NOT element.
  */
-le_NOT::le_NOT() : le_Base<bool>(1, 1)
+le_NOT::le_NOT() : le_Base<bool>(le_Element_Type::LE_NOT, 1, 1)
 {
     // Do nothing...
 }
 
 /**
  * @brief Updates the NOT element. Calculates the logical NOT of the input.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_NOT::Update(float timeStep)
+void le_NOT::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Get input value
     le_Base<bool>* e = this->template GetInput<le_Base<bool>>(0);

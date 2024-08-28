@@ -1,6 +1,7 @@
 #pragma once
 
 #include "le_Base.hpp"
+#include "le_Time.hpp"
 
 #include <cmath>
 #include <complex>
@@ -25,9 +26,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the le_Analog1PWinding.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**

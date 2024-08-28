@@ -19,6 +19,6 @@
 #define LE_ELEMENTS_PID
 
 /**
- * Enable DNP session via Logic_Elements
+ * Enable DNP3 session via le_DNP3Outstation
  */
-//#define LE_DNP3
+#define LE_DNP3

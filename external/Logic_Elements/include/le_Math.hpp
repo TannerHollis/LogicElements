@@ -32,9 +32,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the le_Math by evaluating the expression with the current input values.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**

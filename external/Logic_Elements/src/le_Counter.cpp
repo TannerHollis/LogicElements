@@ -4,7 +4,7 @@
  * @brief Constructor implementation that initializes the counter element with a specified final count.
  * @param countFinal The final count value for the counter.
  */
-le_Counter::le_Counter(uint16_t countFinal) : le_Base<bool>(2, 1)
+le_Counter::le_Counter(uint16_t countFinal) : le_Base<bool>(le_Element_Type::LE_COUNTER, 2, 1)
 {
     // Set extrinsic variables
     this->uCountFinal = countFinal;
@@ -17,11 +17,11 @@ le_Counter::le_Counter(uint16_t countFinal) : le_Base<bool>(2, 1)
 
 /**
  * @brief Updates the counter element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Counter::Update(float timeStep)
+void le_Counter::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Get input components for count-up and reset
     le_Base<bool>* cu = this->template GetInput<le_Base<bool>>(0);

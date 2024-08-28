@@ -4,15 +4,15 @@
 /**
  * @brief Constructs a le_Polar2Rect object.
  */
-le_Polar2Rect::le_Polar2Rect() : le_Base<float>(2, 2) {}
+le_Polar2Rect::le_Polar2Rect() : le_Base<float>(le_Element_Type::LE_P2R, 2, 2) {}
 
 /**
  * @brief Updates the le_Polar2Rect element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Polar2Rect::Update(float timeStep)
+void le_Polar2Rect::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     le_Base<float>* eMag = (le_Base<float>*)this->_inputs[0];
     le_Base<float>* eAngle = (le_Base<float>*)this->_inputs[1];

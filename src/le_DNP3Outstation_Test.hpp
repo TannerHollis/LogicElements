@@ -1,6 +1,8 @@
+#pragma once
+
 #include "le_DNP3Outstation.hpp"
 
-#define OUTSTATION_IP "192.168.0.205"
+#define OUTSTATION_IP "0.0.0.0"
 #define OUTSTATION_DNP 10
 #define CLIENT_IP "192.168.0.30"
 #define CLIENT_DNP 1

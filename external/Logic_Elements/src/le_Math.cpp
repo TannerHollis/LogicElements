@@ -5,7 +5,7 @@
  * @param nInputs Number of inputs for the mathematical expression.
  * @param expr The mathematical expression to evaluate.
  */
-le_Math::le_Math(uint8_t nInputs, std::string expr) : le_Base<float>(nInputs, 1)
+le_Math::le_Math(uint8_t nInputs, std::string expr) : le_Base<float>(le_Element_Type::LE_MATH, nInputs, 1)
 {
     // Declare extrinsic variables
     this->sExpr = expr;
@@ -52,11 +52,11 @@ inline le_Math::~le_Math()
 
 /**
  * @brief Updates the le_Math by evaluating the expression with the current input values.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Math::Update(float timeStep)
+void le_Math::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Attempt expression
     if (this->te_expression)

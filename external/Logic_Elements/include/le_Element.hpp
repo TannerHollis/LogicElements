@@ -3,6 +3,9 @@
 // Include config
 #include "le_Config.hpp"
 
+// Include le_Time
+#include "le_Time.hpp"
+
 // Include standard C++ libraries
 #include <cstdint>
 #include <cstdlib>
@@ -26,6 +29,45 @@
 #endif
 
 /**
+ * @brief Enum class to define the types of elements.
+ *          0 : Base digital element le_Base<bool>
+ *          10 - 29 : Simple digital elements
+ *          30 - 49 : Complex digital elements
+ *          40 - 49 : Undefined
+ *
+ *          50 : Base analog element le_Base<float>
+ *          60 - 79 : Simple analog elements
+ *          80 - 99 : Complex analog elements
+ *
+ *          100 - 119 : Protective Functions
+ *
+ *          -1 : Invalid
+ */
+enum class le_Element_Type : int8_t {
+    LE_NODE_DIGITAL = 0,
+    LE_AND = 10,
+    LE_OR = 11,
+    LE_NOT = 12,
+    LE_RTRIG = 13,
+    LE_FTRIG = 14,
+    LE_TIMER = 30,
+    LE_COUNTER = 31,
+    LE_MUX_DIGITAL = 32,
+    LE_SER = 49,
+    LE_NODE_ANALOG = 50,
+    LE_R2P = 60,
+    LE_P2R = 61,
+    LE_PHASOR_SHIFT = 62,
+    LE_MUX_ANALOG = 63,
+    LE_MATH = 80,
+    LE_ANALOG_1P = 81,
+    LE_ANALOG_3P = 82,
+    LE_PID = 83,
+    LE_OVERCURRENT = 100,
+    LE_INVALID = -1
+};
+
+/**
  * @brief Base class for le_Element which represents an element with inputs and an update mechanism.
  */
 class le_Element
@@ -35,7 +77,7 @@ protected:
      * @brief Constructor that initializes the element with a specified number of inputs.
      * @param nInputs Number of inputs for the element.
      */
-    le_Element(uint8_t nInputs);
+    le_Element(le_Element_Type type, uint8_t nInputs);
 
     /**
      * @brief Virtual destructor to allow proper cleanup of derived classes.
@@ -46,7 +88,7 @@ protected:
      * @brief Virtual function to update the element. Can be overridden by derived classes.
      * @param timeStamp The current timestamp.
      */
-    virtual void Update(float timeStep);
+    virtual void Update(const le_Time& timeStamp) = 0;
 
 public:
     /**
@@ -72,6 +114,13 @@ public:
      */
     static void Connect(le_Element* output, uint8_t outputSlot, le_Element* input, uint8_t inputSlot);
 
+    /**
+     * @brief Gets the type of the specified element.
+     * @param e The element to get the type of.
+     * @return The type of the element.
+     */
+    static le_Element_Type GetType(le_Element* e);
+
 private:
     /**
      * @brief Finds the order of the element recursively.
@@ -83,6 +132,7 @@ private:
     uint16_t iOrder;              ///< The update order of the element.
 
 protected:
+    le_Element_Type type;
     uint8_t nInputs;             ///< Number of inputs.
     le_Element** _inputs;         ///< Array of pointers to input elements.
     uint8_t* _outputSlots;       ///< Array of output slots.

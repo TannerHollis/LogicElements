@@ -4,18 +4,18 @@
  * @brief Constructor implementation that initializes the AND element with a specified number of inputs.
  * @param nInputs Number of inputs for the AND element.
  */
-le_AND::le_AND(uint8_t nInputs) : le_Base<bool>(nInputs, 1)
+le_AND::le_AND(uint8_t nInputs) : le_Base<bool>(le_Element_Type::LE_AND, nInputs, 1)
 {
     // Do nothing...
 }
 
 /**
  * @brief Updates the AND element. Calculates the logical AND of all inputs.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_AND::Update(float timeStep)
+void le_AND::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Set default to true
     bool nextValue = true;

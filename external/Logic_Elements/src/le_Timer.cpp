@@ -2,32 +2,38 @@
 
 /**
  * @brief Constructor that initializes the timer element with specified pickup and dropout times.
- * @param pickup The pickup time.
- * @param dropout The dropout time.
+ * @param pickup The pickup time in seconds.
+ * @param dropout The dropout time in seconds.
  */
-le_Timer::le_Timer(float pickup, float dropout) : le_Base<bool>(1, 1)
+le_Timer::le_Timer(float pickup, float dropout) : le_Base<bool>(le_Element_Type::LE_TIMER, 1, 1)
 {
+    // Convert pickup and dropout times from seconds to microseconds and initialize le_Time objects
+    uint32_t pickupMicroseconds = static_cast<uint32_t>(pickup * 1000000);
+    uint32_t dropoutMicroseconds = static_cast<uint32_t>(dropout * 1000000);
+
     // Set extrinsic variables
-    this->fPickup = pickup;
-    this->fDropout = dropout;
+    this->fPickup = le_Time(1000000, pickupMicroseconds, 0, 0, 0, 0, 0);
+    this->fDropout = le_Time(1000000, dropoutMicroseconds, 0, 0, 0, 0, 0);
 
     // Set intrinsic variables
-    this->fTimer = 0.0f;
     this->state = le_Timer_State::TIM_IDLE;
+
+    // Initialize last timestamp
+    this->lastTimeStamp = le_Time();
 }
 
 /**
  * @brief Updates the timer element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_Timer::Update(float timeStep)
+void le_Timer::Update(const le_Time& timeStamp)
 {
     // Get input component
-    le_Base<bool>* e = (le_Base<bool>*)this->_inputs[0];
+    le_Base<bool>* e = this->GetInput<le_Base<bool>>(0);
     if (e != nullptr)
     {
         // Get input value
-        bool inputValue = e->GetValue(this->_outputSlots[0]);
+        bool inputValue = e->GetValue(this->GetOutputSlot(0));
 
         // Process input based on current state
         switch (this->state)
@@ -35,22 +41,26 @@ void le_Timer::Update(float timeStep)
         case le_Timer_State::TIM_IDLE: // No input is valid
             if (inputValue)
             {
-                if (this->fPickup == 0.0f) // If no pickup time, jump to dropout timer
+                if (this->fPickup.uSubSecond == 0) // If no pickup time, jump to dropout timer
+                {
                     this->state = le_Timer_State::TIM_DROPOUT;
+                    this->dropoutTime = (le_Time&)timeStamp + this->fDropout;
+                }
                 else
+                {
                     this->state = le_Timer_State::TIM_PICKUP;
+                    this->pickupTime = (le_Time&)timeStamp + this->fPickup;
+                }
             }
-            this->fTimer = 0.0f;
             break;
 
         case le_Timer_State::TIM_PICKUP: // Timer is in pickup state
             if (inputValue)
             {
-                this->fTimer += timeStep;
-                if (this->fTimer >= this->fPickup)
+                if (timeStamp.HasElapsed(this->pickupTime))
                 {
                     this->state = le_Timer_State::TIM_DROPOUT;
-                    this->fTimer = 0.0f;
+                    this->dropoutTime = (le_Time&)timeStamp + this->fDropout;
                 }
             }
             else
@@ -62,14 +72,11 @@ void le_Timer::Update(float timeStep)
         case le_Timer_State::TIM_DROPOUT: // Timer is in dropout state
             if (!inputValue)
             {
-                this->fTimer += timeStep;
-                if (this->fTimer >= this->fDropout)
+                if (timeStamp.HasElapsed(this->dropoutTime))
                 {
                     this->state = le_Timer_State::TIM_IDLE;
                 }
             }
-            else
-                this->fTimer = 0.0f;
             break;
 
         default:

@@ -18,9 +18,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the PhasorShift element.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**

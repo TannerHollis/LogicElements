@@ -10,7 +10,7 @@
  * @param derivativeTerms Number of terms for derivative calculation.
  */
 le_PID::le_PID(float p, float i, float d, float outputMin, float outputMax, uint8_t derivativeTerms)
-    : le_Base<float>(2, 1), fP(p), fI(i), fD(d), fOutputMin(outputMin), fOutputMax(outputMax), uDerivativeTerms(derivativeTerms)
+    : le_Base<float>(le_Element_Type::LE_PID, 2, 1), fP(p), fI(i), fD(d), fOutputMin(outputMin), fOutputMax(outputMax), uDerivativeTerms(derivativeTerms)
 {
     // Set extrinsic variables
     this->_dBufferIn = new float[derivativeTerms];
@@ -18,6 +18,9 @@ le_PID::le_PID(float p, float i, float d, float outputMin, float outputMax, uint
     this->uDerivativeWrite = this->uDerivativeTerms - 1;
     this->fDerivativeCoefficient = 1.0f / (float)derivativeTerms;
     this->fIntegral = 0.0f;
+
+    // Initialize last timestamp
+    this->lastTimeStamp = le_Time();
 }
 
 /**
@@ -31,10 +34,14 @@ le_PID::~le_PID()
 
 /**
  * @brief Updates the PID controller.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_PID::Update(float timeStep)
+void le_PID::Update(const le_Time& timeStamp)
 {
+    // Calculate timeStep
+    float timeStep = static_cast<float>((le_Time&)timeStamp - this->lastTimeStamp) / 1000000.0f;
+    this->lastTimeStamp = timeStamp;
+
     // Get input components for count-up and reset
     le_Base<float>* setpoint = this->template GetInput<le_Base<float>>(0);
     le_Base<float>* feedback = this->template GetInput<le_Base<float>>(1);

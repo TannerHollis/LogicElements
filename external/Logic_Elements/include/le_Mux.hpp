@@ -17,7 +17,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @param signalWidth The width of the signal.
      * @param nInputs The number of inputs to the multiplexer.
      */
-    le_Mux(uint8_t signalWidth, uint8_t nInputs);
+    le_Mux(le_Element_Type type, uint8_t signalWidth, uint8_t nInputs);
 
     /**
      * @brief Destructor to clean up the multiplexer.
@@ -26,9 +26,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the multiplexer with the current input value.
-     * @param timeStep The current time step.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**
@@ -54,8 +54,37 @@ private:
     friend class le_Engine;
 };
 
+/**
+ * @brief Digital multiplexer class inheriting from le_Mux with bool type.
+ */
+class le_Mux_Digital : public le_Mux<bool>
+{
+public:
+    /**
+     * @brief Constructor for le_Mux_Digital.
+     * @param signalWidth The width of the signal.
+     * @param nInputs The number of inputs to the multiplexer.
+     */
+    le_Mux_Digital(uint8_t signalWidth, uint8_t nInputs) : le_Mux<bool>(le_Element_Type::LE_MUX_DIGITAL, signalWidth, nInputs) {}
+};
+
+/**
+ * @brief Analog multiplexer class inheriting from le_Mux with float type.
+ */
+class le_Mux_Analog : public le_Mux<float>
+{
+public:
+    /**
+     * @brief Constructor for le_Mux_Analog.
+     * @param signalWidth The width of the signal.
+     * @param nInputs The number of inputs to the multiplexer.
+     */
+    le_Mux_Analog(uint8_t signalWidth, uint8_t nInputs) : le_Mux<float>(le_Element_Type::LE_MUX_ANALOG, signalWidth, nInputs) {}
+};
+
+
 template<typename T>
-le_Mux<T>::le_Mux(uint8_t signalWidth, uint8_t nInputs) : le_Base<T>(signalWidth * nInputs + 1, signalWidth)
+le_Mux<T>::le_Mux(le_Element_Type type, uint8_t signalWidth, uint8_t nInputs) : le_Base<T>(type, signalWidth * nInputs + 1, signalWidth)
 {
     // Set extrinsic variables
     this->uSignalWidth = signalWidth;
@@ -70,12 +99,12 @@ le_Mux<T>::~le_Mux() {}
 
 /**
 * @brief Updates the multiplexer with the current input value.
-* @param timeStep The current time step.
+* @param timeStamp The current timestamp.
 */
 template<typename T>
-void le_Mux<T>::Update(float timeStep)
+void le_Mux<T>::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     uint8_t selectorIndex = this->uSignalWidth - 1;
     le_Base<bool>* sel = this->template GetInput<le_Base<bool>>(selectorIndex);

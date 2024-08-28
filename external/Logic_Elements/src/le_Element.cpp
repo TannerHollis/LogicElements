@@ -4,11 +4,8 @@
  * @brief Constructor that initializes the element with a specified number of inputs.
  * @param nInputs Number of inputs for the element.
  */
-le_Element::le_Element(uint8_t nInputs)
+le_Element::le_Element(le_Element_Type type, uint8_t nInputs) : type(type), nInputs(nInputs)
 {
-    // Set the number of inputs
-    this->nInputs = nInputs;
-
     // Allocate memory for inputs and output slots
     this->_inputs = new le_Element * [nInputs];
     this->_outputSlots = new uint8_t[nInputs];
@@ -56,16 +53,6 @@ uint16_t le_Element::GetOrder()
 bool le_Element::CompareElementOrders(le_Element* left, le_Element* right)
 {
     return left->GetOrder() < right->GetOrder();
-}
-
-/**
- * @brief Virtual function to update the element. Can be overridden by derived classes.
- * @param timeStamp The current timestamp.
- */
-void le_Element::Update(float timeStep)
-{
-    UNUSED(timeStep);
-    // Default implementation does nothing
 }
 
 /**
@@ -119,4 +106,14 @@ void le_Element::FindOrder(le_Element* original, uint16_t* order)
 
     // Deallocate orders
     delete[] orders;
+}
+
+/**
+ * @brief Gets the type of the specified element.
+ * @param e The element to get the type of.
+ * @return The type of the element.
+ */
+le_Element_Type le_Element::GetType(le_Element* e)
+{
+    return e->type;
 }

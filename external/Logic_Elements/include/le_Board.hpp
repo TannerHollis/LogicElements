@@ -2,11 +2,29 @@
 
 #include "le_Engine.hpp"
 
+#define BOARD_ID_LENGTH 32
+
 /**
  * @brief Class representing a board with digital and analog inputs and outputs.
  */
 class le_Board
 {
+public:
+    typedef struct le_Board_Config
+    {
+        char deviceName[BOARD_ID_LENGTH];
+        char devicePN[BOARD_ID_LENGTH];
+        uint16_t digitalInputs;
+        uint16_t digitalOutputs;
+        uint16_t analogInputs;
+
+        le_Board_Config(std::string name, std::string pn) : digitalInputs(0), digitalOutputs(0), analogInputs(0)
+        {
+            le_Engine::CopyAndClampString(name, this->deviceName, BOARD_ID_LENGTH);
+            le_Engine::CopyAndClampString(pn, this->devicePN, BOARD_ID_LENGTH);
+        }
+    } le_Board_Config;
+
 private:
     /**
      * @brief Structure representing a digital I/O on the board.
@@ -39,7 +57,7 @@ public:
      * @param nInputs_Analog Number of analog inputs.
      * @param nOutputs Number of outputs.
      */
-    le_Board(uint16_t nInputs_Digital, uint16_t nInputs_Analog, uint16_t nOutputs);
+    le_Board(le_Board_Config config);
 
     /**
      * @brief Destructor to clean up the le_Board object.
@@ -82,14 +100,19 @@ public:
 
     /**
      * @brief Runs the board for the specified time step.
-     * @param timeStep The time step for running the board.
+     * @param timeStamp The current timestamp.
      */
-    void Run(float timeStep);
+    void Update(const le_Time& timeStamp);
 
     /**
      * @brief Unpauses the engine.
      */
     void UnpauseEngine();
+
+    /**
+     * @brief Pauses the engine.
+     */
+    void PauseEngine();
 
     /**
      * @brief Flags the input for update.
@@ -100,10 +123,21 @@ public:
      * @brief Checks if the engine is paused.
      * @return True if the engine is paused, false otherwise.
      */
-    bool IsPaused() const
-    {
-        return this->bEnginePaused;
-    }
+    bool IsPaused() const;
+
+    /**
+     * @brief Returns the current attached engine.
+     * @return Pointer to the current engine if any, otherwise nullptr.
+     */
+    le_Engine* GetEngine();
+
+    /**
+     * @brief Retrieves information about the board.
+     * @param buffer The buffer to store the information.
+     * @param length The maximum length of the buffer.
+     * @return The actual length of the information written to the buffer.
+     */
+    uint16_t GetInfo(char* buffer, uint16_t length);
 
 private:
     /**
@@ -150,19 +184,16 @@ private:
      */
     void UpdateOutputs();
 
-    le_Engine* e; ///< Pointer to the attached engine
+    le_Engine* engine; ///< Pointer to the attached engine
     bool bEnginePaused; ///< Engine paused flag
     bool bIOInvalidated; ///< I/O invalidation flag
 
-    uint16_t nInputs_Digital; ///< Number of digital inputs
+    le_Board_Config config;
     le_Board_IO_Digital* _inputs_Digital; ///< Array of digital inputs
-    uint16_t nInputs_Analog; ///< Number of analog inputs
     le_Board_IO_Analog* _inputs_Analog; ///< Array of analog inputs
     bool bInputsNeedUpdated; ///< Inputs update flag
 
-    uint16_t nOutputs; ///< Number of outputs
     le_Board_IO_Digital* _outputs; ///< Array of outputs
-    bool bOutputsNeedUpdated; ///< Outputs update flag
 
 #ifdef LE_DNP3
 public:

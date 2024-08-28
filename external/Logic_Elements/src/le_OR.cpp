@@ -4,18 +4,18 @@
  * @brief Constructor implementation that initializes the OR element with a specified number of inputs.
  * @param nInputs Number of inputs for the OR element.
  */
-le_OR::le_OR(uint8_t nInputs) : le_Base(nInputs, 1)
+le_OR::le_OR(uint8_t nInputs) : le_Base<bool>(le_Element_Type::LE_OR, nInputs, 1)
 {
     // Do nothing...
 }
 
 /**
  * @brief Updates the OR element. Calculates the logical OR of all inputs.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_OR::Update(float timeStep)
+void le_OR::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Set default to false
     bool nextValue = false;

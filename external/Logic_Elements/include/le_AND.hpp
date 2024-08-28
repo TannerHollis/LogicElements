@@ -1,6 +1,7 @@
 #pragma once
 
 #include "le_Base.hpp"
+#include "le_Time.hpp"
 
 /**
  * @brief Class representing a logical AND element.
@@ -17,9 +18,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the AND element. Calculates the logical AND of all inputs.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**

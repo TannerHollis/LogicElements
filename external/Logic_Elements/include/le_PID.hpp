@@ -29,9 +29,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the PID controller.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
     /**
      * @brief Sets the setpoint input for the PID controller.
@@ -95,6 +95,9 @@ private:
     float* _dBufferIn;
     float* _dBufferOut;
     float fDerivativeCoefficient;
+
+    // Last timestamp
+    le_Time lastTimeStamp;
 
     friend class le_Engine;
 };

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "le_Engine.hpp"
 
 // Test engine to test elements and functions
@@ -51,11 +53,14 @@ public:
 		this->AddNet(&n3);
 
 		// Update once to initialize the engine
-		this->Update(0.0001f);
+		le_Time time = le_Time::GetTime();
+		this->Update(time);
+		time = le_Time::GetTime();
+		this->Update(time);
 
 		// Print resulting engine info
 		char buffer[1024];
-		this->GetInfo(buffer, 1024);
-		printf("%s", buffer);
+		int cnt = this->GetInfo(buffer, 1024);
+		printf("Info length %u\r\n%s", cnt, buffer);
 	}
 };

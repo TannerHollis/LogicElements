@@ -25,6 +25,13 @@ public:
     T GetValue(uint8_t outputSlot) const;
 
     /**
+     * @brief Gets the number of output slots on the element.
+     * @tparam T The type of the output values.
+     * @return The number of output slots.
+     */
+    uint8_t GetNumberOfOutputSlots() const;
+
+    /**
      * @brief Gets the output slot index associated with a given input slot.
      * @param inputSlot The index of the input slot (0-based).
      * @return The index of the corresponding output slot.
@@ -37,7 +44,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @param nInputs The number of inputs for the element.
      * @param nOutputs The number of outputs for the element.
      */
-    le_Base(uint8_t nInputs, uint8_t nOutputs);
+    le_Base(le_Element_Type type, uint8_t nInputs, uint8_t nOutputs);
 
     /**
      * @brief Destructor to clean up allocated memory.
@@ -48,7 +55,7 @@ LE_ELEMENT_ACCESS_MOD:
      * @brief Virtual function to update the element. Can be overridden by derived classes.
      * @param timeStep The elapsed time since the last update.
      */
-    virtual void Update(float timeStep);
+    virtual void Update(const le_Time& timeStamp) override = 0;
 
     /**
      * @brief Gets a pointer to the input at the specified input slot.
@@ -84,7 +91,7 @@ private:
  * @param nOutputs The number of outputs for the element.
  */
 template<typename T>
-le_Base<T>::le_Base(uint8_t nInputs, uint8_t nOutputs) : le_Element(nInputs)
+le_Base<T>::le_Base(le_Element_Type type, uint8_t nInputs, uint8_t nOutputs) : le_Element(type, nInputs)
 {
     // Set the number of outputs
     this->nOutputs = nOutputs;
@@ -122,6 +129,18 @@ T le_Base<T>::GetValue(uint8_t outputSlot) const
     return this->_outputs[outputSlot];
 }
 
+/**
+ * @brief Gets the number of output slots on the element.
+ * @tparam T The type of the output values.
+ * @return The number of output slots.
+ */
+template<typename T>
+uint8_t le_Base<T>::GetNumberOfOutputSlots() const
+{
+    return this->nOutputs;
+}
+
+
 template<typename T>
 uint8_t le_Base<T>::GetOutputSlot(uint8_t inputSlot) const
 {
@@ -138,18 +157,6 @@ template<typename T>
 void le_Base<T>::SetValue(uint8_t outputSlot, T value)
 {
     this->_outputs[outputSlot] = value;
-}
-
-/**
- * @brief Virtual function to update the element. Can be overridden by derived classes.
- * @tparam T The type of the output values.
- * @param timeStep The elapsed time since the last update.
- */
-template<typename T>
-void le_Base<T>::Update(float timeStep)
-{
-    UNUSED(timeStep);
-    // Default implementation does nothing
 }
 
 template<typename T>

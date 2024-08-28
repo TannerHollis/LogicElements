@@ -7,7 +7,7 @@
  * @param shiftAngleClockwise Angle of the shift in degrees clockwise.
  */
 le_PhasorShift::le_PhasorShift(float shiftMagnitude, float shiftAngleClockwise)
-    : le_Base<float>(2, 2), shiftMag(shiftMagnitude), shiftAngle(shiftAngleClockwise)
+    : le_Base<float>(le_Element_Type::LE_PHASOR_SHIFT, 2, 2), shiftMag(shiftMagnitude), shiftAngle(shiftAngleClockwise)
 {
     // Set implicit variables
     this->unitShiftReal = shiftMagnitude * cosf(shiftAngleClockwise / 180.0f * (float)M_PI);
@@ -16,11 +16,11 @@ le_PhasorShift::le_PhasorShift(float shiftMagnitude, float shiftAngleClockwise)
 
 /**
  * @brief Updates the PhasorShift element.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_PhasorShift::Update(float timeStep)
+void le_PhasorShift::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     le_Base<float>* eReal = (le_Base<float>*)this->_inputs[0];
     le_Base<float>* eImag = (le_Base<float>*)this->_inputs[1];

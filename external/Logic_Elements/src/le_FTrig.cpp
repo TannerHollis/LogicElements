@@ -3,7 +3,7 @@
 /**
  * @brief Constructor implementation that initializes the FTrig element.
  */
-le_FTrig::le_FTrig() : le_Base<bool>(1, 1)
+le_FTrig::le_FTrig() : le_Base<bool>(le_Element_Type::LE_FTRIG, 1, 1)
 {
     // Initialize input states to false
     this->_inputStates[0] = false;
@@ -12,11 +12,11 @@ le_FTrig::le_FTrig() : le_Base<bool>(1, 1)
 
 /**
  * @brief Updates the FTrig element. Detects falling edge transitions.
- * @param timeStep The current timestamp.
+ * @param timeStamp The current timestamp.
  */
-void le_FTrig::Update(float timeStep)
+void le_FTrig::Update(const le_Time& timeStamp)
 {
-    UNUSED(timeStep);
+    UNUSED(timeStamp);
 
     // Get the input element
     le_Base<bool>* e = this->template GetInput<le_Base<bool>>(0);

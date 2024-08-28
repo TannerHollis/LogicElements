@@ -1,6 +1,7 @@
 #pragma once
 
 #include "le_Base.hpp"
+#include "le_Time.hpp"
 
 // Include standard C++ libraries
 #include <cmath>
@@ -52,9 +53,9 @@ LE_ELEMENT_ACCESS_MOD:
 
     /**
      * @brief Updates the overcurrent element.
-     * @param timeStep The current timestamp.
+     * @param timeStamp The current timestamp.
      */
-    void Update(float timeStep);
+    void Update(const le_Time& timeStamp);
 
 public:
     /**
@@ -80,6 +81,8 @@ private:
 
     float fPercent;             ///< The percentage of the current relative to the pickup value.
     float _fParameters[5];      ///< Array to store the curve parameters.
+
+    le_Time lastTimeStamp;  ///< The previous timestamp for calculating the timestep.
 
     // Allow le_Engine to access private members
     friend class le_Engine;
