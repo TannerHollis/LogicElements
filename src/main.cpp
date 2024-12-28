@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
             }
             else
             {
-                board->UnpauseEngine();
+                board->Start();
                 bool running = true;
 
                 auto nextFrame = std::chrono::steady_clock::now();

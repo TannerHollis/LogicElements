@@ -1,11 +1,5 @@
 #include "le_Analog1PWinding.hpp"
 
-#define IO_INPUT_RAW 0
-#define IO_INPUT_REF_REAL 1
-#define IO_INPUT_REF_IMAG 2
-#define IO_OUTPUT_REAL 0
-#define IO_OUTPUT_IMAG 1
-
 /**
  * @brief Constructor that initializes the le_Analog1PWinding with specified samples per cycle.
  * @param samplesPerCycle Number of samples per cycle.
@@ -72,7 +66,7 @@ void le_Analog1PWinding::Update(const le_Time& timeStamp)
  */
 void le_Analog1PWinding::SetInput_Winding(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, IO_INPUT_RAW);
+    le_Element::Connect(e, outputSlot, this, IO_A1P_INPUT_RAW);
 }
 
 /**
@@ -82,7 +76,7 @@ void le_Analog1PWinding::SetInput_Winding(le_Base<float>* e, uint8_t outputSlot)
  */
 void le_Analog1PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, IO_INPUT_REF_REAL);
+    le_Element::Connect(e, outputSlot, this, IO_A1P_INPUT_REF_REAL);
 }
 
 /**
@@ -92,7 +86,7 @@ void le_Analog1PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
  */
 void le_Analog1PWinding::SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, IO_INPUT_REF_IMAG);
+    le_Element::Connect(e, outputSlot, this, IO_A1P_INPUT_REF_IMAG);
 }
 
 /**
@@ -111,14 +105,14 @@ void le_Analog1PWinding::CalculatePhasor()
 void le_Analog1PWinding::ApplyCosineFilter()
 {
     // Get the input element
-    le_Base<float>* e = this->template GetInput<le_Base<float>>(IO_INPUT_RAW);
+    le_Base<float>* e = this->template GetInput<le_Base<float>>(IO_A1P_INPUT_RAW);
     if (e != nullptr)
     {
         float sum = 0.0f;
         uint16_t pos = this->uWrite;
 
         // Store rawInput to raw values buffer
-        this->_rawValues[this->uWrite] = e->GetValue(this->GetOutputSlot(IO_INPUT_RAW));
+        this->_rawValues[this->uWrite] = e->GetValue(this->GetOutputSlot(IO_A1P_INPUT_RAW));
 
         // Calculate Cosine Filter sum
         // Manual wrap-around to avoid modulo operation in every iteration
@@ -145,13 +139,13 @@ void le_Analog1PWinding::ApplyCosineFilter()
 void le_Analog1PWinding::AdjustOutputAngleWithReference()
 {
     // Get reference signal elements
-    le_Base<float>* eReal = this->template GetInput<le_Base<float>>(IO_INPUT_REF_REAL);
-    le_Base<float>* eImag = this->template GetInput<le_Base<float>>(IO_INPUT_REF_IMAG);
+    le_Base<float>* eReal = this->template GetInput<le_Base<float>>(IO_A1P_INPUT_REF_REAL);
+    le_Base<float>* eImag = this->template GetInput<le_Base<float>>(IO_A1P_INPUT_REF_IMAG);
     if (eReal != nullptr && eImag != nullptr)
     {
         // Get reference signal components
-        float refReal = eReal->GetValue(this->GetOutputSlot(IO_INPUT_REF_REAL));
-        float refImag = eImag->GetValue(this->GetOutputSlot(IO_INPUT_REF_IMAG));
+        float refReal = eReal->GetValue(this->GetOutputSlot(IO_A1P_INPUT_REF_REAL));
+        float refImag = eImag->GetValue(this->GetOutputSlot(IO_A1P_INPUT_REF_IMAG));
 
         // Check domain error
         if (refReal == 0.0f && refImag == 0.0f)
@@ -163,8 +157,8 @@ void le_Analog1PWinding::AdjustOutputAngleWithReference()
         float refUnitImag = refImag / refMag;
 
         // Get current real and imaginary parts
-        float real = this->GetValue(IO_OUTPUT_REAL);
-        float imag = this->GetValue(IO_OUTPUT_IMAG);
+        float real = this->GetValue(IO_A1P_OUTPUT_REAL);
+        float imag = this->GetValue(IO_A1P_OUTPUT_IMAG);
 
         // Check domain error
         if (real == 0.0f && imag == 0.0f)
@@ -175,8 +169,8 @@ void le_Analog1PWinding::AdjustOutputAngleWithReference()
         float newImag = imag * refUnitReal - real * refUnitImag;
 
         // Set the new values
-        this->SetValue(IO_OUTPUT_REAL, newReal);
-        this->SetValue(IO_OUTPUT_IMAG, newImag);
+        this->SetValue(IO_A1P_OUTPUT_REAL, newReal);
+        this->SetValue(IO_A1P_OUTPUT_IMAG, newImag);
     }
 }
 

@@ -6,6 +6,12 @@
 #include <cmath>
 #include <complex>
 
+#define IO_A1P_INPUT_RAW 0
+#define IO_A1P_INPUT_REF_REAL 1
+#define IO_A1P_INPUT_REF_IMAG 2
+#define IO_A1P_OUTPUT_REAL 0
+#define IO_A1P_OUTPUT_IMAG 1
+
 /**
  * @brief Class representing a single-phase winding in an analog system.
  *        Inherits from le_Base with float type.

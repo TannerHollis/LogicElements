@@ -107,12 +107,12 @@ public:
     /**
      * @brief Unpauses the engine.
      */
-    void UnpauseEngine();
+    void Start();
 
     /**
      * @brief Pauses the engine.
      */
-    void PauseEngine();
+    void Pause();
 
     /**
      * @brief Flags the input for update.

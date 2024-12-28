@@ -122,7 +122,7 @@ void le_Board::Update(const le_Time& timeStamp)
 /**
  * @brief Unpauses the engine.
  */
-void le_Board::UnpauseEngine()
+void le_Board::Start()
 {
     this->bEnginePaused = false;
 }
@@ -130,7 +130,7 @@ void le_Board::UnpauseEngine()
 /**
  * @brief Pauses the engine.
  */
-void le_Board::PauseEngine()
+void le_Board::Pause()
 {
     this->bEnginePaused = true;
 }

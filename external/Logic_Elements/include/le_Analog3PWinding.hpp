@@ -7,6 +7,24 @@
 #include <cmath>
 #include <complex>
 
+#define IO_A3P_INPUT_RAW_A 0
+#define IO_A3P_INPUT_RAW_B 1
+#define IO_A3P_INPUT_RAW_C 2
+#define IO_A3P_INPUT_REF_REAL 3
+#define IO_A3P_INPUT_REF_IMAG 4
+#define IO_A3P_OUTPUT_REAL_A 0
+#define IO_A3P_OUTPUT_IMAG_A 1
+#define IO_A3P_OUTPUT_REAL_B 2
+#define IO_A3P_OUTPUT_IMAG_B 3
+#define IO_A3P_OUTPUT_REAL_C 4
+#define IO_A3P_OUTPUT_IMAG_C 5
+#define IO_A3P_OUTPUT_REAL_0 6
+#define IO_A3P_OUTPUT_IMAG_0 7
+#define IO_A3P_OUTPUT_REAL_1 8
+#define IO_A3P_OUTPUT_IMAG_1 9
+#define IO_A3P_OUTPUT_REAL_2 10
+#define IO_A3P_OUTPUT_IMAG_2 11
+
 /**
  * @brief Class representing a three-phase winding in an analog system.
  *        Inherits from le_Base with float type.

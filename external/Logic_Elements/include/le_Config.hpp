@@ -1,7 +1,7 @@
 #pragma once
 
 // Enables use of element constructors without use of the le_Engine factory
-//#define LE_ELEMENT_TEST_MODE
+#define LE_ELEMENT_TEST_MODE
 
 /**
  * Allow engine execution diagnostics
@@ -22,3 +22,8 @@
  * Enable DNP3 session via le_DNP3Outstation
  */
 #define LE_DNP3
+
+/**
+* Enable tinyexpr library
+*/
+#define LE_TINYEXPR

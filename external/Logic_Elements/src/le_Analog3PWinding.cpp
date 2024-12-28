@@ -1,23 +1,5 @@
 #include "le_Analog3PWinding.hpp"
-
-#define IO_INPUT_RAW_A 0
-#define IO_INPUT_RAW_B 1
-#define IO_INPUT_RAW_C 2
-#define IO_INPUT_REF_REAL 3
-#define IO_INPUT_REF_IMAG 4
-#define IO_OUTPUT_A_REAL 0
-#define IO_OUTPUT_A_IMAG 1
-#define IO_OUTPUT_B_REAL 2
-#define IO_OUTPUT_B_IMAG 3
-#define IO_OUTPUT_C_REAL 4
-#define IO_OUTPUT_C_IMAG 5
-#define IO_OUTPUT_POS_SEQ_REAL 6
-#define IO_OUTPUT_POS_SEQ_IMAG 7
-#define IO_OUTPUT_NEG_SEQ_REAL 8
-#define IO_OUTPUT_NEG_SEQ_IMAG 9
-#define IO_OUTPUT_ZERO_SEQ_REAL 10
-#define IO_OUTPUT_ZERO_SEQ_IMAG 11
-
+#include "le_Analog1PWinding.hpp"
 /**
  * @brief Constructor that initializes the le_Analog3PWinding with specified samples per cycle.
  * @param samplesPerCycle Number of samples per cycle.
@@ -77,7 +59,7 @@ void le_Analog3PWinding::Update(const le_Time& timeStamp)
  */
 void le_Analog3PWinding::SetInput_WindingA(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, 0);
+    le_Element::Connect(e, outputSlot, this, IO_A3P_INPUT_RAW_A);
 }
 
 /**
@@ -87,7 +69,7 @@ void le_Analog3PWinding::SetInput_WindingA(le_Base<float>* e, uint8_t outputSlot
  */
 void le_Analog3PWinding::SetInput_WindingB(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, 1);
+    le_Element::Connect(e, outputSlot, this, IO_A3P_INPUT_RAW_B);
 }
 
 /**
@@ -97,7 +79,7 @@ void le_Analog3PWinding::SetInput_WindingB(le_Base<float>* e, uint8_t outputSlot
  */
 void le_Analog3PWinding::SetInput_WindingC(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, 2);
+    le_Element::Connect(e, outputSlot, this, IO_A3P_INPUT_RAW_C);
 }
 
 /**
@@ -107,7 +89,7 @@ void le_Analog3PWinding::SetInput_WindingC(le_Base<float>* e, uint8_t outputSlot
  */
 void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, 3);
+    le_Element::Connect(e, outputSlot, this, IO_A3P_INPUT_REF_REAL);
 }
 
 /**
@@ -117,7 +99,7 @@ void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
  */
 void le_Analog3PWinding::SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot)
 {
-    le_Element::Connect(e, outputSlot, this, 4);
+    le_Element::Connect(e, outputSlot, this, IO_A3P_INPUT_REF_IMAG);
 }
 
 /**
@@ -129,8 +111,8 @@ void le_Analog3PWinding::VerifyInputs()
         return;
 
     // Check reference signal inputs
-    le_Base<float>* refReal = this->template GetInput<le_Base<float>>(3);
-    le_Base<float>* refImag = this->template GetInput<le_Base<float>>(4);
+    le_Base<float>* refReal = this->template GetInput<le_Base<float>>(IO_A3P_INPUT_REF_REAL);
+    le_Base<float>* refImag = this->template GetInput<le_Base<float>>(IO_A3P_INPUT_REF_IMAG);
 
     // Verify inputs for phases
     for (uint8_t phase = 0; phase < 3; phase++)
@@ -141,10 +123,10 @@ void le_Analog3PWinding::VerifyInputs()
         {
             le_Element::Connect(phaseInput, this->_outputSlots[phase], phaseWinding, phase);
         }
-        if (refReal != nullptr && refImag != nullptr)
+        if (refReal != nullptr && refImag != nullptr) // If no reference is detected, connect the A phase as reference
         {
-            le_Element::Connect(refReal, this->_outputSlots[3], phaseWinding, 1);
-            le_Element::Connect(refImag, this->_outputSlots[4], phaseWinding, 2);
+            le_Element::Connect(refReal, this->_outputSlots[IO_A3P_INPUT_REF_REAL], phaseWinding, IO_A1P_INPUT_REF_REAL);
+            le_Element::Connect(refImag, this->_outputSlots[IO_A3P_INPUT_REF_IMAG], phaseWinding, IO_A1P_INPUT_REF_IMAG);
         }
     }
 
@@ -159,9 +141,9 @@ void le_Analog3PWinding::CalculateSequenceComponents()
     // Get all complex values
     std::complex<float> _a = this->a;
     std::complex<float> _a2 = this->a2;
-    std::complex<float> vA = std::complex<float>(this->GetValue(0), this->GetValue(1));
-    std::complex<float> vB = std::complex<float>(this->GetValue(2), this->GetValue(3));
-    std::complex<float> vC = std::complex<float>(this->GetValue(4), this->GetValue(5));
+    std::complex<float> vA = std::complex<float>(this->GetValue(IO_A3P_OUTPUT_REAL_A), this->GetValue(IO_A3P_OUTPUT_IMAG_A));
+    std::complex<float> vB = std::complex<float>(this->GetValue(IO_A3P_OUTPUT_REAL_B), this->GetValue(IO_A3P_OUTPUT_IMAG_B));
+    std::complex<float> vC = std::complex<float>(this->GetValue(IO_A3P_OUTPUT_REAL_C), this->GetValue(IO_A3P_OUTPUT_IMAG_C));
 
     // Calculate sequence components
     std::complex<float> v0 = vA + vB + vC;
@@ -169,12 +151,12 @@ void le_Analog3PWinding::CalculateSequenceComponents()
     std::complex<float> v2 = (vA + _a2 * vB + _a * vC) / 3.0f;
 
     // Save sequence components
-    this->SetValue(6, v0.real());  // Zero-Sequence (Real)
-    this->SetValue(7, v0.imag());  // Zero-Sequence (Imag)
-    this->SetValue(8, v1.real());  // Positive-Sequence (Real)
-    this->SetValue(9, v1.imag()); // Positive-Sequence (Imag)
-    this->SetValue(10, v2.real()); // Negative-Sequence (Real)
-    this->SetValue(11, v2.imag()); // Negative-Sequence (Imag)
+    this->SetValue(IO_A3P_OUTPUT_REAL_0, v0.real());  // Zero-Sequence (Real)
+    this->SetValue(IO_A3P_OUTPUT_IMAG_0, v0.imag());  // Zero-Sequence (Imag)
+    this->SetValue(IO_A3P_OUTPUT_REAL_1, v1.real());  // Positive-Sequence (Real)
+    this->SetValue(IO_A3P_OUTPUT_IMAG_1, v1.imag()); // Positive-Sequence (Imag)
+    this->SetValue(IO_A3P_OUTPUT_REAL_2, v2.real()); // Negative-Sequence (Real)
+    this->SetValue(IO_A3P_OUTPUT_IMAG_2, v2.imag()); // Negative-Sequence (Imag)
 }
 
 const std::complex<float> le_Analog3PWinding::a = std::polar(1.0f, (float)(2.0 * M_PI / 3.0)); ///< Constant phasor component.
