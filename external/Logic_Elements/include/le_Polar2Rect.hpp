@@ -2,6 +2,8 @@
 
 #include "le_Base.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG
+
 /**
  * @brief Class representing a basic conversion from polar to rectangular phasor domain.
  *        Inherits from le_Base with float type.
@@ -38,3 +40,4 @@ public:
 private:
     friend class le_Engine;
 };
+#endif

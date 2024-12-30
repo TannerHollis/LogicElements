@@ -6,7 +6,6 @@
 #include "le_Time.hpp"
 
 // Include standard C++ libraries
-#include <cmath>
 #include <string>
 
 /**

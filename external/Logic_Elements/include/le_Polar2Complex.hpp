@@ -4,7 +4,6 @@
 
 #ifdef LE_ELEMENTS_ANALOG_COMPLEX
 
-#include <complex>
 /**
  * @brief Class representing a basic conversion from complex to phasor domain.
  *        Inherits from le_Base with float type.

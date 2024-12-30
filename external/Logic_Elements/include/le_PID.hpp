@@ -5,9 +5,6 @@
 #ifdef LE_ELEMENTS_ANALOG
 #ifdef LE_ELEMENTS_PID
 
-#include <cmath>
-#include <string>
-
 /**
  * @brief Class representing a PID Controller.
  *        Inherits from le_Base with float type.

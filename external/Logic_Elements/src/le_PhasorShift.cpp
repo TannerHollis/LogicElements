@@ -1,5 +1,6 @@
 #include "le_PhasorShift.hpp"
-#include <cmath>
+
+#ifdef LE_ELEMENTS_ANALOG
 
 /**
  * @brief Constructs a PhasorShift object with given parameters.
@@ -82,4 +83,5 @@ void le_PhasorShift::SetInput_Imag(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 1);
 }
-#endif
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+#endif // LE_ELEMENTS_ANALOG

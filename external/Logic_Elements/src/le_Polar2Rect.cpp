@@ -1,4 +1,7 @@
 #include "le_Polar2Rect.hpp"
+
+#ifdef LE_ELEMENTS_ANALOG
+
 #include <cmath>
 
 /**
@@ -50,3 +53,4 @@ void le_Polar2Rect::SetInput_Angle(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 1);
 }
+#endif

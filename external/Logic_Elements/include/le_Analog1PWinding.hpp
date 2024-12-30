@@ -4,11 +4,6 @@
 
 #ifdef LE_ELEMENTS_ANALOG
 
-#include "le_Time.hpp"
-
-#include <cmath>
-#include <complex>
-
 #define IO_A1P_INPUT_RAW 0
 #ifdef LE_ELEMENTS_ANALOG_COMPLEX
 #define IO_A1P_INPUT_REF 1

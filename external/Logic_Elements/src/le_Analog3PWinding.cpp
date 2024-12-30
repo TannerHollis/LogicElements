@@ -107,7 +107,7 @@ void le_Analog3PWinding::SetInput_Ref(le_Base<std::complex<float>>* e, uint8_t o
  * @param e The element providing the reference real input value.
  * @param outputSlot The output slot of the element providing the reference real input.
  */
-void le_Analog1PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
+void le_Analog3PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, IO_A1P_INPUT_REF_REAL);
 }
@@ -117,7 +117,7 @@ void le_Analog1PWinding::SetInput_RefReal(le_Base<float>* e, uint8_t outputSlot)
  * @param e The element providing the reference imaginary input value.
  * @param outputSlot The output slot of the element providing the reference imaginary input.
  */
-void le_Analog1PWinding::SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot)
+void le_Analog3PWinding::SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, IO_A1P_INPUT_REF_IMAG);
 }

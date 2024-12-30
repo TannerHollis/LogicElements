@@ -1,7 +1,6 @@
 #pragma once
 
 #include "le_Base.hpp"
-#include "le_Time.hpp"
 
 /**
  * @brief Class representing a timer element.

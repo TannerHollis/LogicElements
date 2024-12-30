@@ -1,5 +1,6 @@
 #include "le_Rect2Polar.hpp"
-#include <cmath>
+
+#ifdef LE_ELEMENTS_ANALOG
 
 /**
  * @brief Constructs a le_Rect2Polar object.
@@ -50,3 +51,4 @@ void le_Rect2Polar::SetInput_Imag(le_Base<float>* e, uint8_t outputSlot)
 {
     le_Element::Connect(e, outputSlot, this, 1);
 }
+#endif

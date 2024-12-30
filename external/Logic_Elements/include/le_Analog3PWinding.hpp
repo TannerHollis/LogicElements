@@ -5,10 +5,6 @@
 #ifdef LE_ELEMENTS_ANALOG
 
 #include "le_Analog1PWinding.hpp"
-#include "le_Time.hpp"
-
-#include <cmath>
-#include <complex>
 
 #define IO_A3P_INPUT_RAW_A 0
 #define IO_A3P_INPUT_RAW_B 1

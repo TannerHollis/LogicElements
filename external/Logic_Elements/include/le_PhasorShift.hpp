@@ -2,9 +2,7 @@
 
 #include "le_Base.hpp"
 
-#ifdef LE_ELEMENTS_ANALOG_COMPLEX
-#include <complex>
-#endif
+#ifdef LE_ELEMENTS_ANALOG
 
 /**
  * @brief Class representing a basic shift, using rectangular input.
@@ -62,3 +60,4 @@ private:
 
     friend class le_Engine;
 };
+#endif // LE_ELEMENTS_ANALOG

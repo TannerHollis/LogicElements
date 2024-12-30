@@ -39,4 +39,4 @@
 /**
  * Enable DNP3 session via le_DNP3Outstation
  */
-//#define LE_DNP3
+#define LE_DNP3
