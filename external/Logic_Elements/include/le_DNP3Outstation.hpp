@@ -1,9 +1,10 @@
 #pragma once
 
-#ifdef LE_DNP3
-
 // Include le components
 #include "le_DNP3Outstation_Config.hpp"
+
+#ifdef LE_DNP3
+
 #include "le_DNP3CommandHandler.hpp"
 
 // Include necessary DNP3 library components

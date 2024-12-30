@@ -1,5 +1,7 @@
 #pragma once
 
+#include "le_Config.hpp"
+
 #ifdef LE_DNP3
 
 // Include DNP3 libraries
