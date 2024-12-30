@@ -1,22 +1,34 @@
 #pragma once
 
 #include "le_Base.hpp"
+
+#ifdef LE_ELEMENTS_ANALOG
+
 #include "le_Time.hpp"
 
 #include <cmath>
 #include <complex>
 
 #define IO_A1P_INPUT_RAW 0
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+#define IO_A1P_INPUT_REF 1
+#define IO_A1P_OUTPUT 0
+#else
 #define IO_A1P_INPUT_REF_REAL 1
 #define IO_A1P_INPUT_REF_IMAG 2
 #define IO_A1P_OUTPUT_REAL 0
 #define IO_A1P_OUTPUT_IMAG 1
+#endif
 
 /**
  * @brief Class representing a single-phase winding in an analog system.
  *        Inherits from le_Base with float type.
  */
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+class le_Analog1PWinding : protected le_Base<std::complex<float>>
+#else
 class le_Analog1PWinding : protected le_Base<float>
+#endif
 {
 LE_ELEMENT_ACCESS_MOD:
     /**
@@ -44,6 +56,14 @@ public:
      */
     void SetInput_Winding(le_Base<float>* e, uint8_t outputSlot);
 
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    /**
+     * @brief Sets the real part of the reference input for the winding.
+     * @param e The element providing the reference real input value.
+     * @param outputSlot The output slot of the element providing the reference real input.
+     */
+    void SetInput_Ref(le_Base<std::complex<float>>* e, uint8_t outputSlot);
+#else
     /**
      * @brief Sets the real part of the reference input for the winding.
      * @param e The element providing the reference real input value.
@@ -57,6 +77,7 @@ public:
      * @param outputSlot The output slot of the element providing the reference imaginary input.
      */
     void SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot);
+#endif
 
 private:
     /**
@@ -94,3 +115,4 @@ private:
     friend class le_Analog3PWinding;
 
 };
+#endif

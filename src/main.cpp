@@ -83,9 +83,11 @@ int main(int argc, char* argv[])
 
 		// Load test engine
 		le_Engine_Test engine = le_Engine_Test();
+#ifdef LE_DNP3
 		le_DNP3Outstation_Test dnp3Session = le_DNP3Outstation_Test();
 		dnp3Session.ValidatePoints(&engine);
 		dnp3Session.Enable();
+#endif
 
 		auto nextFrame = std::chrono::steady_clock::now();
         while (running)
@@ -93,7 +95,9 @@ int main(int argc, char* argv[])
             nextFrame += std::chrono::microseconds(16667); // 60 Hz
             le_Time timeStamp = le_Time::GetTime();
 			engine.Update(timeStamp);
+#ifdef LE_DNP3
 			dnp3Session.Update();
+#endif
 			std::this_thread::sleep_until(nextFrame);
 		}
 	}

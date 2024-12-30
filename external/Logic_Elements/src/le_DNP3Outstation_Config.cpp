@@ -1,4 +1,7 @@
 #include "le_DNP3Outstation_Config.hpp"
+
+#ifdef LE_DNP3
+
 #include "le_Engine.hpp"
 
 /**
@@ -164,3 +167,5 @@ le_DNP3Outstation_Session_Config* le_DNP3Outstation_Config::AddSession(le_DNP3Ou
     // Return a pointer to the newly added session configuration
     return &_sessions.back();
 }
+
+#endif

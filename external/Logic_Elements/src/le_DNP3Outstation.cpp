@@ -1,4 +1,7 @@
 #include "le_DNP3Outstation.hpp"
+
+#ifdef LE_DNP3
+
 #include "le_Engine.hpp"
 #include "opendnp3/ConsoleLogger.h"
 #include "opendnp3/channel/PrintingChannelListener.h"
@@ -219,3 +222,5 @@ void le_DNP3Outstation::Disable()
         outstation->Disable();
     }
 }
+
+#endif

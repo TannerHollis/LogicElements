@@ -1,6 +1,8 @@
 #pragma once
 
-// Enables use of element constructors without use of the le_Engine factory
+/**
+ * Enables use of element constructors without use of the le_Engine factory
+ */
 #define LE_ELEMENT_TEST_MODE
 
 /**
@@ -9,21 +11,32 @@
  */
 #define LE_ENGINE_EXECUTION_DIAG
 
-// Enables the use of the analog elements
+/**
+* Enables use of the analog elements in library
+*/
 #define LE_ELEMENTS_ANALOG
 
-/** 
- * Enabled use of the le_PID class
+#ifdef LE_ELEMENTS_ANALOG
+/**
+* Enables use of the complex output of elements in library
+*	NOTE: LE_ELEMENTS_ANALOG must be defined as well
+*/
+#define LE_ELEMENTS_ANALOG_COMPLEX
+
+/**
+ * Enable use of the le_PID class
  *  NOTE: LE_ELEMENTS_ANALOG must be defined as well
  */
 #define LE_ELEMENTS_PID
 
 /**
- * Enable DNP3 session via le_DNP3Outstation
- */
-#define LE_DNP3
+* Enables the use of the le_Math class
+*/
+#define LE_ELEMENTS_MATH
+
+#endif // LE_ELEMENTS_ANALOG
 
 /**
-* Enable tinyexpr library
-*/
-#define LE_TINYEXPR
+ * Enable DNP3 session via le_DNP3Outstation
+ */
+//#define LE_DNP3

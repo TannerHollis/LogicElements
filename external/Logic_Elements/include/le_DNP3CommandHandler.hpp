@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef LE_DNP3
+
 // Include le components
 #include "le_DNP3Outstation_Config.hpp"
 
@@ -201,3 +203,5 @@ private:
 
     le_DNP3Outstation_Session_Config* session; ///< Pointer to the outstation session configuration.
 };
+
+#endif

@@ -14,14 +14,14 @@ void le_Rect2Polar::Update(const le_Time& timeStamp)
 {
     UNUSED(timeStamp);
 
-    le_Base<float>* eReal = (le_Base<float>*)this->_inputs[0];
-    le_Base<float>* eImag = (le_Base<float>*)this->_inputs[1];
+    le_Base<float>* eReal = this->template GetInput<le_Base<float>>(0);
+    le_Base<float>* eImag = this->template GetInput<le_Base<float>>(1);
 
     // Check null reference
     if (eReal != nullptr && eImag != nullptr)
     {
-        float real = eReal->GetValue(this->_outputSlots[0]);
-        float imag = eImag->GetValue(this->_outputSlots[1]);
+        float real = eReal->GetValue(this->GetOutputSlot(0));
+        float imag = eImag->GetValue(this->GetOutputSlot(1));
 
         float mag = sqrtf(real * real + imag * imag);
         float angle = atan2f(imag, real) * 180.0f / (float)M_PI;

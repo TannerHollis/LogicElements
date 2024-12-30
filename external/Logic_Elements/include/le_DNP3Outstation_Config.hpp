@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef LE_DNP3
+
 // Include DNP3 libraries
 #include <opendnp3/outstation/MeasurementConfig.h>
 #include <opendnp3/outstation/DatabaseConfig.h>
@@ -147,3 +149,5 @@ typedef struct le_DNP3Outstation_Config
      */
     le_DNP3Outstation_Session_Config* AddSession(le_DNP3Outstation_Session_Config session);
 } le_DNP3Outstation_Config;
+
+#endif

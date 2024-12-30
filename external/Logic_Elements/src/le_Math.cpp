@@ -1,5 +1,8 @@
 #include "le_Math.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG
+#ifdef LE_ELEMENTS_MATH
+
 /**
  * @brief Constructor that initializes the le_Math with specified number of inputs and expression.
  * @param nInputs Number of inputs for the mathematical expression.
@@ -89,3 +92,6 @@ void le_Math::SetInput(le_Base<float>* e, uint8_t outputSlot, uint8_t inputSlot)
     // Use default connection function
     le_Base<float>::Connect(e, outputSlot, this, inputSlot);
 }
+
+#endif // LE_ELEMENTS_MATH
+#endif // LE_ELEMENTS_ANALOG

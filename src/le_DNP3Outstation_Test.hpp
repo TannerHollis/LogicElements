@@ -2,6 +2,8 @@
 
 #include "le_DNP3Outstation.hpp"
 
+#ifdef LE_DNP3
+
 #define OUTSTATION_IP "0.0.0.0"
 #define OUTSTATION_DNP 10
 #define CLIENT_IP "192.168.0.30"
@@ -44,3 +46,4 @@ private:
 		return config;
 	}
 };
+#endif

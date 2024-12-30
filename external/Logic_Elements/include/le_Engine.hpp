@@ -14,7 +14,6 @@
 
 // Check if analog elements are enabled
 #ifdef LE_ELEMENTS_ANALOG
-#include "le_Math.hpp"
 #include "le_Overcurrent.hpp"
 #include "le_Analog1PWinding.hpp"
 #include "le_Analog3PWinding.hpp"
@@ -22,9 +21,21 @@
 #include "le_Polar2Rect.hpp"
 #include "le_PhasorShift.hpp"
 
+#ifdef LE_ELEMENTS_MATH
+#include "le_Math.hpp"
+#endif // LE_MATH
+
 #ifdef LE_ELEMENTS_PID
 #include "le_PID.hpp"
 #endif // LE_ELEMENTS_PID
+
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+#include "le_Rect2Complex.hpp"
+#include "le_Polar2Complex.hpp"
+#include "le_Complex2Rect.hpp"
+#include "le_Complex2Polar.hpp"
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+
 #endif // LE_ELEMNTS_ANALOG
 
 #ifdef LE_DNP3
@@ -202,27 +213,9 @@ private:
     std::map<std::string, le_Element*> _elementsByName; ///< Map of elements by their names.
     uint16_t uDefaultNodeBufferLength;
 
-#ifdef LE_ENGINE_EXECUTION_DIAG
-private:
-    /**
-     * @brief Converts a ratio of two integers into integer and fractional parts.
-     *
-     * This function calculates the ratio of two integers (numerator and denominator) and
-     * splits the result into its integer and fractional parts. The fractional part is
-     * represented as a value scaled by 1000 to maintain precision.
-     *
-     * @param numerator The numerator of the ratio.
-     * @param denominator The denominator of the ratio.
-     * @param integerPart Pointer to store the integer part of the resulting ratio.
-     * @param fractionalPart Pointer to store the fractional part of the resulting ratio,
-     *                       scaled by 1000.
-     */
-    void ConvertFloatingPoint(uint32_t numerator, uint32_t denominator, uint16_t* integerPart, uint16_t* fractionalPart);
-
-    uint64_t uExecTimerFreq;
-    uint64_t uUpdateTime;
-    uint64_t uUpdateTimeLast;
-    uint64_t uUpdateTimePeriod;
-    std::vector<uint64_t> _elementExecTime;
-#endif
+    int64_t uExecTimerFreq;
+    int64_t uUpdateTime;
+    int64_t uUpdateTimeLast;
+    int64_t uUpdateTimePeriod;
+    std::vector<int64_t> _elementExecTime;
 };

@@ -9,7 +9,13 @@
 // Include standard C++ libraries
 #include <cstdint>
 #include <cstdlib>
+
+#ifdef LE_ELEMENTS_ANALOG
 #include <cmath>
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+#include <complex>
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+#endif // LE_ELEMENTS_ANALOG
 
 // Define M_PI
 #ifndef M_PI
@@ -36,8 +42,10 @@
  *          40 - 49 : Undefined
  *
  *          50 : Base analog element le_Base<float>
- *          60 - 79 : Simple analog elements
- *          80 - 99 : Complex analog elements
+ *          51 : Base analog complex element le_Base<std::complex<float>>
+ *          60 - 69 : Utility analog elements
+ *          80 - 99 : Analog elements
+ *          
  *
  *          100 - 119 : Protective Functions
  *
@@ -55,15 +63,29 @@ enum class le_Element_Type : int8_t {
     LE_MUX_DIGITAL = 32,
     LE_SER = 49,
     LE_NODE_ANALOG = 50,
+#ifdef LE_ELEMENTS_ANALOG
     LE_R2P = 60,
     LE_P2R = 61,
     LE_PHASOR_SHIFT = 62,
     LE_MUX_ANALOG = 63,
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    LE_NODE_ANALOG_COMPLEX = 51,
+    LE_C2R = 64,
+    LE_C2P = 65,
+    LE_R2C = 66,
+    LE_P2C= 67,
+    LE_MUX_ANALOG_COMPLEX = 68,
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+#ifdef LE_ELEMENTS_MATH
     LE_MATH = 80,
+#endif // LE_ELEMENTS_MATH
     LE_ANALOG_1P = 81,
     LE_ANALOG_3P = 82,
+#ifdef LE_ELEMENTS_PID
     LE_PID = 83,
+#endif // LE_ELEMENTS_PID
     LE_OVERCURRENT = 100,
+#endif // LE_ELEMENTS_ANALOG
     LE_INVALID = -1
 };
 

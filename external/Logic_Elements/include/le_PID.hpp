@@ -1,6 +1,10 @@
 #pragma once
 
 #include "le_Base.hpp"
+
+#ifdef LE_ELEMENTS_ANALOG
+#ifdef LE_ELEMENTS_PID
+
 #include <cmath>
 #include <string>
 
@@ -123,3 +127,6 @@ LE_ELEMENT_ACCESS_MOD:
      */
     ~le_PI();
 };
+
+#endif // LE_ELEMENTS_PID
+#endif // LE_ELEMENTS_ANALOG

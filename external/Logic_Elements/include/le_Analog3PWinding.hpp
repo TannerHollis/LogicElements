@@ -1,6 +1,9 @@
 #pragma once
 
 #include "le_Base.hpp"
+
+#ifdef LE_ELEMENTS_ANALOG
+
 #include "le_Analog1PWinding.hpp"
 #include "le_Time.hpp"
 
@@ -10,6 +13,15 @@
 #define IO_A3P_INPUT_RAW_A 0
 #define IO_A3P_INPUT_RAW_B 1
 #define IO_A3P_INPUT_RAW_C 2
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+#define IO_A3P_INPUT_REF 3
+#define IO_A3P_OUTPUT_A 0
+#define IO_A3P_OUTPUT_B 1
+#define IO_A3P_OUTPUT_C 2
+#define IO_A3P_OUTPUT_0 3
+#define IO_A3P_OUTPUT_1 4
+#define IO_A3P_OUTPUT_2 5
+#else
 #define IO_A3P_INPUT_REF_REAL 3
 #define IO_A3P_INPUT_REF_IMAG 4
 #define IO_A3P_OUTPUT_REAL_A 0
@@ -24,12 +36,17 @@
 #define IO_A3P_OUTPUT_IMAG_1 9
 #define IO_A3P_OUTPUT_REAL_2 10
 #define IO_A3P_OUTPUT_IMAG_2 11
+#endif
 
 /**
  * @brief Class representing a three-phase winding in an analog system.
  *        Inherits from le_Base with float type.
  */
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+class le_Analog3PWinding : protected le_Base<std::complex<float>>
+#else
 class le_Analog3PWinding : protected le_Base<float>
+#endif
 {
 LE_ELEMENT_ACCESS_MOD:
     /**
@@ -71,6 +88,14 @@ public:
      */
     void SetInput_WindingC(le_Base<float>* e, uint8_t outputSlot);
 
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    /**
+     * @brief Sets the real part of the reference input for the winding.
+     * @param e The element providing the reference real input value.
+     * @param outputSlot The output slot of the element providing the reference real input.
+     */
+    void SetInput_Ref(le_Base<std::complex<float>>* e, uint8_t outputSlot);
+#else
     /**
      * @brief Sets the real part of the reference input for the winding.
      * @param e The element providing the reference real input value.
@@ -84,6 +109,7 @@ public:
      * @param outputSlot The output slot of the element providing the reference imaginary input.
      */
     void SetInput_RefImag(le_Base<float>* e, uint8_t outputSlot);
+#endif
 
 private:
     /**
@@ -105,3 +131,4 @@ private:
     // Allow le_Engine to access private members
     friend class le_Engine;
 };
+#endif

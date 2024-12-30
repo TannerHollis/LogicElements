@@ -2,6 +2,9 @@
 
 #include "le_Base.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG
+#ifdef LE_ELEMENTS_MATH
+
 // Include STD libs
 #include <string>
 
@@ -55,3 +58,6 @@ private:
     // Allow le_Engine to access private members
     friend class le_Engine;
 };
+
+#endif // LE_ELEMENTS_MATH
+#endif // LE_ELEMENTS_ANALOG

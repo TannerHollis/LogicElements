@@ -1,5 +1,7 @@
 #include "le_Overcurrent.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG
+
 /**
  * @brief Parses the curve type from a string.
  * @param curve The string representing the curve type.
@@ -143,3 +145,4 @@ void le_Overcurrent::SetInput(le_Base<float>* e, uint8_t outputSlot)
     // Link input value
     le_Element::Connect(e, outputSlot, this, 0);
 }
+#endif

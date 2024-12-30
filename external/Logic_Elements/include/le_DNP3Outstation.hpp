@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef LE_DNP3
+
 // Include le components
 #include "le_DNP3Outstation_Config.hpp"
 #include "le_DNP3CommandHandler.hpp"
@@ -67,3 +69,4 @@ private:
     std::shared_ptr<opendnp3::IOutstationApplication> app;  ///< Application interface for the outstation.
 };
 
+#endif

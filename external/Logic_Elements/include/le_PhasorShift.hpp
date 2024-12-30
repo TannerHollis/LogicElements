@@ -2,11 +2,19 @@
 
 #include "le_Base.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+#include <complex>
+#endif
+
 /**
  * @brief Class representing a basic shift, using rectangular input.
  *        Inherits from le_Base with float type.
  */
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+class le_PhasorShift : protected le_Base<std::complex<float>>
+#else
 class le_PhasorShift : protected le_Base<float>
+#endif
 {
 LE_ELEMENT_ACCESS_MOD:
     /**
@@ -23,6 +31,14 @@ LE_ELEMENT_ACCESS_MOD:
     void Update(const le_Time& timeStamp);
 
 public:
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    /**
+     * @brief Sets the input for the PhasorShift element.
+     * @param e Pointer to the element.
+     * @param outputSlot The slot of the output in the providing element.
+     */
+    void SetInput(le_Base<std::complex<float>>* e, uint8_t outputSlot);
+#else
     /**
      * @brief Sets the real input for the PhasorShift element.
      * @param e Pointer to the element providing the real part.
@@ -36,6 +52,7 @@ public:
      * @param outputSlot The slot of the output in the providing element.
      */
     void SetInput_Imag(le_Base<float>* e, uint8_t outputSlot);
+#endif
 
 private:
     float shiftMag;       ///< Magnitude of the shift.

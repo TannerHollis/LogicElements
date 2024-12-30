@@ -1,5 +1,8 @@
 // le_DNP3CommandHandler.cpp
 #include "le_DNP3CommandHandler.hpp"
+
+#ifdef LE_DNP3
+
 #include "le_Engine.hpp"
 
 /**
@@ -289,3 +292,5 @@ CommandStatus le_DNP3CommandHandler::AnalogOperate(float value, uint16_t index, 
         return CommandStatus::UNDEFINED;
     }
 }
+
+#endif

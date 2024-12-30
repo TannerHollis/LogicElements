@@ -1,6 +1,8 @@
 #pragma once
 
 #include "le_Base.hpp"
+
+#ifdef LE_ELEMENTS_ANALOG
 #include "le_Time.hpp"
 
 // Include standard C++ libraries
@@ -87,3 +89,4 @@ private:
     // Allow le_Engine to access private members
     friend class le_Engine;
 };
+#endif

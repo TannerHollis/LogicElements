@@ -2,6 +2,7 @@
 
 #include "le_Base.hpp"
 
+#include <complex>
 /**
  * @brief Template class for le_Node, representing a node with history.
  *        Inherits from le_Base with a specified type.
@@ -99,6 +100,7 @@ public:
     le_Node_Digital(uint16_t historyLength) : le_Node<bool>(le_Element_Type::LE_NODE_DIGITAL, historyLength) {}
 };
 
+#ifdef LE_ELEMENTS_ANALOG
 /**
  * @brief Analog node class inheriting from le_Node with float type.
  */
@@ -111,6 +113,22 @@ public:
      */
     le_Node_Analog(uint16_t historyLength) : le_Node<float>(le_Element_Type::LE_NODE_ANALOG, historyLength) {}
 };
+
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+/**
+ * @brief Analog complex node class inheriting from le_Node with float type.
+ */
+class le_Node_AnalogComplex : public le_Node<std::complex<float>>
+{
+public:
+    /**
+     * @brief Constructor for le_Node_AnalogComplex.
+     * @param historyLength The length of the history buffer.
+     */
+    le_Node_AnalogComplex(uint16_t historyLength) : le_Node<std::complex<float>>(le_Element_Type::LE_NODE_ANALOG_COMPLEX, historyLength) {}
+};
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+#endif // LE_ELEMENTS_ANALOG
 
 // Implementation of the le_Node class
 

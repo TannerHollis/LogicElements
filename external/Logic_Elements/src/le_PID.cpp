@@ -1,5 +1,8 @@
 #include "le_PID.hpp"
 
+#ifdef LE_ELEMENTS_ANALOG
+#ifdef LE_ELEMENTS_PID
+
 /**
  * @brief Constructs a PID controller with given parameters.
  * @param p Proportional gain.
@@ -168,3 +171,6 @@ le_PI::~le_PI()
 {
     le_PID::~le_PID();
 }
+
+#endif // LE_ELEMENTS_PID
+#endif // LE_ELEMENTS_ANALOG

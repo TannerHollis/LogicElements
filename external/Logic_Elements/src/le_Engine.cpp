@@ -1,5 +1,7 @@
 #include "le_Engine.hpp"
 
+#include "le_Utility.hpp"
+
 // Define a macro to handle weak attribute based on the compiler
 #if defined(_MSC_VER)
 #define WEAK_ATTR 
@@ -16,26 +18,40 @@
  */
 le_Element_Type le_Engine::ParseElementType(std::string& type)
 {
+    if (type == "LE_NODE_DIGITAL") return le_Element_Type::LE_NODE_DIGITAL;
     if (type == "LE_AND") return le_Element_Type::LE_AND;
     if (type == "LE_OR") return le_Element_Type::LE_OR;
     if (type == "LE_NOT") return le_Element_Type::LE_NOT;
     if (type == "LE_RTRIG") return le_Element_Type::LE_RTRIG;
     if (type == "LE_FTRIG") return le_Element_Type::LE_FTRIG;
-    if (type == "LE_NODE_DIGITAL") return le_Element_Type::LE_NODE_DIGITAL;
-    if (type == "LE_NODE_ANALOG") return le_Element_Type::LE_NODE_ANALOG;
     if (type == "LE_TIMER") return le_Element_Type::LE_TIMER;
     if (type == "LE_COUNTER") return le_Element_Type::LE_COUNTER;
     if (type == "LE_MUX_DIGITAL") return le_Element_Type::LE_MUX_DIGITAL;
-    if (type == "LE_MUX_ANALOG") return le_Element_Type::LE_MUX_ANALOG;
+    if (type == "LE_SER") return le_Element_Type::LE_SER;
+#ifdef LE_ELEMENTS_ANALOG
+    if (type == "LE_NODE_ANALOG") return le_Element_Type::LE_NODE_ANALOG;
+    if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
     if (type == "LE_ANALOG_1P") return le_Element_Type::LE_ANALOG_1P;
     if (type == "LE_ANALOG_3P") return le_Element_Type::LE_ANALOG_3P;
-    if (type == "LE_OVERCURRENT") return le_Element_Type::LE_OVERCURRENT;
-    if (type == "LE_MATH") return le_Element_Type::LE_MATH;
     if (type == "LE_R2P") return le_Element_Type::LE_R2P;
     if (type == "LE_P2R") return le_Element_Type::LE_P2R;
+    if (type == "LE_MUX_ANALOG") return le_Element_Type::LE_MUX_ANALOG;
     if (type == "LE_PHASOR_SHIFT") return le_Element_Type::LE_PHASOR_SHIFT;
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    if (type == "LE_NODE_ANALOG_COMPLEX") return le_Element_Type::LE_NODE_ANALOG_COMPLEX;
+    if (type == "LE_C2R") return le_Element_Type::LE_C2R;
+    if (type == "LE_C2P") return le_Element_Type::LE_C2P;
+    if (type == "LE_R2C") return le_Element_Type::LE_R2C;
+    if (type == "LE_P2C") return le_Element_Type::LE_P2C;
+    if (type == "LE_MUX_ANALOG_COMPLEX") return le_Element_Type::LE_MUX_ANALOG_COMPLEX;
+#endif // LE_ELEMENTS_ANALOG_COMPLEX
+#ifdef LE_ELEMENTS_MATH
+    if (type == "LE_MATH") return le_Element_Type::LE_MATH;
+#endif // LE_MATH
+#ifdef LE_ELEMENTS_PID
     if (type == "LE_PID") return le_Element_Type::LE_PID;
-
+#endif // LE_PID
+#endif // LE_ELEMENTS_ANALOG
     return le_Element_Type::LE_INVALID;
 }
 
@@ -71,7 +87,7 @@ le_Engine::le_Engine(std::string name)
     this->uUpdateTime = 1; // Default for non divide by zero error
     this->uUpdateTimeLast = 0;
     this->uUpdateTimePeriod = 0;
-    this->_elementExecTime = std::vector<uint64_t>();
+    this->_elementExecTime = std::vector<int64_t>();
 #endif
 }
 
@@ -179,8 +195,35 @@ le_Element* le_Engine::AddElement(le_Element_TypeDef* comp)
             comp->args[4].bArg), compName); // Electromechanical reset
     }
 
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    case le_Element_Type::LE_NODE_ANALOG_COMPLEX:
+        return this->AddElement(
+            new le_Node_AnalogComplex(
+                this->uDefaultNodeBufferLength == 0 ?
+                comp->args[0].uArg :
+                this->uDefaultNodeBufferLength),
+            compName);
+
+    case le_Element_Type::LE_C2R:
+        return this->AddElement(new le_Complex2Rect(), compName);
+
+    case le_Element_Type::LE_C2P:
+        return this->AddElement(new le_Complex2Polar(), compName);
+
+    case le_Element_Type::LE_R2C:
+        return this->AddElement(new le_Rect2Complex(), compName);
+
+    case le_Element_Type::LE_P2C:
+        return this->AddElement(new le_Polar2Complex(), compName);
+
+    case le_Element_Type::LE_MUX_ANALOG_COMPLEX:
+        return this->AddElement(new le_Mux_AnalogComplex((uint8_t)comp->args[0].uArg, (uint8_t)comp->args[1].uArg), compName);
+#endif
+
+#ifdef LE_ELEMENTS_MATH
     case le_Element_Type::LE_MATH:
         return this->AddElement(new le_Math((uint8_t)comp->args[0].uArg, comp->args[1].sArg), compName);
+#endif
 
 #ifdef LE_ELEMENTS_PID
     case le_Element_Type::LE_PID:
@@ -242,7 +285,7 @@ void le_Engine::Update(const le_Time& timeStamp)
 {
 #ifdef LE_ENGINE_EXECUTION_DIAG
     // Record the start time of the update
-    uint64_t startUpdateTime = timeStamp.ToNanosecondsSinceEpoch();
+    int64_t startUpdateTime = timeStamp.ToNanosecondsSinceEpoch();
 
     // Calculate the time period since the last update
     this->uUpdateTimePeriod = startUpdateTime - this->uUpdateTimeLast;
@@ -250,13 +293,18 @@ void le_Engine::Update(const le_Time& timeStamp)
 
     uint16_t nElements = static_cast<uint16_t>(this->_elements.size());
 
+    // Ensure _elementExecTime is properly sized
+    if (this->_elementExecTime.size() != nElements) {
+        this->_elementExecTime.resize(nElements, 0);
+    }
+
     // Update each element and measure its execution time
     for (uint16_t i = 0; i < nElements; i++)
     {
         le_Element* element = this->_elements[i];
-        uint64_t elementStartTime = le_Time::GetTime().ToNanosecondsSinceEpoch();
+        le_Time elementStartTime = le_Time::GetTime();
         element->Update(timeStamp);
-        this->_elementExecTime[i] = le_Time::GetTime().ToNanosecondsSinceEpoch() - elementStartTime;
+        this->_elementExecTime[i] = le_Time::GetTime().ToNanosecondsSinceEpoch() - elementStartTime.ToNanosecondsSinceEpoch();
     }
 
     // Calculate the total update time
@@ -316,12 +364,12 @@ uint16_t le_Engine::GetInfo(char* buffer, uint16_t length)
 
 #ifdef LE_ENGINE_EXECUTION_DIAG
     // Variable for overhead
-    uint32_t overhead = this->uUpdateTime;
+    uint64_t overhead = this->uUpdateTime;
 
     // Calculate CPU usage
     uint16_t updateUsageInteger;
     uint16_t updateUsageFraction;
-    this->ConvertFloatingPoint(
+    le_Utility::ConvertFloatingPoint(
         this->uUpdateTime * 100,
         this->uUpdateTimePeriod, 
         &updateUsageInteger, 
@@ -330,7 +378,7 @@ uint16_t le_Engine::GetInfo(char* buffer, uint16_t length)
     // Calculate Update Frequency
     uint16_t freqInteger;
     uint16_t freqFraction;
-    this->ConvertFloatingPoint(
+    le_Utility::ConvertFloatingPoint(
         this->uExecTimerFreq,
         this->uUpdateTimePeriod, 
         &freqInteger,
@@ -355,7 +403,7 @@ uint16_t le_Engine::GetInfo(char* buffer, uint16_t length)
         // Calculate element CPU usage
         uint16_t usageInteger;
         uint16_t usageFraction;
-        this->ConvertFloatingPoint(
+        le_Utility::ConvertFloatingPoint(
             this->_elementExecTime[i] * 100, 
             this->uUpdateTime, 
             &usageInteger,
@@ -381,7 +429,7 @@ uint16_t le_Engine::GetInfo(char* buffer, uint16_t length)
     // Calculate overhead percentage
     uint16_t overheadInteger;
     uint16_t overheadFraction;
-    this->ConvertFloatingPoint(
+    le_Utility::ConvertFloatingPoint(
         overhead * 100,
         this->uUpdateTime,
         &overheadInteger,
@@ -442,30 +490,6 @@ void le_Engine::SortElements()
 {
     std::sort(this->_elements.begin(), this->_elements.end(), le_Element::CompareElementOrders);
 }
-
-#ifdef LE_ENGINE_EXECUTION_DIAG
-
-/**
- * @brief Converts a ratio of two integers into integer and fractional parts.
- *
- * This function calculates the ratio of two integers (numerator and denominator) and
- * splits the result into its integer and fractional parts. The fractional part is
- * represented as a value scaled by 1000 to maintain precision.
- *
- * @param numerator The numerator of the ratio.
- * @param denominator The denominator of the ratio.
- * @param integerPart Pointer to store the integer part of the resulting ratio.
- * @param fractionalPart Pointer to store the fractional part of the resulting ratio,
- *                       scaled by 1000.
- */
-inline void le_Engine::ConvertFloatingPoint(uint32_t numerator, uint32_t denominator, uint16_t* integerPart, uint16_t* fractionalPart)
-{
-    float percentage = (float)numerator / (float)denominator;
-    *integerPart = (uint16_t)percentage;
-    *fractionalPart = (uint16_t)((percentage - (float)*integerPart) * 1000.0f);
-}
-
-#endif
 
 /**
  * @brief Sets the output connection.
