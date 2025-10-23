@@ -1,9 +1,9 @@
 //Include project files
-#include "le_DeviceSettings.hpp"
-#include "le_Builder/le_Builder.hpp"
-#include "le_Board.hpp"
-#include "le_DeviceUtility.hpp"
-#include "le_DeviceCommandHandler.hpp"
+#include "Device/le_DeviceSettings.hpp"
+#include "Builder/le_Builder.hpp"
+#include "Device/le_Board.hpp"
+#include "Device/le_DeviceUtility.hpp"
+#include "Device/le_DeviceCommandHandler.hpp"
 
 // Include test cases
 #include "le_Engine_Test.hpp"

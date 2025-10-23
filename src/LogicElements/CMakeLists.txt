@@ -29,22 +29,22 @@ set(LE_VERSION_STRING "${LE_VERSION_MAJOR}.${LE_VERSION_MINOR}.${LE_VERSION_PATC
 string(TIMESTAMP LE_BUILD_DATE "%Y-%m-%d")
 string(TIMESTAMP LE_BUILD_TIME "%H:%M:%S")
 
-# Generate config header from template
+# Generate config header from template (now in Core/ subdirectory)
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/le_Config.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/include/le_Config.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Core/le_Config.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/Core/le_Config.hpp"
     @ONLY
 )
 
-# Generate version header and source from templates
+# Generate version header and source from templates (now in Core/ subdirectory)
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/le_Version.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/include/le_Version.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Core/le_Version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/Core/le_Version.hpp"
     @ONLY
 )
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/le_Version.cpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/src/le_Version.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Core/le_Version.cpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/src/Core/le_Version.cpp"
     @ONLY
 )
 
@@ -73,21 +73,21 @@ file(GLOB_RECURSE CPP_FILES "./src/*.cpp")
 # Remove template files from the list
 list(FILTER CPP_FILES EXCLUDE REGEX ".*\\.in$")
 
-# Add generated version source
-list(APPEND CPP_FILES "${CMAKE_CURRENT_BINARY_DIR}/src/le_Version.cpp")
+# Add generated version source (now in Core/ subdirectory)
+list(APPEND CPP_FILES "${CMAKE_CURRENT_BINARY_DIR}/src/Core/le_Version.cpp")
 
 # Add the source files
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 
-# Include directories (include generated config)
+# Include directories (include generated config and all subdirectories)
 target_include_directories(${PROJECT_NAME} PUBLIC 
     ${CMAKE_SOURCE_DIR}/external/tinyexpr
     ${CMAKE_SOURCE_DIR}/external/opendnp3/cpp/lib/include
     ${CMAKE_SOURCE_DIR}/external/Minimal-Socket/src/header
     ${CMAKE_SOURCE_DIR}/external/serialib
     ${CMAKE_SOURCE_DIR}/external/nlohmann_json/include
-    ./include
-    ${CMAKE_CURRENT_BINARY_DIR}/include  # For generated le_Config.hpp
+    ./include                            # Root include directory
+    ${CMAKE_CURRENT_BINARY_DIR}/include  # For generated headers (le_Config.hpp, le_Version.hpp)
 )
 
 # Link external libraries to the executable

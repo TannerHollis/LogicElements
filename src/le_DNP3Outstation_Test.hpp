@@ -1,6 +1,6 @@
 #pragma once
 
-#include "le_DNP3Outstation.hpp"
+#include "Communication/le_DNP3Outstation.hpp"
 
 using namespace LogicElements;
 

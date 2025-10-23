@@ -35,6 +35,20 @@ set(TEST_SOURCES
     # Node Elements (3 types)
     test_element_Node.cpp
     
+    # Arithmetic Elements (12 elements: 6 float + 6 complex)
+    test_element_Add.cpp
+    test_element_Subtract.cpp
+    test_element_Multiply.cpp
+    test_element_Divide.cpp
+    test_element_Negate.cpp
+    test_element_Abs.cpp
+    test_element_AddComplex.cpp
+    test_element_SubtractComplex.cpp
+    test_element_MultiplyComplex.cpp
+    test_element_DivideComplex.cpp
+    test_element_NegateComplex.cpp
+    test_element_Magnitude.cpp
+    
     # Conversion Elements (8 elements)
     test_element_Rect2Polar.cpp
     test_element_Polar2Rect.cpp
@@ -77,9 +91,10 @@ message(STATUS "========================================")
 message(STATUS "Logic Elements Tests: ENABLED")
 message(STATUS "========================================")
 message(STATUS "Test executable: ${PROJECT_NAME}")
-message(STATUS "Individual test files: 22")
-message(STATUS "Elements covered: 26+ (ALL major elements)")
+message(STATUS "Individual test files: 34")
+message(STATUS "Elements covered: 38+ (ALL major elements)")
 message(STATUS "Pattern: le_Engine factory (100%)")
 message(STATUS "Port validation: Named + Heterogeneous")
-message(STATUS "Heterogeneous tests: 8+ elements")
+message(STATUS "Heterogeneous tests: 9+ elements")
+message(STATUS "Arithmetic: 12 elements (6 float + 6 complex)")
 message(STATUS "========================================")

@@ -35,6 +35,24 @@ extern void RunSERTests();
 // Node Elements (3 types)
 extern void RunNodeTests();
 
+// Arithmetic Elements (12 elements)
+#ifdef LE_ELEMENTS_ANALOG
+extern void RunAddTests();
+extern void RunSubtractTests();
+extern void RunMultiplyTests();
+extern void RunDivideTests();
+extern void RunNegateTests();
+extern void RunAbsTests();
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+extern void RunAddComplexTests();
+extern void RunSubtractComplexTests();
+extern void RunMultiplyComplexTests();
+extern void RunDivideComplexTests();
+extern void RunNegateComplexTests();
+extern void RunMagnitudeTests();
+#endif
+#endif
+
 // Conversion Elements (8 elements)
 #ifdef LE_ELEMENTS_ANALOG
 extern void RunRect2PolarTests();
@@ -104,6 +122,23 @@ int main(int argc, char* argv[])
     RunRect2ComplexTests();  // Rect2Complex (HETEROGENEOUS!)
     RunComplex2PolarTests(); // Complex2Polar (HETEROGENEOUS!)
     RunPolar2ComplexTests(); // Polar2Complex (HETEROGENEOUS!)
+    RunMagnitudeTests();     // Magnitude (HETEROGENEOUS!)
+#endif
+
+    // Arithmetic Elements
+    std::cout << "\n>>> ARITHMETIC ELEMENTS <<<" << std::endl;
+    RunAddTests();           // Add
+    RunSubtractTests();      // Subtract
+    RunMultiplyTests();      // Multiply
+    RunDivideTests();        // Divide
+    RunNegateTests();        // Negate
+    RunAbsTests();           // Abs
+#ifdef LE_ELEMENTS_ANALOG_COMPLEX
+    RunAddComplexTests();    // AddComplex
+    RunSubtractComplexTests(); // SubtractComplex
+    RunMultiplyComplexTests(); // MultiplyComplex
+    RunDivideComplexTests(); // DivideComplex
+    RunNegateComplexTests(); // NegateComplex
 #endif
 
     // Control Elements
@@ -133,11 +168,12 @@ int main(int argc, char* argv[])
     std::cout << "  Complex Digital: 4 elements" << std::endl;
     std::cout << "  Nodes: 3 types (Digital, Analog, Complex)" << std::endl;
 #ifdef LE_ELEMENTS_ANALOG
+    std::cout << "  Arithmetic: 12 elements (6 float, 6 complex, Magnitude HETEROGENEOUS!)" << std::endl;
     std::cout << "  Conversions: 8 elements (6 HETEROGENEOUS!)" << std::endl;
     std::cout << "  Control: 3 elements (Overcurrent HETEROGENEOUS!)" << std::endl;
     std::cout << "  Phase/Winding: 3 elements" << std::endl;
-    std::cout << "\nTotal: 26+ elements tested" << std::endl;
-    std::cout << "Heterogeneous Elements: 8+ tested" << std::endl;
+    std::cout << "\nTotal: 38+ elements tested" << std::endl;
+    std::cout << "Heterogeneous Elements: 9+ tested" << std::endl;
 #else
     std::cout << "\nTotal: 12 digital elements tested" << std::endl;
 #endif

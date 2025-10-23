@@ -1,5 +1,5 @@
 #include "test_framework.hpp"
-#include "le_SER.hpp"
+#include "Elements/Digital/le_SER.hpp"
 
 bool test_SER_basic()
 {
