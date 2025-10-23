@@ -87,6 +87,105 @@ cmake -DLE_ELEMENTS_MATH=OFF -DLE_ELEMENTS_PID=OFF -S . -B build
 
 ---
 
+## Port Naming Customization
+
+### Overview
+
+Logic Elements uses configurable defines for auto-generated port names, allowing you to customize naming conventions across all elements before building.
+
+### Customizable Port Names
+
+**Auto-Generated Ports:**
+- **Indexed inputs**: `input_0`, `input_1`, etc. (AND, OR, arithmetic elements)
+- **Indexed outputs**: `output_0`, `output_1` (Mux)
+- **2D inputs**: `input_0_0`, `input_1_0` (Mux signal sets)
+- **Math variables**: `x0`, `x1`, etc. (Math element)
+
+**Named Ports (NOT customizable):**
+- Specific ports like `"setpoint"`, `"feedback"`, `"magnitude"`, `"angle"` remain unchanged
+
+### Configuration Location
+
+Edit `src/LogicElements/include/Core/le_Config.hpp.in` before building:
+
+```cpp
+// ============================================================================
+// Port Naming Configuration
+// ============================================================================
+
+// Default port name prefixes and separators
+#define LE_PORT_INPUT_PREFIX "input"
+#define LE_PORT_OUTPUT_PREFIX "output"
+#define LE_PORT_SEPARATOR "_"
+#define LE_PORT_MATH_VAR_PREFIX "x"
+#define LE_PORT_SELECTOR_NAME "selector"
+```
+
+### Customization Examples
+
+#### Example 1: Uppercase Style
+
+```cpp
+#define LE_PORT_INPUT_PREFIX "IN"
+#define LE_PORT_OUTPUT_PREFIX "OUT"
+#define LE_PORT_SEPARATOR "_"
+```
+
+**Results:** `IN_0`, `IN_1`, `OUT_0` instead of `input_0`, `input_1`, `output_0`
+
+#### Example 2: Lowercase Compact
+
+```cpp
+#define LE_PORT_INPUT_PREFIX "in"
+#define LE_PORT_OUTPUT_PREFIX "out"
+#define LE_PORT_SEPARATOR ""
+```
+
+**Results:** `in0`, `in1`, `out0` instead of `input_0`, `input_1`, `output_0`
+
+#### Example 3: Verbose Style
+
+```cpp
+#define LE_PORT_INPUT_PREFIX "Input"
+#define LE_PORT_OUTPUT_PREFIX "Output"
+#define LE_PORT_SEPARATOR "_"
+```
+
+**Results:** `Input_0`, `Input_1`, `Output_0`
+
+#### Example 4: Custom Math Variables
+
+```cpp
+#define LE_PORT_MATH_VAR_PREFIX "var"
+```
+
+**Results:** Math element uses `var0`, `var1` instead of `x0`, `x1`
+
+### Important Notes
+
+⚠️ **Breaking Change:** Changing port names will break existing JSON configurations!
+
+**Before changing:**
+1. Document your current naming convention
+2. Update all JSON config files to match new naming
+3. Rebuild entire project after changing defines
+4. Test all configurations thoroughly
+
+**Elements Affected:**
+- Digital: AND, OR, SER (indexed inputs)
+- Arithmetic: All binary operations (2 inputs: `input_0`, `input_1`)
+- Mux: All variants (2D indexed inputs and outputs)
+- Math: Variable names (`x0`, `x1`, etc.)
+
+**Elements NOT Affected:**
+- Nodes: Use simple `"input"` and `"output"`
+- Conversions: Use named ports (`"real"`, `"imaginary"`, `"magnitude"`, etc.)
+- Control: Named ports (`"setpoint"`, `"feedback"`, `"raw"`, `"reference"`)
+
+[⬆️ Back to Top](#logic-elements-configuration-guide) | [⬆️ Main README](README.md)
+
+---
+
 ## Build Examples
 
 ### Example 1: Minimal Digital Build

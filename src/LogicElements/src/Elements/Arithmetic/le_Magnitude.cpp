@@ -15,7 +15,7 @@ Magnitude::Magnitude() : Element(ElementType::Magnitude)
     pInput = AddInputPort<std::complex<float>>("input");
 
     // Create output port (FLOAT type) - HETEROGENEOUS!
-    pOutput = AddOutputPort<float>("output");
+    pOutput = AddOutputPort<float>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**

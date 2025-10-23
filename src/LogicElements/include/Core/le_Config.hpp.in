@@ -59,3 +59,30 @@
 #define LE_VERSION_MINOR @LE_VERSION_MINOR@
 #define LE_VERSION_PATCH @LE_VERSION_PATCH@
 #define LE_VERSION_STRING "@LE_VERSION_MAJOR@.@LE_VERSION_MINOR@.@LE_VERSION_PATCH@"
+
+// ============================================================================
+// Port Naming Configuration
+// ============================================================================
+
+/**
+ * Default port name prefixes and separators for auto-generated port names.
+ * These can be customized to change naming conventions across all elements.
+ * 
+ * Examples:
+ *   Default:   "input_0", "output_0"
+ *   Uppercase: "IN_0", "OUT_0"  (set PREFIX to "IN"/"OUT")
+ *   Compact:   "in0", "out0"     (set SEPARATOR to "")
+ *   Verbose:   "Input_0"         (set PREFIX to "Input")
+ */
+#define LE_PORT_INPUT_PREFIX "input"
+#define LE_PORT_OUTPUT_PREFIX "output"
+#define LE_PORT_SEPARATOR "_"
+#define LE_PORT_MATH_VAR_PREFIX "x"
+#define LE_PORT_SELECTOR_NAME "selector"
+
+// Helper macros for consistent port naming
+#define LE_PORT_INPUT_NAME(index) (LE_PORT_INPUT_PREFIX LE_PORT_SEPARATOR + std::to_string(index))
+#define LE_PORT_OUTPUT_NAME(index) (LE_PORT_OUTPUT_PREFIX LE_PORT_SEPARATOR + std::to_string(index))
+#define LE_PORT_INPUT_2D_NAME(set, signal) (LE_PORT_INPUT_PREFIX LE_PORT_SEPARATOR + std::to_string(set) + LE_PORT_SEPARATOR + std::to_string(signal))
+#define LE_PORT_OUTPUT_2D_NAME(set, signal) (LE_PORT_OUTPUT_PREFIX LE_PORT_SEPARATOR + std::to_string(set) + LE_PORT_SEPARATOR + std::to_string(signal))
+#define LE_PORT_MATH_VAR_NAME(index) (LE_PORT_MATH_VAR_PREFIX + std::to_string(index))

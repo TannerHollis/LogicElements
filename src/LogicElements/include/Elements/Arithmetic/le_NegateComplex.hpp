@@ -41,6 +41,7 @@ public:
     std::complex<float> GetOutput() const;
 
 private:
+    InputPort<std::complex<float>>* pInput;   ///< The input port.
     OutputPort<std::complex<float>>* pOutput; ///< The output port.
 
     // Allow Engine to access private members

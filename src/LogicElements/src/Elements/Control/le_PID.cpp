@@ -20,7 +20,7 @@ PID::PID(float p, float i, float d, float outputMin, float outputMax, uint8_t de
     // Create ports
     pSetpoint = AddInputPort<float>("setpoint");
     pFeedback = AddInputPort<float>("feedback");
-    pOutput = AddOutputPort<float>("output");
+    pOutput = AddOutputPort<float>(LE_PORT_OUTPUT_PREFIX);
 
     // Allocate derivative buffers
     this->_dBufferIn = new float[derivativeTerms];

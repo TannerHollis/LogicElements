@@ -11,7 +11,7 @@ Timer::Timer(float pickup, float dropout) : Element(ElementType::Timer)
 {
     // Create ports
     pInput = AddInputPort<bool>("input");
-    pOutput = AddOutputPort<bool>("output");
+    pOutput = AddOutputPort<bool>(LE_PORT_OUTPUT_PREFIX);
 
     // Convert pickup and dropout times from seconds to nanoseconds and initialize Time objects
     uint32_t pickupNanoseconds = static_cast<uint32_t>(pickup * 1000000000);

@@ -9,7 +9,7 @@ bool test_Node_Digital_basic()
     TestFramework::CreateElement(&engine, "IN", ElementType::NodeDigital);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -57,7 +57,7 @@ bool test_Node_Digital_port_names()
     Element* node = engine.GetElement("NODE");
     
     ASSERT_TRUE(node->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(node->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(node->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }
@@ -70,7 +70,7 @@ bool test_Node_Analog_basic()
     TestFramework::CreateElement(&engine, "IN", ElementType::NodeAnalog);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* in = (NodeAnalog*)engine.GetElement("IN");
     NodeAnalog* out = (NodeAnalog*)engine.GetElement("OUT");
@@ -92,7 +92,7 @@ bool test_Node_AnalogComplex_basic()
     TestFramework::CreateElement(&engine, "IN", ElementType::NodeAnalogComplex);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in = (NodeAnalogComplex*)engine.GetElement("IN");
     NodeAnalogComplex* out = (NodeAnalogComplex*)engine.GetElement("OUT");

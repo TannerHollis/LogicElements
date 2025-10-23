@@ -14,9 +14,9 @@ bool test_DivideComplex_basic()
     TestFramework::CreateElement(&engine, "DIV", ElementType::DivideComplex);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN0", "output", "DIV", "input_0");
-    TestFramework::ConnectElements(&engine, "IN1", "output", "DIV", "input_1");
-    TestFramework::ConnectElements(&engine, "DIV", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN0", LE_PORT_OUTPUT_PREFIX, "DIV", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "DIV", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "DIV", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in0 = (NodeAnalogComplex*)engine.GetElement("IN0");
     NodeAnalogComplex* in1 = (NodeAnalogComplex*)engine.GetElement("IN1");
@@ -50,10 +50,10 @@ bool test_DivideComplex_port_names()
     TestFramework::CreateElement(&engine, "DIV", ElementType::DivideComplex);
     Element* div = engine.GetElement("DIV");
     
-    ASSERT_TRUE(div->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(div->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(div->GetOutputPort("output") != nullptr);
-    ASSERT_EQUAL(div->GetInputPort("input_0")->GetType(), PortType::COMPLEX);
+    ASSERT_TRUE(div->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(div->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(div->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
+    ASSERT_EQUAL(div->GetInputPort(LE_PORT_INPUT_NAME(0).c_str())->GetType(), PortType::COMPLEX);
     
     return true;
 }

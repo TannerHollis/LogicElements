@@ -13,8 +13,8 @@ bool test_PhasorShift_complex()
     TestFramework::CreateElement(&engine, "SHIFT", ElementType::PhasorShift, 1.0f, 30.0f, 0.0f, 0.0f, 0.0f); // mag=1.0, angle=30°
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "SHIFT", "input");
-    TestFramework::ConnectElements(&engine, "SHIFT", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "SHIFT", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "SHIFT", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in = (NodeAnalogComplex*)engine.GetElement("IN");
     NodeAnalogComplex* out = (NodeAnalogComplex*)engine.GetElement("OUT");
@@ -46,7 +46,7 @@ bool test_PhasorShift_port_names_complex()
     Element* shift = engine.GetElement("SHIFT");
     
     ASSERT_TRUE(shift->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(shift->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(shift->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     ASSERT_EQUAL(shift->GetInputPort("input")->GetType(), PortType::COMPLEX);
     
     return true;
@@ -62,10 +62,10 @@ bool test_PhasorShift_float()
     TestFramework::CreateElement(&engine, "REAL_OUT", ElementType::NodeAnalog);
     TestFramework::CreateElement(&engine, "IMAG_OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "REAL_IN", "output", "SHIFT", "real");
-    TestFramework::ConnectElements(&engine, "IMAG_IN", "output", "SHIFT", "imaginary");
-    TestFramework::ConnectElements(&engine, "SHIFT", "real", "REAL_OUT", "input");
-    TestFramework::ConnectElements(&engine, "SHIFT", "imaginary", "IMAG_OUT", "input");
+    TestFramework::ConnectElements(&engine, "REAL_IN", LE_PORT_OUTPUT_PREFIX, "SHIFT", "real");
+    TestFramework::ConnectElements(&engine, "IMAG_IN", LE_PORT_OUTPUT_PREFIX, "SHIFT", "imaginary");
+    TestFramework::ConnectElements(&engine, "SHIFT", "real", "REAL_OUT", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "SHIFT", "imaginary", "IMAG_OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* real_in = (NodeAnalog*)engine.GetElement("REAL_IN");
     NodeAnalog* imag_in = (NodeAnalog*)engine.GetElement("IMAG_IN");

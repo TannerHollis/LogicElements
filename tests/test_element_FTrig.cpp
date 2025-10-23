@@ -10,8 +10,8 @@ bool test_FTrig_falling_edge()
     TestFramework::CreateElement(&engine, "FTRIG", ElementType::FTrig);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "FTRIG", "input");
-    TestFramework::ConnectElements(&engine, "FTRIG", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "FTRIG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "FTRIG", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -48,7 +48,7 @@ bool test_FTrig_port_names()
     Element* ftrig = engine.GetElement("FTRIG");
     
     ASSERT_TRUE(ftrig->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(ftrig->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(ftrig->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }

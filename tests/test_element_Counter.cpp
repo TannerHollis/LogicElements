@@ -11,9 +11,9 @@ bool test_Counter_basic()
     TestFramework::CreateElement(&engine, "CNT", ElementType::Counter, 3); // Count to 3
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "CNT_IN", "output", "CNT", "count_up");
-    TestFramework::ConnectElements(&engine, "RST_IN", "output", "CNT", "reset");
-    TestFramework::ConnectElements(&engine, "CNT", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "CNT_IN", LE_PORT_OUTPUT_PREFIX, "CNT", "count_up");
+    TestFramework::ConnectElements(&engine, "RST_IN", LE_PORT_OUTPUT_PREFIX, "CNT", "reset");
+    TestFramework::ConnectElements(&engine, "CNT", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* cntIn = (NodeDigital*)engine.GetElement("CNT_IN");
     NodeDigital* rstIn = (NodeDigital*)engine.GetElement("RST_IN");
@@ -63,7 +63,7 @@ bool test_Counter_port_names()
     
     ASSERT_TRUE(counter->GetInputPort("count_up") != nullptr);
     ASSERT_TRUE(counter->GetInputPort("reset") != nullptr);
-    ASSERT_TRUE(counter->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(counter->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }

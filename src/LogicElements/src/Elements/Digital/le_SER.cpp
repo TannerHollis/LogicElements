@@ -7,7 +7,7 @@ SER::SER(uint8_t nInputs) : Element(ElementType::SER), eventLogIndex(0), eventLo
     // Create named input ports (no outputs - this is a recorder element)
     for (uint8_t i = 0; i < nInputs; i++)
     {
-        AddInputPort<bool>("input_" + std::to_string(i));
+        AddInputPort<bool>(LE_PORT_INPUT_NAME(i));
     }
 
     // Allocate memory for the previous state of inputs

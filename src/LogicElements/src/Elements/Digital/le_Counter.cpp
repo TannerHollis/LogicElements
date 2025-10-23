@@ -11,7 +11,7 @@ Counter::Counter(uint16_t countFinal) : Element(ElementType::Counter)
     // Create ports
     pCountUp = AddInputPort<bool>("count_up");
     pReset = AddInputPort<bool>("reset");
-    pOutput = AddOutputPort<bool>("output");
+    pOutput = AddOutputPort<bool>(LE_PORT_OUTPUT_PREFIX);
 
     // Set extrinsic variables
     this->uCountFinal = countFinal;

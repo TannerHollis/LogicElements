@@ -11,7 +11,7 @@ FTrig::FTrig() : Element(ElementType::FTrig)
     pInput = AddInputPort<bool>("input");
 
     // Create output port
-    pOutput = AddOutputPort<bool>("output");
+    pOutput = AddOutputPort<bool>(LE_PORT_OUTPUT_PREFIX);
 
     // Initialize input states to false
     this->_inputStates[0] = false;

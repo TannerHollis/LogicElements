@@ -13,9 +13,9 @@ bool test_PID_proportional()
     TestFramework::CreateElement(&engine, "PID", ElementType::PID, 1.0f, 0.0f, 0.0f, -100.0f, 100.0f);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "SP", "output", "PID", "setpoint");
-    TestFramework::ConnectElements(&engine, "FB", "output", "PID", "feedback");
-    TestFramework::ConnectElements(&engine, "PID", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "SP", LE_PORT_OUTPUT_PREFIX, "PID", "setpoint");
+    TestFramework::ConnectElements(&engine, "FB", LE_PORT_OUTPUT_PREFIX, "PID", "feedback");
+    TestFramework::ConnectElements(&engine, "PID", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* sp = (NodeAnalog*)engine.GetElement("SP");
     NodeAnalog* fb = (NodeAnalog*)engine.GetElement("FB");
@@ -49,9 +49,9 @@ bool test_PID_clamping()
     TestFramework::CreateElement(&engine, "PID", ElementType::PID, 1.0f, 0.0f, 0.0f, -10.0f, 10.0f);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "SP", "output", "PID", "setpoint");
-    TestFramework::ConnectElements(&engine, "FB", "output", "PID", "feedback");
-    TestFramework::ConnectElements(&engine, "PID", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "SP", LE_PORT_OUTPUT_PREFIX, "PID", "setpoint");
+    TestFramework::ConnectElements(&engine, "FB", LE_PORT_OUTPUT_PREFIX, "PID", "feedback");
+    TestFramework::ConnectElements(&engine, "PID", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* sp = (NodeAnalog*)engine.GetElement("SP");
     NodeAnalog* fb = (NodeAnalog*)engine.GetElement("FB");
@@ -86,12 +86,12 @@ bool test_PID_port_names()
     // Verify named ports
     ASSERT_TRUE(pid->GetInputPort("setpoint") != nullptr);
     ASSERT_TRUE(pid->GetInputPort("feedback") != nullptr);
-    ASSERT_TRUE(pid->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(pid->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     // Verify all ANALOG types
     ASSERT_EQUAL(pid->GetInputPort("setpoint")->GetType(), PortType::ANALOG);
     ASSERT_EQUAL(pid->GetInputPort("feedback")->GetType(), PortType::ANALOG);
-    ASSERT_EQUAL(pid->GetOutputPort("output")->GetType(), PortType::ANALOG);
+    ASSERT_EQUAL(pid->GetOutputPort(LE_PORT_OUTPUT_PREFIX)->GetType(), PortType::ANALOG);
     
     return true;
 }

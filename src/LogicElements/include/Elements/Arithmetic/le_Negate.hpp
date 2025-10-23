@@ -39,6 +39,7 @@ public:
     float GetOutput() const;
 
 private:
+    InputPort<float>* pInput;   ///< The input port.
     OutputPort<float>* pOutput; ///< The output port.
 
     // Allow Engine to access private members

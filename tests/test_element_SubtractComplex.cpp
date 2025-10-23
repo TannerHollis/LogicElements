@@ -14,9 +14,9 @@ bool test_SubtractComplex_basic()
     TestFramework::CreateElement(&engine, "SUB", ElementType::SubtractComplex);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN0", "output", "SUB", "input_0");
-    TestFramework::ConnectElements(&engine, "IN1", "output", "SUB", "input_1");
-    TestFramework::ConnectElements(&engine, "SUB", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN0", LE_PORT_OUTPUT_PREFIX, "SUB", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "SUB", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "SUB", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in0 = (NodeAnalogComplex*)engine.GetElement("IN0");
     NodeAnalogComplex* in1 = (NodeAnalogComplex*)engine.GetElement("IN1");
@@ -50,10 +50,10 @@ bool test_SubtractComplex_port_names()
     TestFramework::CreateElement(&engine, "SUB", ElementType::SubtractComplex);
     Element* sub = engine.GetElement("SUB");
     
-    ASSERT_TRUE(sub->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(sub->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(sub->GetOutputPort("output") != nullptr);
-    ASSERT_EQUAL(sub->GetInputPort("input_0")->GetType(), PortType::COMPLEX);
+    ASSERT_TRUE(sub->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(sub->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(sub->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
+    ASSERT_EQUAL(sub->GetInputPort(LE_PORT_INPUT_NAME(0).c_str())->GetType(), PortType::COMPLEX);
     
     return true;
 }

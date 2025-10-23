@@ -9,11 +9,11 @@ namespace LogicElements {
  */
 Negate::Negate() : Element(ElementType::Negate)
 {
-    // Create named input port
-    AddInputPort<float>("input");
+    // Create named input port and cache pointer
+    pInput = AddInputPort<float>("input");
 
-    // Create output port
-    pOutput = AddOutputPort<float>("output");
+    // Create output port and cache pointer
+    pOutput = AddOutputPort<float>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**
@@ -26,10 +26,9 @@ void Negate::Update(const Time& timeStamp)
 
     float val = 0.0f;
 
-    // Get input
-    auto in = GetInputPortTyped<float>("input");
-    if (in && in->IsConnected())
-        val = in->GetValue();
+    // Get input (using cached pointer - no string lookup!)
+    if (pInput && pInput->IsConnected())
+        val = pInput->GetValue();
 
     // Set the output value (negated)
     pOutput->SetValue(-val);

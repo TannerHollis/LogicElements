@@ -10,12 +10,12 @@ namespace LogicElements {
  */
 Divide::Divide() : Element(ElementType::Divide)
 {
-    // Create named input ports
-    AddInputPort<float>("input_0");
-    AddInputPort<float>("input_1");
+    // Create named input ports and cache pointers
+    pInput0 = AddInputPort<float>(LE_PORT_INPUT_NAME(0));
+    pInput1 = AddInputPort<float>(LE_PORT_INPUT_NAME(1));
 
-    // Create output port
-    pOutput = AddOutputPort<float>("output");
+    // Create output port and cache pointer
+    pOutput = AddOutputPort<float>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**
@@ -29,15 +29,13 @@ void Divide::Update(const Time& timeStamp)
     float val0 = 0.0f;
     float val1 = 1.0f; // Default to 1.0 to avoid accidental division by zero
 
-    // Get input_0
-    auto in0 = GetInputPortTyped<float>("input_0");
-    if (in0 && in0->IsConnected())
-        val0 = in0->GetValue();
+    // Get input_0 (using cached pointer - no string lookup!)
+    if (pInput0 && pInput0->IsConnected())
+        val0 = pInput0->GetValue();
 
-    // Get input_1
-    auto in1 = GetInputPortTyped<float>("input_1");
-    if (in1 && in1->IsConnected())
-        val1 = in1->GetValue();
+    // Get input_1 (using cached pointer - no string lookup!)
+    if (pInput1 && pInput1->IsConnected())
+        val1 = pInput1->GetValue();
 
     // Guard against divide-by-zero
     if (std::abs(val1) < 1e-10f)

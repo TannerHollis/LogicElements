@@ -7,7 +7,7 @@ namespace LogicElements {
 #ifdef LE_ELEMENTS_ANALOG_COMPLEX
 PhasorShift::PhasorShift(float shiftMagnitude, float shiftAngleClockwise) : Element(ElementType::PhasorShift) {
     pInput = AddInputPort<std::complex<float>>("input");
-    pOutput = AddOutputPort<std::complex<float>>("output");
+    pOutput = AddOutputPort<std::complex<float>>(LE_PORT_OUTPUT_PREFIX);
     shiftMag = shiftMagnitude;
     shiftAngle = -shiftAngleClockwise / 180.0f * (float)M_PI;
     unitShiftReal = shiftMag * cosf(shiftAngle);

@@ -133,18 +133,18 @@ Mux<T>::Mux(ElementType type, uint8_t signalWidth, uint8_t nInputs) : Element(ty
     {
         for (uint8_t signal = 0; signal < signalWidth; signal++)
         {
-            std::string portName = "input_" + std::to_string(inputSet) + "_" + std::to_string(signal);
+            std::string portName = LE_PORT_INPUT_2D_NAME(inputSet, signal);
             this->template AddInputPort<T>(portName);
         }
     }
 
     // Create the selector input (HETEROGENEOUS PORT: bool in a T-typed element!)
-    pSelector = this->template AddInputPort<bool>("selector");
+    pSelector = this->template AddInputPort<bool>(LE_PORT_SELECTOR_NAME);
 
     // Create output ports
     for (uint8_t i = 0; i < signalWidth; i++)
     {
-        OutputPort<T>* port = this->template AddOutputPort<T>("output_" + std::to_string(i));
+        OutputPort<T>* port = this->template AddOutputPort<T>(LE_PORT_OUTPUT_NAME(i));
         pOutputs.push_back(port);
     }
 }
@@ -178,7 +178,7 @@ void Mux<T>::Update(const Time& timeStamp)
     for (uint8_t i = 0; i < uSignalWidth; i++)
     {
         // Calculate the port name for the selected input
-        std::string portName = "input_" + std::to_string(selectedSet) + "_" + std::to_string(i);
+        std::string portName = LE_PORT_INPUT_2D_NAME(selectedSet, i);
         
         // Get the input port
         InputPort<T>* inputPort = this->template GetInputPortTyped<T>(portName);
@@ -211,7 +211,7 @@ void Mux<T>::SetInput(Element* sourceElement, const std::string& sourcePortName,
 template<typename T>
 void Mux<T>::SetInput_Select(Element* sourceElement, const std::string& sourcePortName)
 {
-    Element::Connect(sourceElement, sourcePortName, this, "selector");
+    Element::Connect(sourceElement, sourcePortName, this, LE_PORT_SELECTOR_NAME);
 }
 
 /**

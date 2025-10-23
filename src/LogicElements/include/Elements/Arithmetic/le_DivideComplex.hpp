@@ -43,6 +43,8 @@ public:
     std::complex<float> GetOutput() const;
 
 private:
+    InputPort<std::complex<float>>* pInput0;  ///< The first input port (dividend).
+    InputPort<std::complex<float>>* pInput1;  ///< The second input port (divisor).
     OutputPort<std::complex<float>>* pOutput; ///< The output port.
 
     // Allow Engine to access private members

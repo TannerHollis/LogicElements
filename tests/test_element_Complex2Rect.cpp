@@ -13,9 +13,9 @@ bool test_Complex2Rect_heterogeneous()
     TestFramework::CreateElement(&engine, "REAL_OUT", ElementType::NodeAnalog);
     TestFramework::CreateElement(&engine, "IMAG_OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "COMPLEX_IN", "output", "C2R", "complex");
-    TestFramework::ConnectElements(&engine, "C2R", "real", "REAL_OUT", "input");
-    TestFramework::ConnectElements(&engine, "C2R", "imaginary", "IMAG_OUT", "input");
+    TestFramework::ConnectElements(&engine, "COMPLEX_IN", LE_PORT_OUTPUT_PREFIX, "C2R", "complex");
+    TestFramework::ConnectElements(&engine, "C2R", "real", "REAL_OUT", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "C2R", "imaginary", "IMAG_OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* complex_in = (NodeAnalogComplex*)engine.GetElement("COMPLEX_IN");
     NodeAnalog* real_out = (NodeAnalog*)engine.GetElement("REAL_OUT");

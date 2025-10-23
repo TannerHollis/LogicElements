@@ -14,9 +14,9 @@ bool test_MultiplyComplex_basic()
     TestFramework::CreateElement(&engine, "MUL", ElementType::MultiplyComplex);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN0", "output", "MUL", "input_0");
-    TestFramework::ConnectElements(&engine, "IN1", "output", "MUL", "input_1");
-    TestFramework::ConnectElements(&engine, "MUL", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN0", LE_PORT_OUTPUT_PREFIX, "MUL", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "MUL", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "MUL", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in0 = (NodeAnalogComplex*)engine.GetElement("IN0");
     NodeAnalogComplex* in1 = (NodeAnalogComplex*)engine.GetElement("IN1");
@@ -50,10 +50,10 @@ bool test_MultiplyComplex_port_names()
     TestFramework::CreateElement(&engine, "MUL", ElementType::MultiplyComplex);
     Element* mul = engine.GetElement("MUL");
     
-    ASSERT_TRUE(mul->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(mul->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(mul->GetOutputPort("output") != nullptr);
-    ASSERT_EQUAL(mul->GetInputPort("input_0")->GetType(), PortType::COMPLEX);
+    ASSERT_TRUE(mul->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(mul->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(mul->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
+    ASSERT_EQUAL(mul->GetInputPort(LE_PORT_INPUT_NAME(0).c_str())->GetType(), PortType::COMPLEX);
     
     return true;
 }

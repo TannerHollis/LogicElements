@@ -19,9 +19,9 @@ bool test_Math_basic_expression()
     
     TestFramework::CreateElement(&engine, "RESULT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "X0", "output", "MATH", "x0");
-    TestFramework::ConnectElements(&engine, "X1", "output", "MATH", "x1");
-    TestFramework::ConnectElements(&engine, "MATH", "output", "RESULT", "input");
+    TestFramework::ConnectElements(&engine, "X0", LE_PORT_OUTPUT_PREFIX, "MATH", LE_PORT_MATH_VAR_NAME(0));
+    TestFramework::ConnectElements(&engine, "X1", LE_PORT_OUTPUT_PREFIX, "MATH", LE_PORT_MATH_VAR_NAME(1));
+    TestFramework::ConnectElements(&engine, "MATH", LE_PORT_OUTPUT_PREFIX, "RESULT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* x0 = (NodeAnalog*)engine.GetElement("X0");
     NodeAnalog* x1 = (NodeAnalog*)engine.GetElement("X1");
@@ -54,10 +54,10 @@ bool test_Math_complex_expression()
     
     TestFramework::CreateElement(&engine, "RESULT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "X0", "output", "MATH", "x0");
-    TestFramework::ConnectElements(&engine, "X1", "output", "MATH", "x1");
-    TestFramework::ConnectElements(&engine, "X2", "output", "MATH", "x2");
-    TestFramework::ConnectElements(&engine, "MATH", "output", "RESULT", "input");
+    TestFramework::ConnectElements(&engine, "X0", LE_PORT_OUTPUT_PREFIX, "MATH", LE_PORT_MATH_VAR_NAME(0));
+    TestFramework::ConnectElements(&engine, "X1", LE_PORT_OUTPUT_PREFIX, "MATH", LE_PORT_MATH_VAR_NAME(1));
+    TestFramework::ConnectElements(&engine, "X2", LE_PORT_OUTPUT_PREFIX, "MATH", LE_PORT_MATH_VAR_NAME(2));
+    TestFramework::ConnectElements(&engine, "MATH", LE_PORT_OUTPUT_PREFIX, "RESULT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* x0 = (NodeAnalog*)engine.GetElement("X0");
     NodeAnalog* x1 = (NodeAnalog*)engine.GetElement("X1");
@@ -88,9 +88,9 @@ bool test_Math_port_names()
     
     Element* math = engine.GetElement("MATH");
     
-    ASSERT_TRUE(math->GetInputPort("x0") != nullptr);
-    ASSERT_TRUE(math->GetInputPort("x1") != nullptr);
-    ASSERT_TRUE(math->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(math->GetInputPort(LE_PORT_MATH_VAR_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(math->GetInputPort(LE_PORT_MATH_VAR_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(math->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }

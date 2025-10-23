@@ -16,9 +16,9 @@ bool test_AND_2inputs()
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
     // Connect using engine
-    TestFramework::ConnectElements(&engine, "IN1", "output", "AND1", "input_0");
-    TestFramework::ConnectElements(&engine, "IN2", "output", "AND1", "input_1");
-    TestFramework::ConnectElements(&engine, "AND1", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN2", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "AND1", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     // Get elements
     NodeDigital* in1 = (NodeDigital*)engine.GetElement("IN1");
@@ -65,11 +65,11 @@ bool test_AND_4inputs()
     TestFramework::CreateElement(&engine, "AND1", ElementType::AND, 4);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN1", "output", "AND1", "input_0");
-    TestFramework::ConnectElements(&engine, "IN2", "output", "AND1", "input_1");
-    TestFramework::ConnectElements(&engine, "IN3", "output", "AND1", "input_2");
-    TestFramework::ConnectElements(&engine, "IN4", "output", "AND1", "input_3");
-    TestFramework::ConnectElements(&engine, "AND1", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN2", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "IN3", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(2));
+    TestFramework::ConnectElements(&engine, "IN4", LE_PORT_OUTPUT_PREFIX, "AND1", LE_PORT_INPUT_NAME(3));
+    TestFramework::ConnectElements(&engine, "AND1", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in1 = (NodeDigital*)engine.GetElement("IN1");
     NodeDigital* in2 = (NodeDigital*)engine.GetElement("IN2");
@@ -106,16 +106,16 @@ bool test_AND_port_names()
     Element* andGate = engine.GetElement("AND1");
     
     // Verify named input ports exist
-    ASSERT_TRUE(andGate->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(andGate->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(andGate->GetInputPort("input_2") != nullptr);
+    ASSERT_TRUE(andGate->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(andGate->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(andGate->GetInputPort(LE_PORT_INPUT_NAME(2).c_str()) != nullptr);
     
     // Verify output port exists
-    ASSERT_TRUE(andGate->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(andGate->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     // Verify port types
-    ASSERT_EQUAL(andGate->GetInputPort("input_0")->GetType(), PortType::DIGITAL);
-    ASSERT_EQUAL(andGate->GetOutputPort("output")->GetType(), PortType::DIGITAL);
+    ASSERT_EQUAL(andGate->GetInputPort(LE_PORT_INPUT_NAME(0).c_str())->GetType(), PortType::DIGITAL);
+    ASSERT_EQUAL(andGate->GetOutputPort(LE_PORT_OUTPUT_PREFIX)->GetType(), PortType::DIGITAL);
     
     return true;
 }

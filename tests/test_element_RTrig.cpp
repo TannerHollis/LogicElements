@@ -10,8 +10,8 @@ bool test_RTrig_rising_edge()
     TestFramework::CreateElement(&engine, "RTRIG", ElementType::RTrig);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "RTRIG", "input");
-    TestFramework::ConnectElements(&engine, "RTRIG", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "RTRIG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "RTRIG", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -48,8 +48,8 @@ bool test_RTrig_multiple_edges()
     TestFramework::CreateElement(&engine, "RTRIG", ElementType::RTrig);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "RTRIG", "input");
-    TestFramework::ConnectElements(&engine, "RTRIG", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "RTRIG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "RTRIG", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");

@@ -7,7 +7,7 @@ namespace LogicElements {
 #ifdef LE_ELEMENTS_ANALOG_COMPLEX
 Analog1PWinding::Analog1PWinding(uint16_t samplesPerCycle) : Element(ElementType::Analog1PWinding) {
     pRaw = AddInputPort<float>("raw"); pRef = AddInputPort<std::complex<float>>("reference");
-    pOutput = AddOutputPort<std::complex<float>>("output");
+    pOutput = AddOutputPort<std::complex<float>>(LE_PORT_OUTPUT_PREFIX);
     uSamplesPerCycle = samplesPerCycle; _rawValues = new float[samplesPerCycle]; _rawFilteredValues = new float[samplesPerCycle];
     for (uint16_t i = 0; i < samplesPerCycle; i++) { _rawValues[i] = 0.0f; _rawFilteredValues[i] = 0.0f; }
     uWrite = samplesPerCycle - 1; uQuarterCycle = (uint16_t)((float)samplesPerCycle / 4.0f) - 1;

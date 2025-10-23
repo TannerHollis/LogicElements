@@ -40,6 +40,8 @@ public:
     float GetOutput() const;
 
 private:
+    InputPort<float>* pInput0;  ///< The first input port (multiplicand).
+    InputPort<float>* pInput1;  ///< The second input port (multiplier).
     OutputPort<float>* pOutput; ///< The output port.
 
     // Allow Engine to access private members

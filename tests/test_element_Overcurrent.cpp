@@ -21,8 +21,8 @@ bool test_Overcurrent_heterogeneous()
     
     TestFramework::CreateElement(&engine, "TRIP", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "CURRENT", "output", "OC", "current");
-    TestFramework::ConnectElements(&engine, "OC", "trip", "TRIP", "input");
+    TestFramework::ConnectElements(&engine, "CURRENT", LE_PORT_OUTPUT_PREFIX, "OC", "current");
+    TestFramework::ConnectElements(&engine, "OC", "trip", "TRIP", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* current = (NodeAnalog*)engine.GetElement("CURRENT");
     NodeDigital* trip = (NodeDigital*)engine.GetElement("TRIP");

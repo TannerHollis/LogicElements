@@ -318,8 +318,8 @@ bool Builder::ParseSER(Board* board, const nlohmann::json& serField)
         uint8_t outputSlot = serElement["slot"].get<int>();
 
         // Create a new net definition and add the input
-        Engine::ElementNetTypeDef net(elementName, "output");
-        net.AddInput(DEFAULT_SER_NAME, "input_" + std::to_string(serElementCount));
+        Engine::ElementNetTypeDef net(elementName, LE_PORT_OUTPUT_PREFIX);
+        net.AddInput(DEFAULT_SER_NAME, LE_PORT_INPUT_NAME(serElementCount));
 
         // Add the net definition to the vector
         nets.push_back(net);

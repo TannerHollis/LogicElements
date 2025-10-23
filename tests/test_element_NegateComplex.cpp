@@ -13,8 +13,8 @@ bool test_NegateComplex_basic()
     TestFramework::CreateElement(&engine, "NEG", ElementType::NegateComplex);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalogComplex);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "NEG", "input");
-    TestFramework::ConnectElements(&engine, "NEG", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "NEG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "NEG", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in = (NodeAnalogComplex*)engine.GetElement("IN");
     NodeAnalogComplex* out = (NodeAnalogComplex*)engine.GetElement("OUT");
@@ -46,7 +46,7 @@ bool test_NegateComplex_port_names()
     Element* neg = engine.GetElement("NEG");
     
     ASSERT_TRUE(neg->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(neg->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(neg->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     ASSERT_EQUAL(neg->GetInputPort("input")->GetType(), PortType::COMPLEX);
     
     return true;

@@ -16,9 +16,9 @@ bool test_Analog1PWinding_port_names()
     
 #ifdef LE_ELEMENTS_ANALOG_COMPLEX
     ASSERT_TRUE(winding->GetInputPort("reference") != nullptr);
-    ASSERT_TRUE(winding->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(winding->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     ASSERT_EQUAL(winding->GetInputPort("reference")->GetType(), PortType::COMPLEX);
-    ASSERT_EQUAL(winding->GetOutputPort("output")->GetType(), PortType::COMPLEX);
+    ASSERT_EQUAL(winding->GetOutputPort(LE_PORT_OUTPUT_PREFIX)->GetType(), PortType::COMPLEX);
 #else
     ASSERT_TRUE(winding->GetInputPort("reference_real") != nullptr);
     ASSERT_TRUE(winding->GetInputPort("reference_imag") != nullptr);

@@ -12,8 +12,8 @@ bool test_Abs_basic()
     TestFramework::CreateElement(&engine, "ABS", ElementType::Abs);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "ABS", "input");
-    TestFramework::ConnectElements(&engine, "ABS", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "ABS", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "ABS", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* in = (NodeAnalog*)engine.GetElement("IN");
     NodeAnalog* out = (NodeAnalog*)engine.GetElement("OUT");
@@ -46,7 +46,7 @@ bool test_Abs_port_names()
     Element* abs = engine.GetElement("ABS");
     
     ASSERT_TRUE(abs->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(abs->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(abs->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     ASSERT_EQUAL(abs->GetInputPort("input")->GetType(), PortType::ANALOG);
     
     return true;

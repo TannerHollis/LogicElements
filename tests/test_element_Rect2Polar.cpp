@@ -14,10 +14,10 @@ bool test_Rect2Polar_basic()
     TestFramework::CreateElement(&engine, "MAG", ElementType::NodeAnalog);
     TestFramework::CreateElement(&engine, "ANG", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "REAL", "output", "R2P", "real");
-    TestFramework::ConnectElements(&engine, "IMAG", "output", "R2P", "imaginary");
-    TestFramework::ConnectElements(&engine, "R2P", "magnitude", "MAG", "input");
-    TestFramework::ConnectElements(&engine, "R2P", "angle", "ANG", "input");
+    TestFramework::ConnectElements(&engine, "REAL", LE_PORT_OUTPUT_PREFIX, "R2P", "real");
+    TestFramework::ConnectElements(&engine, "IMAG", LE_PORT_OUTPUT_PREFIX, "R2P", "imaginary");
+    TestFramework::ConnectElements(&engine, "R2P", "magnitude", "MAG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "R2P", "angle", "ANG", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* real = (NodeAnalog*)engine.GetElement("REAL");
     NodeAnalog* imag = (NodeAnalog*)engine.GetElement("IMAG");

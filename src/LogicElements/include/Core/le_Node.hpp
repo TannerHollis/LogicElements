@@ -165,9 +165,9 @@ public:
 template<typename T>
 Node<T>::Node(ElementType type, uint16_t historyLength) : Element(type)
 {
-    // Create input and output ports
-    pInput = this->template AddInputPort<T>("input");
-    pOutput = this->template AddOutputPort<T>("output");
+    // Create input and output ports (using naming macros for consistency)
+    pInput = this->template AddInputPort<T>(LE_PORT_INPUT_PREFIX);
+    pOutput = this->template AddOutputPort<T>(LE_PORT_OUTPUT_PREFIX);
 
     // Fixed length
     if (historyLength <= 0)

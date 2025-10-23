@@ -11,9 +11,9 @@ bool test_OR_2inputs()
     TestFramework::CreateElement(&engine, "OR1", ElementType::OR, 2);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN1", "output", "OR1", "input_0");
-    TestFramework::ConnectElements(&engine, "IN2", "output", "OR1", "input_1");
-    TestFramework::ConnectElements(&engine, "OR1", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "OR1", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN2", LE_PORT_OUTPUT_PREFIX, "OR1", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "OR1", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in1 = (NodeDigital*)engine.GetElement("IN1");
     NodeDigital* in2 = (NodeDigital*)engine.GetElement("IN2");
@@ -56,10 +56,10 @@ bool test_OR_3inputs()
     TestFramework::CreateElement(&engine, "OR1", ElementType::OR, 3);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN1", "output", "OR1", "input_0");
-    TestFramework::ConnectElements(&engine, "IN2", "output", "OR1", "input_1");
-    TestFramework::ConnectElements(&engine, "IN3", "output", "OR1", "input_2");
-    TestFramework::ConnectElements(&engine, "OR1", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "OR1", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN2", LE_PORT_OUTPUT_PREFIX, "OR1", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "IN3", LE_PORT_OUTPUT_PREFIX, "OR1", LE_PORT_INPUT_NAME(2));
+    TestFramework::ConnectElements(&engine, "OR1", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in1 = (NodeDigital*)engine.GetElement("IN1");
     NodeDigital* in2 = (NodeDigital*)engine.GetElement("IN2");
@@ -90,9 +90,9 @@ bool test_OR_port_names()
     TestFramework::CreateElement(&engine, "OR1", ElementType::OR, 2);
     Element* orGate = engine.GetElement("OR1");
     
-    ASSERT_TRUE(orGate->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(orGate->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(orGate->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(orGate->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(orGate->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(orGate->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }

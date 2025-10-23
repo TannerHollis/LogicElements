@@ -13,9 +13,9 @@ bool test_Complex2Polar_heterogeneous()
     TestFramework::CreateElement(&engine, "MAG_OUT", ElementType::NodeAnalog);
     TestFramework::CreateElement(&engine, "ANG_OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "COMPLEX_IN", "output", "C2P", "complex");
-    TestFramework::ConnectElements(&engine, "C2P", "magnitude", "MAG_OUT", "input");
-    TestFramework::ConnectElements(&engine, "C2P", "angle", "ANG_OUT", "input");
+    TestFramework::ConnectElements(&engine, "COMPLEX_IN", LE_PORT_OUTPUT_PREFIX, "C2P", "complex");
+    TestFramework::ConnectElements(&engine, "C2P", "magnitude", "MAG_OUT", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "C2P", "angle", "ANG_OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* complex_in = (NodeAnalogComplex*)engine.GetElement("COMPLEX_IN");
     NodeAnalog* mag_out = (NodeAnalog*)engine.GetElement("MAG_OUT");

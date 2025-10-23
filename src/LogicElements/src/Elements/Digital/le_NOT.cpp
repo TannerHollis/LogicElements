@@ -11,7 +11,7 @@ NOT::NOT() : Element(ElementType::NOT)
     pInput = AddInputPort<bool>("input");
 
     // Create output port
-    pOutput = AddOutputPort<bool>("output");
+    pOutput = AddOutputPort<bool>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**

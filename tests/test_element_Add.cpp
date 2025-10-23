@@ -13,9 +13,9 @@ bool test_Add_basic()
     TestFramework::CreateElement(&engine, "ADD", ElementType::Add);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "IN0", "output", "ADD", "input_0");
-    TestFramework::ConnectElements(&engine, "IN1", "output", "ADD", "input_1");
-    TestFramework::ConnectElements(&engine, "ADD", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN0", LE_PORT_OUTPUT_PREFIX, "ADD", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "ADD", LE_PORT_INPUT_NAME(1));
+    TestFramework::ConnectElements(&engine, "ADD", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalog* in0 = (NodeAnalog*)engine.GetElement("IN0");
     NodeAnalog* in1 = (NodeAnalog*)engine.GetElement("IN1");
@@ -51,11 +51,11 @@ bool test_Add_port_names()
     TestFramework::CreateElement(&engine, "ADD", ElementType::Add);
     Element* add = engine.GetElement("ADD");
     
-    ASSERT_TRUE(add->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(add->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(add->GetOutputPort("output") != nullptr);
-    ASSERT_EQUAL(add->GetInputPort("input_0")->GetType(), PortType::ANALOG);
-    ASSERT_EQUAL(add->GetOutputPort("output")->GetType(), PortType::ANALOG);
+    ASSERT_TRUE(add->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(add->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(add->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
+    ASSERT_EQUAL(add->GetInputPort(LE_PORT_INPUT_NAME(0).c_str())->GetType(), PortType::ANALOG);
+    ASSERT_EQUAL(add->GetOutputPort(LE_PORT_OUTPUT_PREFIX)->GetType(), PortType::ANALOG);
     
     return true;
 }

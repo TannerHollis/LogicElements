@@ -10,8 +10,8 @@ bool test_NOT_basic()
     TestFramework::CreateElement(&engine, "NOT1", ElementType::NOT);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "NOT1", "input");
-    TestFramework::ConnectElements(&engine, "NOT1", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "NOT1", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "NOT1", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -40,9 +40,9 @@ bool test_NOT_double_inversion()
     TestFramework::CreateElement(&engine, "NOT2", ElementType::NOT);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "NOT1", "input");
-    TestFramework::ConnectElements(&engine, "NOT1", "output", "NOT2", "input");
-    TestFramework::ConnectElements(&engine, "NOT2", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "NOT1", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "NOT1", LE_PORT_OUTPUT_PREFIX, "NOT2", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "NOT2", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -69,7 +69,7 @@ bool test_NOT_port_names()
     Element* notGate = engine.GetElement("NOT1");
     
     ASSERT_TRUE(notGate->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(notGate->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(notGate->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     ASSERT_EQUAL(notGate->GetInputPortCount(), (size_t)1);
     ASSERT_EQUAL(notGate->GetOutputPortCount(), (size_t)1);
     

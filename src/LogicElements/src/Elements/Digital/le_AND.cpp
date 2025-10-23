@@ -11,11 +11,11 @@ AND::AND(uint8_t nInputs) : Element(ElementType::AND)
     // Create named input ports
     for (uint8_t i = 0; i < nInputs; i++)
     {
-        AddInputPort<bool>("input_" + std::to_string(i));
+        AddInputPort<bool>(LE_PORT_INPUT_NAME(i));
     }
 
     // Create output port
-    pOutput = AddOutputPort<bool>("output");
+    pOutput = AddOutputPort<bool>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**

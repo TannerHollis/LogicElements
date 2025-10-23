@@ -17,13 +17,13 @@ bool test_Mux_Digital_basic()
     TestFramework::CreateElement(&engine, "OUT1", ElementType::NodeDigital);
     
     // Connect signals
-    TestFramework::ConnectElements(&engine, "SIG0_0", "output", "MUX", "input_0_0");
-    TestFramework::ConnectElements(&engine, "SIG0_1", "output", "MUX", "input_0_1");
-    TestFramework::ConnectElements(&engine, "SIG1_0", "output", "MUX", "input_1_0");
-    TestFramework::ConnectElements(&engine, "SIG1_1", "output", "MUX", "input_1_1");
-    TestFramework::ConnectElements(&engine, "SEL", "output", "MUX", "selector");
-    TestFramework::ConnectElements(&engine, "MUX", "output_0", "OUT0", "input");
-    TestFramework::ConnectElements(&engine, "MUX", "output_1", "OUT1", "input");
+    TestFramework::ConnectElements(&engine, "SIG0_0", LE_PORT_OUTPUT_PREFIX, "MUX", LE_PORT_INPUT_2D_NAME(0, 0));
+    TestFramework::ConnectElements(&engine, "SIG0_1", LE_PORT_OUTPUT_PREFIX, "MUX", LE_PORT_INPUT_2D_NAME(0, 1));
+    TestFramework::ConnectElements(&engine, "SIG1_0", LE_PORT_OUTPUT_PREFIX, "MUX", LE_PORT_INPUT_2D_NAME(1, 0));
+    TestFramework::ConnectElements(&engine, "SIG1_1", LE_PORT_OUTPUT_PREFIX, "MUX", LE_PORT_INPUT_2D_NAME(1, 1));
+    TestFramework::ConnectElements(&engine, "SEL", LE_PORT_OUTPUT_PREFIX, "MUX", LE_PORT_SELECTOR_NAME);
+    TestFramework::ConnectElements(&engine, "MUX", LE_PORT_OUTPUT_NAME(0), "OUT0", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "MUX", LE_PORT_OUTPUT_NAME(1), "OUT1", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* sig0_0 = (NodeDigital*)engine.GetElement("SIG0_0");
     NodeDigital* sig0_1 = (NodeDigital*)engine.GetElement("SIG0_1");
@@ -63,18 +63,18 @@ bool test_Mux_port_heterogeneous()
     Element* mux = engine.GetElement("MUX");
     
     // Verify signal input ports (DIGITAL type)
-    auto port = mux->GetInputPort("input_0_0");
-    std::cout << "  Port input_0_0: " << (port ? "exists" : "NULL") << std::endl;
+    auto port = mux->GetInputPort(LE_PORT_INPUT_2D_NAME(0, 0).c_str());
+    std::cout << "  Port " << LE_PORT_INPUT_2D_NAME(0, 0) << ": " << (port ? "exists" : "NULL") << std::endl;
     ASSERT_TRUE(port != nullptr);
     ASSERT_EQUAL(port->GetType(), PortType::DIGITAL);
     
     // Verify selector port (also DIGITAL but semantically different!)
-    ASSERT_TRUE(mux->GetInputPort("selector") != nullptr);
-    ASSERT_EQUAL(mux->GetInputPort("selector")->GetType(), PortType::DIGITAL);
+    ASSERT_TRUE(mux->GetInputPort(LE_PORT_SELECTOR_NAME) != nullptr);
+    ASSERT_EQUAL(mux->GetInputPort(LE_PORT_SELECTOR_NAME)->GetType(), PortType::DIGITAL);
     
     // Verify output ports
-    ASSERT_TRUE(mux->GetOutputPort("output_0") != nullptr);
-    ASSERT_TRUE(mux->GetOutputPort("output_1") != nullptr);
+    ASSERT_TRUE(mux->GetOutputPort(LE_PORT_OUTPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(mux->GetOutputPort(LE_PORT_OUTPUT_NAME(1).c_str()) != nullptr);
     
     return true;
 }

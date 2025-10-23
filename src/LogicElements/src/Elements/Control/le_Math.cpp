@@ -15,11 +15,11 @@ Math::Math(uint8_t nInputs, std::string expr) : Element(ElementType::Math), nInp
     // Create input ports (x0, x1, x2, ...)
     for (uint8_t i = 0; i < nInputs; i++)
     {
-        AddInputPort<float>("x" + std::to_string(i));
+        AddInputPort<float>(LE_PORT_MATH_VAR_NAME(i));
     }
 
     // Create output port
-    pOutput = AddOutputPort<float>("output");
+    pOutput = AddOutputPort<float>(LE_PORT_OUTPUT_PREFIX);
 
     // Declare extrinsic variables
     this->sExpr = expr;
@@ -33,9 +33,10 @@ Math::Math(uint8_t nInputs, std::string expr) : Element(ElementType::Math), nInp
         this->te_vars[i].context = 0;
         this->te_vars[i].type = 0;
 
-        // Assign name & address
-        this->te_vars[i].name = new char[5];
-        snprintf((char*)this->te_vars[i].name, 5, "x%d", i);
+        // Assign name & address using port naming macro
+        std::string varName = LE_PORT_MATH_VAR_NAME(i);
+        this->te_vars[i].name = new char[varName.length() + 1];
+        strcpy((char*)this->te_vars[i].name, varName.c_str());
         this->te_vars[i].address = &this->_vars[i];
     }
 

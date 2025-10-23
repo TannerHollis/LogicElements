@@ -9,8 +9,8 @@ bool test_SER_basic()
     TestFramework::CreateElement(&engine, "IN2", ElementType::NodeDigital);
     TestFramework::CreateElement(&engine, "SER", ElementType::SER, 2); // 2 inputs
     
-    TestFramework::ConnectElements(&engine, "IN1", "output", "SER", "input_0");
-    TestFramework::ConnectElements(&engine, "IN2", "output", "SER", "input_1");
+    TestFramework::ConnectElements(&engine, "IN1", LE_PORT_OUTPUT_PREFIX, "SER", LE_PORT_INPUT_NAME(0));
+    TestFramework::ConnectElements(&engine, "IN2", LE_PORT_OUTPUT_PREFIX, "SER", LE_PORT_INPUT_NAME(1));
     
     NodeDigital* in1 = (NodeDigital*)engine.GetElement("IN1");
     NodeDigital* in2 = (NodeDigital*)engine.GetElement("IN2");
@@ -46,9 +46,9 @@ bool test_SER_port_names()
     Element* ser = engine.GetElement("SER");
     
     // Verify input ports exist (SER has no outputs - recorder only)
-    ASSERT_TRUE(ser->GetInputPort("input_0") != nullptr);
-    ASSERT_TRUE(ser->GetInputPort("input_1") != nullptr);
-    ASSERT_TRUE(ser->GetInputPort("input_2") != nullptr);
+    ASSERT_TRUE(ser->GetInputPort(LE_PORT_INPUT_NAME(0).c_str()) != nullptr);
+    ASSERT_TRUE(ser->GetInputPort(LE_PORT_INPUT_NAME(1).c_str()) != nullptr);
+    ASSERT_TRUE(ser->GetInputPort(LE_PORT_INPUT_NAME(2).c_str()) != nullptr);
     ASSERT_EQUAL(ser->GetOutputPortCount(), (size_t)0); // No outputs!
     
     return true;

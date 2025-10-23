@@ -10,11 +10,11 @@ namespace LogicElements {
  */
 NegateComplex::NegateComplex() : Element(ElementType::NegateComplex)
 {
-    // Create named input port
-    AddInputPort<std::complex<float>>("input");
+    // Create named input port and cache pointer
+    pInput = AddInputPort<std::complex<float>>("input");
 
-    // Create output port
-    pOutput = AddOutputPort<std::complex<float>>("output");
+    // Create output port and cache pointer
+    pOutput = AddOutputPort<std::complex<float>>(LE_PORT_OUTPUT_PREFIX);
 }
 
 /**
@@ -27,10 +27,9 @@ void NegateComplex::Update(const Time& timeStamp)
 
     std::complex<float> val(0.0f, 0.0f);
 
-    // Get input
-    auto in = GetInputPortTyped<std::complex<float>>("input");
-    if (in && in->IsConnected())
-        val = in->GetValue();
+    // Get input (using cached pointer - no string lookup!)
+    if (pInput && pInput->IsConnected())
+        val = pInput->GetValue();
 
     // Set the output value (negated)
     pOutput->SetValue(-val);

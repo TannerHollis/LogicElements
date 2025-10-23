@@ -13,8 +13,8 @@ bool test_Magnitude_basic()
     TestFramework::CreateElement(&engine, "MAG", ElementType::Magnitude);
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeAnalog);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "MAG", "input");
-    TestFramework::ConnectElements(&engine, "MAG", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "MAG", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "MAG", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeAnalogComplex* in = (NodeAnalogComplex*)engine.GetElement("IN");
     NodeAnalog* out = (NodeAnalog*)engine.GetElement("OUT");
@@ -48,7 +48,7 @@ bool test_Magnitude_heterogeneous()
     
     // Verify HETEROGENEOUS port types!
     ASSERT_EQUAL(mag->GetInputPort("input")->GetType(), PortType::COMPLEX);  // complex input
-    ASSERT_EQUAL(mag->GetOutputPort("output")->GetType(), PortType::ANALOG); // float output
+    ASSERT_EQUAL(mag->GetOutputPort(LE_PORT_OUTPUT_PREFIX)->GetType(), PortType::ANALOG); // float output
     
     // This demonstrates mixing COMPLEX and ANALOG on same element!
     return true;

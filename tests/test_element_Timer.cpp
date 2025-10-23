@@ -10,8 +10,8 @@ bool test_Timer_basic()
     TestFramework::CreateElement(&engine, "TMR", ElementType::Timer, 0.1f, 0.05f, 0.0f, 0.0f, 0.0f); // 100ms pickup, 50ms dropout
     TestFramework::CreateElement(&engine, "OUT", ElementType::NodeDigital);
     
-    TestFramework::ConnectElements(&engine, "IN", "output", "TMR", "input");
-    TestFramework::ConnectElements(&engine, "TMR", "output", "OUT", "input");
+    TestFramework::ConnectElements(&engine, "IN", LE_PORT_OUTPUT_PREFIX, "TMR", LE_PORT_INPUT_PREFIX);
+    TestFramework::ConnectElements(&engine, "TMR", LE_PORT_OUTPUT_PREFIX, "OUT", LE_PORT_INPUT_PREFIX);
     
     NodeDigital* in = (NodeDigital*)engine.GetElement("IN");
     NodeDigital* out = (NodeDigital*)engine.GetElement("OUT");
@@ -46,7 +46,7 @@ bool test_Timer_port_names()
     Element* timer = engine.GetElement("TMR");
     
     ASSERT_TRUE(timer->GetInputPort("input") != nullptr);
-    ASSERT_TRUE(timer->GetOutputPort("output") != nullptr);
+    ASSERT_TRUE(timer->GetOutputPort(LE_PORT_OUTPUT_PREFIX) != nullptr);
     
     return true;
 }
