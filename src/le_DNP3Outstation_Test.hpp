@@ -2,6 +2,8 @@
 
 #include "le_DNP3Outstation.hpp"
 
+using namespace LogicElements;
+
 #ifdef LE_DNP3
 
 #define OUTSTATION_IP "0.0.0.0"
@@ -10,23 +12,23 @@
 #define CLIENT_DNP 1
 #define PORT 20000
 
-class le_DNP3Outstation_Test : public le_DNP3Outstation
+class le_DNP3Outstation_Test : public DNP3Outstation
 {
 public:
-	le_DNP3Outstation_Test() : le_DNP3Outstation(CreateExampleConfig()) {}
+	le_DNP3Outstation_Test() : DNP3Outstation(CreateExampleConfig()) {}
 
 private:
-	static le_DNP3Outstation_Config CreateExampleConfig()
+	static DNP3OutstationConfig CreateExampleConfig()
 	{
 		// Declare outstation config
-		le_DNP3Outstation_Config config;
+		DNP3OutstationConfig config;
 		config.name = "Test DNP3 Outstation";
 		config.outstation.ip = OUTSTATION_IP;
 		config.outstation.dnp = OUTSTATION_DNP;
 		config.outstation.port = PORT;
 
 		// Configure the session
-		le_DNP3Outstation_Session_Config session;
+		DNP3OutstationSessionConfig session;
 		session.name = "Test Session";
 		session.client.ip = CLIENT_IP;
 		session.client.dnp = CLIENT_DNP;

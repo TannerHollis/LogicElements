@@ -34,28 +34,28 @@
 	],
 	"nets": [
 		{
-			"output": { "name": "IN0", "slot": 0 },
+			"output": { "name": "IN0", "port": "output" },
 			"inputs": [
-				{ "name": "OR0", "slot": 0 },
-				{ "name": "AND0", "slot": 0 }
+				{ "name": "OR0", "port": "input_0" },
+				{ "name": "AND0", "port": "input_0" }
 			]
 		},
 		{
-			"output": { "name": "IN1", "slot": 0 },
+			"output": { "name": "IN1", "port": "output" },
 			"inputs": [
-				{ "name": "OR0", "slot": 1 },
-				{ "name": "AND0", "slot": 1 }
+				{ "name": "OR0", "port": "input_1" },
+				{ "name": "AND0", "port": "input_1" }
 			]
 		},
-		{ "output": { "name": "OR0", "slot": 0 },
+		{ "output": { "name": "OR0", "port": "output" },
 			"inputs": [
-				{ "name": "OUT0", "slot": 0 }
+				{ "name": "OUT0", "port": "input" }
 			]
 		},
 		{
-			"output": { "name": "AND0", "slot": 0 },
+			"output": { "name": "AND0", "port": "output" },
 			"inputs": [
-				{ "name": "OUT1", "slot": 0 }
+				{ "name": "OUT1", "port": "input" }
 			]
 		}
 	],

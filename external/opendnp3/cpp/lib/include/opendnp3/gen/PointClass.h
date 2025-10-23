@@ -39,7 +39,7 @@ namespace opendnp3 {
 
 /**
   Class assignment for a measurement point
-*/
+*/ 
 enum class PointClass : uint8_t
 {
   /// No event class assignment

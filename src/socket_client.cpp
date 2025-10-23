@@ -32,18 +32,18 @@ void receiveThread(tcp::TcpClient<true>& tcp_client)
             comms::msg* msg = (comms::msg*)bufferResp.buffer;
 
             // Check if not a request
-            if (msg->category == comms::msg_category::REQUEST)
+            if (msg->GetCategory() == comms::msg_category::REQUEST)
                 continue;
 
             // Dereference as response
             comms::msg_resp* resp = (comms::msg_resp*)bufferResp.buffer;
 
             // Handle partial response and complete
-            if (resp->category == comms::msg_category::RESPONSE_PARTIAL || resp->category == comms::msg_category::RESPONSE_COMPLETE)
+            if (resp->GetCategory() == comms::msg_category::RESPONSE_PARTIAL || resp->GetCategory() == comms::msg_category::RESPONSE_COMPLETE)
                 std::cout << resp->buffer;
 
             // Notify waiting thread if response is complete or bad
-            if (resp->category == comms::msg_category::RESPONSE_COMPLETE || resp->badResponse)
+            if (resp->GetCategory() == comms::msg_category::RESPONSE_COMPLETE || resp->badResponse)
             {
                 waiting_for_response = false;
                 cv.notify_one();
@@ -67,9 +67,32 @@ void print_help() {
 
 int main(int argc, char* argv[])
 {
-    // Server address and port
+    // Default server address and port
     std::string server_address = "192.168.0.205";
     Port server_port = 502;
+
+    // Parse command-line arguments
+    if (argc >= 2)
+    {
+        server_address = argv[1];
+    }
+    if (argc >= 3)
+    {
+        try
+        {
+            server_port = static_cast<Port>(std::stoi(argv[2]));
+        }
+        catch (const std::exception&)
+        {
+            std::cerr << "Invalid port number: " << argv[2] << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [IP_ADDRESS] [PORT]" << std::endl;
+            std::cerr << "  Default: " << argv[0] << " 192.168.0.205 502" << std::endl;
+            return 1;
+        }
+    }
+
+    // Display connection information
+    std::cout << "Connecting to " << server_address << ":" << server_port << "..." << std::endl;
 
     // Create TCP client
     tcp::TcpClient<true> tcp_client(Address{ server_address, server_port });

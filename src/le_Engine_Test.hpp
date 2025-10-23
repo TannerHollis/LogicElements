@@ -2,26 +2,28 @@
 
 #include "le_Engine.hpp"
 
+using namespace LogicElements;
+
 // Test engine to test elements and functions
-class le_Engine_Test : public le_Engine
+class le_Engine_Test : public Engine
 {
 public:
-	le_Engine_Test() : le_Engine("Test Engine")
+	le_Engine_Test() : Engine("Test Engine")
 	{
 		// Add inputs
-		le_Element_TypeDef in0("IN0", le_Element_Type::LE_NODE_DIGITAL);
-		le_Element_TypeDef in1("IN1", le_Element_Type::LE_NODE_DIGITAL);
+		ElementTypeDef in0("IN0", ElementType::NodeDigital);
+		ElementTypeDef in1("IN1", ElementType::NodeDigital);
 		
 		// Add logic
-		le_Element_TypeDef or0("OR0", le_Element_Type::LE_OR);
+		ElementTypeDef or0("OR0", ElementType::OR);
 		or0.args[0].uArg = 2;
 
-		le_Element_TypeDef and0("AND0", le_Element_Type::LE_AND);
+		ElementTypeDef and0("AND0", ElementType::AND);
 		and0.args[0].uArg = 2;
 
 		// Add outputs
-		le_Element_TypeDef out0("OUT0", le_Element_Type::LE_NODE_DIGITAL);
-		le_Element_TypeDef out1("OUT1", le_Element_Type::LE_NODE_DIGITAL);
+		ElementTypeDef out0("OUT0", ElementType::NodeDigital);
+		ElementTypeDef out1("OUT1", ElementType::NodeDigital);
 
 		// Add elements
 		this->AddElement(&in0);
@@ -32,19 +34,19 @@ public:
 		this->AddElement(&out1);
 
 		// Create net connections
-		le_Element_Net_TypeDef n0("IN0", 0);
-		n0.AddInput("OR0", 0);
-		n0.AddInput("AND0", 0);
+		Engine::ElementNetTypeDef n0("IN0", "output");
+		n0.AddInput("OR0", "input_0");
+		n0.AddInput("AND0", "input_0");
 
-		le_Element_Net_TypeDef n1("IN1", 0);
-		n1.AddInput("OR0", 1);
-		n1.AddInput("AND0", 1);
+		Engine::ElementNetTypeDef n1("IN1", "output");
+		n1.AddInput("OR0", "input_1");
+		n1.AddInput("AND0", "input_1");
 
-		le_Element_Net_TypeDef n2("OR0", 0);
-		n2.AddInput("OUT0", 0);
+		Engine::ElementNetTypeDef n2("OR0", "output");
+		n2.AddInput("OUT0", "input");
 
-		le_Element_Net_TypeDef n3("AND0", 0);
-		n3.AddInput("OUT1", 0);
+		Engine::ElementNetTypeDef n3("AND0", "output");
+		n3.AddInput("OUT1", "input");
 
 		// Add nets
 		this->AddNet(&n0);
@@ -53,9 +55,10 @@ public:
 		this->AddNet(&n3);
 
 		// Update once to initialize the engine
-		le_Time time = le_Time::GetTime();
+		Time time = Time::GetTime();
 		this->Update(time);
-		time = le_Time::GetTime();
+
+		time = Time::GetTime();
 		this->Update(time);
 
 		// Print resulting engine info
