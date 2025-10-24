@@ -16,6 +16,9 @@ src/LogicElements/include/le_Config.hpp
 src/LogicElements/include/le_Version.hpp
 src/LogicElements/src/le_Version.cpp
 
+# Generated manifest
+LogicElements_manifest.json
+
 # IDE files
 .vscode/
 *.suo

@@ -76,6 +76,24 @@ cmake --build build
 ./build/tests/Logic_Elements_Tests
 ```
 
+### Build Manifest (Auto-Generated)
+```bash
+# Manifest generated automatically when building (ON by default)
+cmake -S . -B build
+cmake --build build
+# Creates build/LogicElements_manifest.json automatically
+
+# Disable if Python3 not available
+cmake -DLE_GENERATE_MANIFEST=OFF -S . -B build
+```
+
+The manifest documents:
+- All compiled elements with complete port definitions (name, type, indexed)
+- All build configuration defines (constants, port naming)
+- Build configuration and feature flags
+- Platform and compiler information
+- Perfect for tooling, IDEs, and runtime discovery
+
 [⬆️ Back to Top](#logic-elements)
 
 ---
@@ -106,6 +124,8 @@ cmake -DLE_ELEMENTS_MATH=OFF -DLE_ELEMENTS_PID=ON -S . -B build
 | `LE_ELEMENTS_PID` | ON | Enable PID controller |
 | `LE_ELEMENTS_MATH` | ON | Enable Math expression evaluator |
 | `LE_DNP3` | ON | Enable DNP3 protocol |
+| `LE_BOARD_PLATFORM` | Generic | Board HAL platform: Generic, STM32, RPI, Arduino |
+| `LE_GENERATE_MANIFEST` | ON | Generate build manifest JSON (requires Python3) |
 | `BUILD_TESTS` | OFF | Build test suite |
 
 [📖 See Complete Configuration Guide](CONFIG_GUIDE.md)
@@ -230,6 +250,13 @@ All includes use subfolder paths for clarity and organization:
 - Network connection automation
 - Error validation and reporting
 
+#### 6. **Board & HAL** (`Device/le_Board.hpp`, `Device/HAL/`)
+- **Board**: Platform-agnostic device abstraction
+- **HAL**: Hardware Abstraction Layer (Strategy Pattern)
+- **Blank Canvas**: Create device with I/O counts, load logic
+- **Platforms**: Generic (simulator), STM32, Raspberry Pi, Arduino
+- **Extensible**: Add new platforms by implementing HAL interface
+
 ### Performance Characteristics
 
 | Operation | Complexity | Notes |
@@ -277,26 +304,33 @@ cmake --build build
 
 ### Platform-Specific Notes
 
-#### Windows
+#### Windows (Generic HAL)
 ```bash
 # Visual Studio 2019+
-cmake -S . -B build -G "Visual Studio 16 2019"
+cmake -DLE_BOARD_PLATFORM=Generic -S . -B build -G "Visual Studio 16 2019"
 cmake --build build --config Release
 ```
 
-#### Linux
+#### Linux (Generic HAL or Raspberry Pi)
 ```bash
-# GCC/Clang
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+# Generic simulator
+cmake -DLE_BOARD_PLATFORM=Generic -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# Raspberry Pi with pigpio
+cmake -DLE_BOARD_PLATFORM=RPI -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-#### Raspberry Pi
+#### STM32
 ```bash
-# ARM cross-compilation supported
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=arm-toolchain.cmake
+# STM32 with appropriate toolchain
+cmake -DLE_BOARD_PLATFORM=STM32 -S . -B build -DCMAKE_TOOLCHAIN_FILE=arm-none-eabi.cmake
 cmake --build build
 ```
+
+#### Arduino
+Use Arduino IDE or PlatformIO with `-DLE_BOARD_PLATFORM=Arduino`
 
 [⬆️ Back to Top](#logic-elements)
 
@@ -389,6 +423,39 @@ Element::Connect(pid, "output", heater, "input");
 ```
 
 Notice: `"setpoint"` and `"feedback"` are **self-documenting**!
+
+### Hardware I/O with Board HAL
+
+**Create a blank canvas device and load logic:**
+
+```cpp
+#include "Device/le_Board.hpp"
+#include "Device/HAL/le_BoardHAL_Generic.hpp"  // Or STM32, RPI, Arduino
+#include "Builder/le_Builder.hpp"
+
+using namespace LogicElements;
+
+// Create platform HAL
+BoardHAL_Generic hal;  // Swap for BoardHAL_STM32, BoardHAL_RPI, etc.
+
+// Create blank canvas: device name, PN, 16 digital inputs, 16 outputs, 8 analog inputs
+Board board("MyPLC", "PLC-001", 16, 16, 8, &hal);
+
+// Configure I/O (port, pin numbers are platform-specific)
+board.AddInput(0, "StartButton", 0, 5, false);   // Digital input
+board.AddInput(1, "StopButton", 0, 6, false);
+board.AddAnalogInput(0, "TempSensor", 0, 0);     // Analog input
+board.AddOutput(0, "RunLED", 1, 3, false);       // Digital output
+
+// Load logic from JSON
+Builder::LoadConfiguration("config.json", &board);
+
+// Run
+Time t = Time::GetTime();
+board.Update(t);
+```
+
+**Platform portability**: Change HAL, rebuild - same code runs on any platform!
 
 [⬆️ Back to Top](#logic-elements)
 
@@ -484,9 +551,11 @@ cmake --build build
 |----------|-------------|
 | **[README.md](README.md)** | Main project documentation (this file) |
 | **[CONFIG_GUIDE.md](CONFIG_GUIDE.md)** | Build configuration options & CMake flags |
+| **[PLATFORM_GUIDE.md](PLATFORM_GUIDE.md)** | Hardware Abstraction Layer (HAL) development guide |
 | **[NAMESPACE_MIGRATION_GUIDE.md](NAMESPACE_MIGRATION_GUIDE.md)** | C++ namespace usage guide |
 | **[tests/README.md](tests/README.md)** | Test suite overview |
 | **[tests/BUILD_AND_RUN.md](tests/BUILD_AND_RUN.md)** | Build & run instructions |
+| **LogicElements_manifest.json** | Auto-generated build manifest (in build/ directory) |
 
 ### Technical Deep Dives
 
@@ -572,6 +641,10 @@ private:
 ## 📊 Project Status
 
 ### Recent Improvements (2024-2025)
+- ✅ **Build Manifest Generation**: Auto-generated JSON documenting all elements, ports, features, and configuration
+- ✅ **Hardware Abstraction Layer (HAL)**: Board now supports multiple platforms (Generic, STM32, RPi, Arduino)
+- ✅ **Configurable Port Naming**: Centralized defines for customizable port naming conventions
+- ✅ **Critical Performance Fix**: Arithmetic elements use cached pointers (100-1000x faster Update() loops)
 - ✅ **Folder Structure Refactoring**: Organized into Core/, Elements/, Communication/, Device/, Builder/ (100+ files reorganized)
 - ✅ **12 New Arithmetic Elements**: Add, Subtract, Multiply, Divide, Negate, Abs (float + complex variants)
 - ✅ **Namespace Refactoring**: All classes properly scoped under `LogicElements`
@@ -613,9 +686,10 @@ Special thanks to:
 - **49 Elements** across 7 categories (Digital, Arithmetic, Conversions, Control, Power)
 - **9+ Heterogeneous** elements (mixed port types)
 - **75+ Test Cases** across 34 test files ensuring reliability
-- **O(1) Performance** for critical operations
-- **Organized Structure**: 52 headers, 48 source files in logical subdirectories
-- **3 Platforms** supported (Windows, Linux, macOS)
+- **O(1) Performance** for critical operations (cached pointers, optimized algorithms)
+- **Organized Structure**: 60+ headers, 56+ source files in logical subdirectories
+- **4 Platform HALs**: Generic (simulator), STM32, Raspberry Pi, Arduino
+- **3 Host Platforms** supported (Windows, Linux, macOS)
 - **100% C++17** modern standards
 
 [⬆️ Back to Top](#logic-elements)

@@ -49,6 +49,13 @@
  */
 #cmakedefine LE_DNP3
 
+/**
+ * Board HAL platform selection (only one will be defined)
+ */
+#cmakedefine LE_BOARD_STM32
+#cmakedefine LE_BOARD_RPI
+#cmakedefine LE_BOARD_ARDUINO
+
 // Configuration constants
 #define LE_ELEMENT_NAME_LENGTH 16
 #define LE_ENGINE_NAME_LENGTH 32

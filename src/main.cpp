@@ -5,6 +5,18 @@
 #include "Device/le_DeviceUtility.hpp"
 #include "Device/le_DeviceCommandHandler.hpp"
 
+// Include appropriate HAL for platform
+#include "Device/HAL/le_BoardHAL_Generic.hpp"
+#ifdef LE_BOARD_STM32
+#include "Device/HAL/le_BoardHAL_STM32.hpp"
+#endif
+#ifdef LE_BOARD_RPI
+#include "Device/HAL/le_BoardHAL_RPI.hpp"
+#endif
+#ifdef LE_BOARD_ARDUINO
+#include "Device/HAL/le_BoardHAL_Arduino.hpp"
+#endif
+
 // Include test cases
 #include "le_Engine_Test.hpp"
 #include "le_DNP3Outstation_Test.hpp"
@@ -16,9 +28,20 @@ using namespace LogicElements;
 
 int main(int argc, char* argv[])
 {
-    // Set board configuration
-    Board::BoardConfig boardConfig("Offset Power Relay Test Bench", "OS-A1-B0-C0-D0-E1");
-    Board* board = new Board(boardConfig);
+    // Create platform-specific HAL
+#ifdef LE_BOARD_STM32
+    BoardHAL_STM32 hal;
+#elif defined(LE_BOARD_RPI)
+    BoardHAL_RPI hal;
+#elif defined(LE_BOARD_ARDUINO)
+    BoardHAL_Arduino hal;
+#else
+    BoardHAL_Generic hal;
+#endif
+
+    // Create board as blank canvas (device name, PN, digital_in, digital_out, analog_in, HAL)
+    Board* board = new Board("Offset Power Relay Test Bench", "OS-A1-B0-C0-D0-E1", 
+                             0, 0, 0, &hal);
     
     // Test Time
     Time time = Time::GetTime();

@@ -1,32 +1,49 @@
 #include "Device/le_Board.hpp"
-
 #include "Core/le_Version.hpp"
-
-// Define a macro to handle weak attribute based on the compiler
-#if defined(_MSC_VER)
-#define WEAK_ATTR 
-#elif defined(__GNUC__) || defined(__clang__)
-#define WEAK_ATTR __attribute__((weak))
-#endif
 
 namespace LogicElements {
 
 /**
- * @brief Constructor to initialize the Board object with specified numbers of digital inputs, analog inputs, and outputs.
- * @param nInputs_Digital Number of digital inputs.
- * @param nInputs_Analog Number of analog inputs.
- * @param nOutputs Number of outputs.
+ * @brief Constructor to create a "blank canvas" board with specified I/O counts.
+ * @param deviceName Name of the device.
+ * @param devicePN Part number of the device.
+ * @param numDigitalInputs Number of digital inputs.
+ * @param numDigitalOutputs Number of digital outputs.
+ * @param numAnalogInputs Number of analog inputs.
+ * @param hal Pointer to platform-specific HAL implementation.
  */
-    Board::Board(BoardConfig config) : 
-        config(config),
-        _inputs_Digital(new BoardIODigital[config.digitalInputs]),
-        _inputs_Analog(new BoardIOAnalog[config.analogInputs]),
-        _outputs(new BoardIODigital[config.digitalOutputs]),
-        engine(nullptr),
-        bEnginePaused(true),
-        bIOInvalidated(true),
-        bInputsNeedUpdated(false)
+Board::Board(const char* deviceName, const char* devicePN,
+             uint16_t numDigitalInputs, uint16_t numDigitalOutputs,
+             uint16_t numAnalogInputs, BoardHAL* hal) :
+    engine(nullptr),
+    hal(hal),
+    bEnginePaused(true),
+    bIOInvalidated(true),
+    bInputsNeedUpdated(false),
+    config(deviceName, devicePN),
+    _inputs_Digital(new BoardIODigital[numDigitalInputs]),
+    _inputs_Analog(new BoardIOAnalog[numAnalogInputs]),
+    _outputs(new BoardIODigital[numDigitalOutputs])
 {
+    // Set I/O counts in config
+    config.digitalInputs = numDigitalInputs;
+    config.digitalOutputs = numDigitalOutputs;
+    config.analogInputs = numAnalogInputs;
+    
+    // Initialize HAL
+    if (hal)
+    {
+        if (!hal->Init())
+        {
+            printf("[Board] Warning: HAL initialization failed for platform: %s\n", 
+                   hal->GetPlatformName());
+        }
+        else
+        {
+            printf("[Board] Initialized with HAL: %s\n", hal->GetPlatformName());
+        }
+    }
+
 #ifdef LE_DNP3
     outstation = nullptr;
 #endif
@@ -50,40 +67,47 @@ Board::~Board()
  * @brief Adds a digital input to the specified slot.
  * @param slot The slot to add the input to.
  * @param name The name of the input.
- * @param gpioPort The GPIO port of the input.
- * @param gpioPin The GPIO pin number of the input.
+ * @param port The GPIO port number.
+ * @param pin The GPIO pin number.
  * @param invert Whether the input is inverted.
  */
-void Board::AddInput(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert)
+void Board::AddInput(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert)
 {
-    AddIO(slot, name, gpioPort, gpioPin, invert, true);
+    AddIO(slot, name, port, pin, invert, true);
 }
 
 /**
  * @brief Adds an analog input to the specified slot.
  * @param slot The slot to add the input to.
  * @param name The name of the input.
- * @param addr The address of the analog value.
+ * @param port The GPIO port number.
+ * @param pin The GPIO pin number.
  */
-void Board::AddInput(uint16_t slot, const char* name, float* addr)
+void Board::AddAnalogInput(uint16_t slot, const char* name, uint32_t port, uint32_t pin)
 {
     BoardIOAnalog* io = &this->_inputs_Analog[slot];
     Engine::CopyAndClampString(name, io->name, LE_ELEMENT_NAME_LENGTH);
-    io->addr = addr;
+    io->gpio = GPIOPin(port, pin);
     io->element = nullptr;
+    
+    // Configure pin via HAL
+    if (hal)
+    {
+        hal->ConfigureAnalogInput(io->gpio);
+    }
 }
 
 /**
- * @brief Adds an output to the specified slot.
+ * @brief Adds a digital output to the specified slot.
  * @param slot The slot to add the output to.
  * @param name The name of the output.
- * @param gpioPort The GPIO port of the output.
- * @param gpioPin The GPIO pin number of the output.
+ * @param port The GPIO port number.
+ * @param pin The GPIO pin number.
  * @param invert Whether the output is inverted.
  */
-void Board::AddOutput(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert)
+void Board::AddOutput(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert)
 {
-    AddIO(slot, name, gpioPort, gpioPin, invert, false);
+    AddIO(slot, name, port, pin, invert, false);
 }
 
 /**
@@ -170,61 +194,103 @@ uint16_t Board::GetInfo(char* buffer, uint16_t length)
 }
 
 /**
- * @brief Updates a digital input. This function is weakly linked and can be overridden by board-specific implementations.
+ * @brief Updates a digital input using HAL.
  * @param io The digital input to update.
  */
-WEAK_ATTR void Board::BoardUpdateInput(BoardIODigital* io)
+void Board::BoardUpdateInput(BoardIODigital* io)
 {
-    UNUSED(io);
-    // Implement board specific read
+    if (!hal) return;
+    
+    // Read digital value from HAL
+    bool value = hal->ReadDigital(io->gpio);
+    
+    // Apply inversion if configured
+    if (io->invert)
+        value = !value;
+    
+    // Update the associated element
+    NodeDigital* node = (NodeDigital*)io->element;
+    if (node)
+        node->SetValue(value);
 }
 
 /**
- * @brief Updates an analog input. This function is weakly linked and can be overridden by board-specific implementations.
+ * @brief Updates an analog input using HAL.
  * @param io The analog input to update.
  */
-WEAK_ATTR void Board::BoardUpdateInput(BoardIOAnalog* io)
+void Board::BoardUpdateInput(BoardIOAnalog* io)
 {
-    UNUSED(io);
-    // Implement board specific read
+    if (!hal) return;
+    
+    // Read analog value from HAL
+    float value;
+    if (hal->ReadAnalog(io->gpio, value))
+    {
+        // Update the associated element
+        NodeAnalog* node = (NodeAnalog*)io->element;
+        if (node)
+            node->SetValue(value);
+    }
 }
 
 /**
- * @brief Updates a digital output. This function is weakly linked and can be overridden by board-specific implementations.
+ * @brief Updates a digital output using HAL.
  * @param io The digital output to update.
  */
-WEAK_ATTR void Board::BoardUpdateOutput(BoardIODigital* io)
+void Board::BoardUpdateOutput(BoardIODigital* io)
 {
-    UNUSED(io);
-    // Implement board specific write
+    if (!hal) return;
+    
+    // Get value from associated element
+    NodeDigital* node = (NodeDigital*)io->element;
+    if (!node) return;
+    
+    bool value = node->GetOutput();
+    
+    // Apply inversion if configured
+    if (io->invert)
+        value = !value;
+    
+    // Write to hardware via HAL
+    hal->WriteDigital(io->gpio, value);
 }
 
 /**
- * @brief Adds an I/O to the specified slot.
+ * @brief Adds a digital I/O to the specified slot.
  * @param slot The slot to add the I/O to.
  * @param name The name of the I/O.
- * @param gpioPort The GPIO port of the I/O.
- * @param gpioPin The GPIO pin number of the I/O.
+ * @param port The GPIO port number.
+ * @param pin The GPIO pin number.
  * @param invert Whether the I/O is inverted.
  * @param input Whether the I/O is an input.
  */
-inline void Board::AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input)
+inline void Board::AddIO(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert, bool input)
 {
     if (input)
     {
         Engine::CopyAndClampString(name, this->_inputs_Digital[slot].name, LE_ELEMENT_NAME_LENGTH);
-        this->_inputs_Digital[slot].gpioPort = gpioPort;
-        this->_inputs_Digital[slot].gpioPin = gpioPin;
+        this->_inputs_Digital[slot].gpio = GPIOPin(port, pin);
         this->_inputs_Digital[slot].invert = invert;
         this->_inputs_Digital[slot].element = nullptr;
+        
+        // Configure pin via HAL
+        if (hal)
+        {
+            hal->ConfigureDigitalInput(this->_inputs_Digital[slot].gpio);
+        }
     }
     else
     {
         Engine::CopyAndClampString(name, this->_outputs[slot].name, LE_ELEMENT_NAME_LENGTH);
-        this->_outputs[slot].gpioPort = gpioPort;
-        this->_outputs[slot].gpioPin = gpioPin;
+        this->_outputs[slot].gpio = GPIOPin(port, pin);
         this->_outputs[slot].invert = invert;
         this->_outputs[slot].element = nullptr;
+        
+        // Configure pin via HAL
+        if (hal)
+        {
+            hal->ConfigureDigitalOutput(this->_outputs[slot].gpio);
+        }
     }
 }
 

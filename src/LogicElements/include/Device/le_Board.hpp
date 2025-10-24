@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/le_Engine.hpp"
+#include "Device/HAL/le_BoardHAL.hpp"
 
 namespace LogicElements {
 
@@ -34,8 +35,7 @@ private:
     typedef struct BoardIODigital
     {
         char name[LE_ELEMENT_NAME_LENGTH]; ///< Name of the I/O
-        void* gpioPort; ///< GPIO port
-        uint16_t gpioPin; ///< GPIO pin number
+        GPIOPin gpio; ///< GPIO pin (platform-agnostic)
 
         bool invert; ///< Inversion flag
         Element* element; ///< Associated element (will be cast to access digital port)
@@ -47,19 +47,24 @@ private:
     typedef struct BoardIOAnalog
     {
         char name[LE_ELEMENT_NAME_LENGTH]; ///< Name of the I/O
-        float* addr; ///< Address of the analog value
+        GPIOPin gpio; ///< GPIO pin (platform-agnostic)
 
         Element* element; ///< Associated element (will be cast to access analog port)
     } BoardIOAnalog;
 
 public:
     /**
-     * @brief Constructor to initialize the Board object with specified numbers of digital inputs, analog inputs, and outputs.
-     * @param nInputs_Digital Number of digital inputs.
-     * @param nInputs_Analog Number of analog inputs.
-     * @param nOutputs Number of outputs.
+     * @brief Constructor to create a "blank canvas" board with specified I/O counts
+     * @param deviceName Name of the device
+     * @param devicePN Part number of the device
+     * @param numDigitalInputs Number of digital inputs
+     * @param numDigitalOutputs Number of digital outputs
+     * @param numAnalogInputs Number of analog inputs
+     * @param hal Pointer to platform-specific HAL implementation
      */
-    Board(BoardConfig config);
+    Board(const char* deviceName, const char* devicePN,
+          uint16_t numDigitalInputs, uint16_t numDigitalOutputs, 
+          uint16_t numAnalogInputs, BoardHAL* hal);
 
     /**
      * @brief Destructor to clean up the Board object.
@@ -70,29 +75,30 @@ public:
      * @brief Adds a digital input to the specified slot.
      * @param slot The slot to add the input to.
      * @param name The name of the input.
-     * @param gpioPort The GPIO port of the input.
-     * @param gpioPin The GPIO pin number of the input.
+     * @param port The GPIO port number (platform-specific, e.g., 0=GPIOA for STM32).
+     * @param pin The GPIO pin number.
      * @param invert Whether the input is inverted.
      */
-    void AddInput(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert);
+    void AddInput(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert);
 
     /**
      * @brief Adds an analog input to the specified slot.
      * @param slot The slot to add the input to.
      * @param name The name of the input.
-     * @param addr The address of the analog value.
+     * @param port The GPIO port number (platform-specific).
+     * @param pin The GPIO pin number.
      */
-    void AddInput(uint16_t slot, const char* name, float* addr);
+    void AddAnalogInput(uint16_t slot, const char* name, uint32_t port, uint32_t pin);
 
     /**
-     * @brief Adds an output to the specified slot.
+     * @brief Adds a digital output to the specified slot.
      * @param slot The slot to add the output to.
      * @param name The name of the output.
-     * @param gpioPort The GPIO port of the output.
-     * @param gpioPin The GPIO pin number of the output.
+     * @param port The GPIO port number (platform-specific).
+     * @param pin The GPIO pin number.
      * @param invert Whether the output is inverted.
      */
-    void AddOutput(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert);
+    void AddOutput(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert);
 
     /**
      * @brief Attaches an engine to the board.
@@ -146,30 +152,30 @@ private:
      * @brief Updates a digital input.
      * @param io The digital input to update.
      */
-    static void BoardUpdateInput(BoardIODigital* io);
+    void BoardUpdateInput(BoardIODigital* io);
 
     /**
      * @brief Updates an analog input.
      * @param io The analog input to update.
      */
-    static void BoardUpdateInput(BoardIOAnalog* io);
+    void BoardUpdateInput(BoardIOAnalog* io);
 
     /**
      * @brief Updates a digital output.
      * @param io The digital output to update.
      */
-    static void BoardUpdateOutput(BoardIODigital* io);
+    void BoardUpdateOutput(BoardIODigital* io);
 
     /**
-     * @brief Adds an I/O to the specified slot.
+     * @brief Adds a digital I/O to the specified slot.
      * @param slot The slot to add the I/O to.
      * @param name The name of the I/O.
-     * @param gpioPort The GPIO port of the I/O.
-     * @param gpioPin The GPIO pin number of the I/O.
+     * @param port The GPIO port number.
+     * @param pin The GPIO pin number.
      * @param invert Whether the I/O is inverted.
      * @param input Whether the I/O is an input.
      */
-    inline void AddIO(uint16_t slot, const char* name, void* gpioPort, uint16_t gpioPin, bool invert, bool input);
+    inline void AddIO(uint16_t slot, const char* name, uint32_t port, uint32_t pin, bool invert, bool input);
 
     /**
      * @brief Validates the I/O configurations.
@@ -187,6 +193,7 @@ private:
     void UpdateOutputs();
 
     Engine* engine; ///< Pointer to the attached engine
+    BoardHAL* hal; ///< Platform-specific HAL implementation
     bool bEnginePaused; ///< Engine paused flag
     bool bIOInvalidated; ///< I/O invalidation flag
 

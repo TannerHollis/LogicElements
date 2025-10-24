@@ -18,6 +18,11 @@ option(LE_ELEMENTS_ANALOG_COMPLEX "Enable complex analog elements (requires ANAL
 option(LE_ELEMENTS_PID "Enable PID controller (requires ANALOG)" ON)
 option(LE_ELEMENTS_MATH "Enable Math expression evaluator (requires ANALOG)" ON)
 option(LE_DNP3 "Enable DNP3 protocol support" ON)
+option(LE_GENERATE_MANIFEST "Generate build configuration manifest JSON (requires Python3)" ON)
+
+# Board HAL platform selection
+set(LE_BOARD_PLATFORM "Generic" CACHE STRING "Board HAL platform: Generic, STM32, RPI, Arduino")
+set_property(CACHE LE_BOARD_PLATFORM PROPERTY STRINGS "Generic" "STM32" "RPI" "Arduino")
 
 # Version information (from project VERSION)
 set(LE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
@@ -65,6 +70,8 @@ if(LE_ELEMENTS_ANALOG)
     message(STATUS "  Math Evaluator: ${LE_ELEMENTS_MATH}")
 endif()
 message(STATUS "DNP3 Support: ${LE_DNP3}")
+message(STATUS "Board HAL Platform: ${LE_BOARD_PLATFORM}")
+message(STATUS "Generate Manifest: ${LE_GENERATE_MANIFEST}")
 message(STATUS "========================================")
 
 # Find all .cpp files in the specified directory (excluding templates)
@@ -72,6 +79,23 @@ file(GLOB_RECURSE CPP_FILES "./src/*.cpp")
 
 # Remove template files from the list
 list(FILTER CPP_FILES EXCLUDE REGEX ".*\\.in$")
+
+# Remove all HAL implementations (we'll add the selected one)
+list(FILTER CPP_FILES EXCLUDE REGEX ".*/HAL/.*")
+
+# Add platform-specific HAL implementation
+if(LE_BOARD_PLATFORM STREQUAL "STM32")
+    list(APPEND CPP_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/Device/HAL/le_BoardHAL_STM32.cpp")
+    set(LE_BOARD_STM32 ON)
+elseif(LE_BOARD_PLATFORM STREQUAL "RPI")
+    list(APPEND CPP_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/Device/HAL/le_BoardHAL_RPI.cpp")
+    set(LE_BOARD_RPI ON)
+elseif(LE_BOARD_PLATFORM STREQUAL "Arduino")
+    list(APPEND CPP_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/Device/HAL/le_BoardHAL_Arduino.cpp")
+    set(LE_BOARD_ARDUINO ON)
+else()  # Generic (default)
+    list(APPEND CPP_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/Device/HAL/le_BoardHAL_Generic.cpp")
+endif()
 
 # Add generated version source (now in Core/ subdirectory)
 list(APPEND CPP_FILES "${CMAKE_CURRENT_BINARY_DIR}/src/Core/le_Version.cpp")
@@ -98,3 +122,44 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     serialib 
     nlohmann_json
 )
+
+# ============================================================================
+# Build Manifest Generation (Optional)
+# ============================================================================
+
+# Add manifest generation if enabled (requires Python3)
+# Creates LogicElements_manifest.json documenting build configuration
+if(LE_GENERATE_MANIFEST)
+    # Include manifest generation (sets up variables)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/tools/manifest ${CMAKE_BINARY_DIR}/tools/manifest)
+    
+    # Add POST_BUILD command to Logic_Elements target (must be in same CMakeLists.txt as target)
+    add_custom_command(TARGET Logic_Elements POST_BUILD
+        COMMAND ${MANIFEST_PYTHON_EXE}
+                "${MANIFEST_PYTHON_SCRIPT}"
+                --output "${MANIFEST_OUTPUT_PATH}"
+                --element-header "${MANIFEST_ELEMENT_HEADER}"
+                --project-name "Logic_Elements"
+                --version "${MANIFEST_VERSION}"
+                --library-output "${MANIFEST_LIB_OUTPUT}"
+                --build-type "${MANIFEST_BUILD_TYPE}"
+                --cxx-standard "${MANIFEST_CXX_STD}"
+                --host-system "${MANIFEST_HOST_SYS}"
+                --compiler "${MANIFEST_COMPILER}"
+                --board-platform "${MANIFEST_BOARD_PLATFORM}"
+                --test-mode "${MANIFEST_TEST_MODE}"
+                --execution-diag "${MANIFEST_EXEC_DIAG}"
+                --analog "${MANIFEST_ANALOG}"
+                --analog-complex "${MANIFEST_ANALOG_COMPLEX}"
+                --pid "${MANIFEST_PID}"
+                --math "${MANIFEST_MATH}"
+                --dnp3 "${MANIFEST_DNP3}"
+                --source-count "${MANIFEST_SOURCE_COUNT}"
+                --header-count "${MANIFEST_HEADER_COUNT}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tools/manifest"
+        COMMENT "Generating build configuration manifest..."
+        VERBATIM
+    )
+else()
+    message(STATUS "Manifest generation disabled (LE_GENERATE_MANIFEST=OFF)")
+endif()
