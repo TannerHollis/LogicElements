@@ -145,12 +145,12 @@ def parse_binary_caps_payload(data: bytes) -> Dict[str, Any]:
     Returns:
         Structured dictionary representing board configuration.
     """
-    # struct format: <BBB 32s H H H H H H H B H H B B
-    fmt = "<BBB32sHHHHHHHBHHBB"
+    # struct format: <BBB32sHHHHHHBHH  (5 region H + workspace H + B + 2 H)
+    fmt = "<BBB32sHHHHHHBHH"
     fields = struct.unpack(fmt, data[:struct.calcsize(fmt)])
     
     plat_name = fields[3].split(b"\x00")[0].decode("ascii", errors="ignore")
-    flags = fields[13]
+    flags = fields[12]
 
     profile = {
         "device": {
@@ -164,16 +164,13 @@ def parse_binary_caps_payload(data: bytes) -> Dict[str, Any]:
             "analog_inputs": fields[6],
             "bool_registers": fields[7],
             "floats": fields[8],
-            "timers": fields[9],
-            "counters": fields[10],
-            "config_slots": fields[11],
-            "slot_size_bytes": fields[12] if len(fields) > 12 else 2048
+            "workspace_bytes": fields[9],
+            "config_slots": fields[10],
+            "slot_size_bytes": fields[11] if len(fields) > 11 else 2048
         },
         "features": {
             "protection": bool(flags & (1 << 0)),
             "serial_bus": bool(flags & (1 << 1)),
-            "i2c_devices": fields[14],
-            "spi_devices": fields[15]
         },
         "pin_map": {
             "inputs": {},
@@ -205,16 +202,12 @@ def print_profile_info(profile: Dict[str, Any]):
     print(f"  Digital Outputs (%Q):  {lim.get('digital_outputs', 0)}")
     print(f"  Internal Coils (%M):   {lim.get('coils', 0)}")
     print(f"  Float Registers (%R):  {lim.get('floats', 0)}")
-    print(f"  Timers:                {lim.get('timers', 0)}")
-    print(f"  Counters:              {lim.get('counters', 0)}")
+    print(f"  State Workspace (bytes): {lim.get('workspace_bytes', 0)}")
     print(f"  Config Slots:          {lim.get('config_slots', 0)} slots ({lim.get('slot_size_bytes', 0)} bytes each)")
     print("-" * 60)
     print("SUPPORTED SUB-SYSTEMS:")
     print(f"  Protection & Control:  {'ENABLED' if feat.get('protection') else 'DISABLED'}")
     print(f"  Serial Bus Elements:   {'ENABLED' if feat.get('serial_bus') else 'DISABLED'}")
-    if feat.get('serial_bus'):
-        print(f"    Max I2C Devices:     {feat.get('i2c_devices', 0)}")
-        print(f"    Max SPI Devices:     {feat.get('spi_devices', 0)}")
     print("-" * 60)
     inputs = pin.get("inputs", {})
     if inputs:
@@ -254,16 +247,13 @@ def generate_template(filepath: str):
             "digital_outputs": 16,
             "coils": 128,
             "floats": 64,
-            "timers": 16,
-            "counters": 8,
+            "workspace_bytes": 2048,
             "config_slots": 3,
             "slot_size_bytes": 2048
         },
         "features": {
             "protection": True,
             "serial_bus": True,
-            "i2c_devices": 4,
-            "spi_devices": 4
         },
         "pin_map": {
             "inputs": {

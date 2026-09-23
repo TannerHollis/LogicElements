@@ -14,7 +14,7 @@ le_status_t le_vm_init(le_vm_t* vm)
 
     memset(vm, 0, sizeof(le_vm_t));
     le_process_image_init(&vm->image);
-    le_rt_init(); /* reset the static state arena + runtime block table */
+    le_rt_reset(); /* clear the state workspace + kind-base table */
     vm->running = false;
     vm->cycle_count = 0;
     return LE_OK;

@@ -32,6 +32,20 @@ int g_tests_failed = 0;
     } \
 } while (0)
 
+/* Manual-opcode tests bypass the loader, so they place state structs directly
+ * into the state workspace and record the kind group's byte offset. */
+static uint32_t s_test_off = 0;
+static void test_rt_reset(void) { le_rt_reset(); s_test_off = 0; }
+
+/* Places `count` zeroed blocks of `size` bytes for `kind` into the workspace at
+ * the current offset, so le_process_image_timer/counter/kind_state resolve. */
+static void test_bind_kind(uint8_t kind, int count, uint16_t size)
+{
+    if (s_test_off + (uint32_t)size * (uint32_t)count > le_rt_workspace_bytes()) return;
+    le_rt_set_kind_base(kind, (int32_t)s_test_off);
+    s_test_off += (uint32_t)size * (uint32_t)count;
+}
+
 void test_process_image(void)
 {
     printf("Running test_process_image...\n");
@@ -136,9 +150,11 @@ void test_timer_opcode(void)
     printf("Running test_timer_opcode (TON)...\n");
     le_process_image_t img;
     le_process_image_init(&img);
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_TIMER, 2, sizeof(le_timer_state_t));
 
     /* Preset timer 0 to 100ms */
-    img.timers[0].preset_ms = 100;
+    le_process_image_timer(&img, 0)->preset_ms = 100;
 
     le_instruction_t inst_ton = {
         .opcode = LE_OP_TON,
@@ -310,6 +326,22 @@ void test_protection_relays(void)
     printf("Running test_protection_relays (Phasor 1P, SymComp, Diff 87, Dist 21)...\n");
     le_process_image_t img;
     le_process_image_init(&img);
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_PHASOR, 4, sizeof(le_phasor_state_t));
+        test_bind_kind(LE_BLK_SYMCOMP, 1, sizeof(le_symcomp_state_t));
+        test_bind_kind(LE_BLK_21, 1, sizeof(le_dist21_state_t));
+        test_bind_kind(LE_BLK_DIFF_87, 1, sizeof(le_diff87_state_t));
+        test_bind_kind(LE_BLK_PHASE_COMP, 1, sizeof(le_comp33_state_t));
+
+    le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
+    le_phasor_state_t* ph1 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 1);
+    le_phasor_state_t* ph2 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 2);
+    le_phasor_state_t* ph3 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 3);
+    le_symcomp_state_t* sc = (le_symcomp_state_t*)le_process_image_kind_state(&img, LE_BLK_SYMCOMP, 0);
+    le_dist21_state_t* d21 = (le_dist21_state_t*)le_process_image_kind_state(&img, LE_BLK_21, 0);
+
+    /* Local block descriptor + args (2-in/1-out max needed here). */
+    struct { le_block_desc_t d; uint16_t a[4]; } b;
 
     /* ---------------------------------------------------------------------- */
     /* 1. 1P Winding Phasor Extraction                                        */
@@ -317,7 +349,7 @@ void test_protection_relays(void)
     /* Generate 16 samples of a 60Hz sine wave: A=10.0, phi = 30 deg (0.5236 rad) */
     /* x(t) = A * cos(omega*t + phi) */
     uint16_t N = 16;
-    img.phasors[0].samples_per_cycle = N;
+    ph->samples_per_cycle = N;
     float amp = 10.0f;
     float phi = 30.0f * (float)M_PI / 180.0f;
 
@@ -339,15 +371,15 @@ void test_protection_relays(void)
 
     float extracted_mag = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(1));
     TEST_ASSERT(fabsf(extracted_mag - amp) < 0.2f, "1P Phasor magnitude ~ 10.0");
-    TEST_ASSERT(fabsf(img.phasors[0].angle_rad - phi) < 0.1f, "1P Phasor angle ~ 30 deg (0.52 rad)");
+    TEST_ASSERT(fabsf(ph->angle_rad - phi) < 0.1f, "1P Phasor angle ~ 30 deg (0.52 rad)");
 
     /* ---------------------------------------------------------------------- */
     /* 2. Symmetrical Components (Fortescue Transformation)                   */
     /* ---------------------------------------------------------------------- */
     /* Balanced 3-phase set: A = 10 < 0, B = 10 < -120, C = 10 < +120 */
-    img.phasors[1].phasor = le_c_polar(10.0f, 0.0f);
-    img.phasors[2].phasor = le_c_polar(10.0f, -120.0f * (float)M_PI / 180.0f);
-    img.phasors[3].phasor = le_c_polar(10.0f, 120.0f * (float)M_PI / 180.0f);
+    ph1->phasor = le_c_polar(10.0f, 0.0f);
+    ph2->phasor = le_c_polar(10.0f, -120.0f * (float)M_PI / 180.0f);
+    ph3->phasor = le_c_polar(10.0f, 120.0f * (float)M_PI / 180.0f);
 
     le_instruction_t inst_sym = {
         .opcode = LE_OP_SYM_COMP,
@@ -358,83 +390,115 @@ void test_protection_relays(void)
     };
     le_exec_instruction(&inst_sym, &img, 0);
 
-    float i1_mag = le_c_mag(img.symcomps[0].seq_1);
-    float i2_mag = le_c_mag(img.symcomps[0].seq_2);
-    float i0_mag = le_c_mag(img.symcomps[0].seq_0);
+    float i1_mag = le_c_mag(sc->seq_1);
+    float i2_mag = le_c_mag(sc->seq_2);
+    float i0_mag = le_c_mag(sc->seq_0);
 
     TEST_ASSERT(fabsf(i1_mag - 10.0f) < 0.05f, "Balanced set: Pos Seq I1 ~ 10.0");
     TEST_ASSERT(i2_mag < 0.05f, "Balanced set: Neg Seq I2 ~ 0.0");
     TEST_ASSERT(i0_mag < 0.05f, "Balanced set: Zero Seq I0 ~ 0.0");
 
     /* Single-Phase-to-Ground Fault: A = 30 < 0, B = 0, C = 0 */
-    img.phasors[1].phasor = le_c_make(30.0f, 0.0f);
-    img.phasors[2].phasor = le_c_make(0.0f, 0.0f);
-    img.phasors[3].phasor = le_c_make(0.0f, 0.0f);
+    ph1->phasor = le_c_make(30.0f, 0.0f);
+    ph2->phasor = le_c_make(0.0f, 0.0f);
+    ph3->phasor = le_c_make(0.0f, 0.0f);
     le_exec_instruction(&inst_sym, &img, 0);
 
-    i1_mag = le_c_mag(img.symcomps[0].seq_1);
-    i2_mag = le_c_mag(img.symcomps[0].seq_2);
-    i0_mag = le_c_mag(img.symcomps[0].seq_0);
+    i1_mag = le_c_mag(sc->seq_1);
+    i2_mag = le_c_mag(sc->seq_2);
+    i0_mag = le_c_mag(sc->seq_0);
     TEST_ASSERT(fabsf(i1_mag - 10.0f) < 0.05f, "A-G Fault: I1 = 30/3 = 10.0");
     TEST_ASSERT(fabsf(i2_mag - 10.0f) < 0.05f, "A-G Fault: I2 = 30/3 = 10.0");
     TEST_ASSERT(fabsf(i0_mag - 10.0f) < 0.05f, "A-G Fault: I0 = 30/3 = 10.0");
 
     /* ---------------------------------------------------------------------- */
-    /* 3. Percentage Differential (87)                                        */
     /* ---------------------------------------------------------------------- */
-    le_instruction_t inst_diff = {
-        .opcode = LE_OP_DIFF_87,
-        .modifier = 0, /* diff zone 0 */
-        .in_a = 4,     /* phasor 4: Winding 1 */
-        .in_b = 5,     /* phasor 5: Winding 2 */
-        .out = LE_ADDR_MAKE_DOUT(2)
-    };
-
-    /* Case A: Through-fault (current enters W1, leaves W2: 180 deg out of phase) */
-    img.phasors[4].phasor = le_c_make(10.0f, 0.0f);
-    img.phasors[5].phasor = le_c_make(-10.0f, 0.0f);
-    le_exec_instruction(&inst_diff, &img, 0);
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(2)), "87: Through-fault restraint blocks trip");
-
-    /* Case B: Internal fault (both windings feed fault: 0 deg phase) */
-    img.phasors[4].phasor = le_c_make(5.0f, 0.0f);
-    img.phasors[5].phasor = le_c_make(5.0f, 0.0f);
-    le_exec_instruction(&inst_diff, &img, 0);
-    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(2)), "87: Internal fault operates (trips)");
+    /* 3. Mho Distance Relaying (21) - property round-trip; full behavior  */
+    /*    verified via test_compiler.cpp test_dist21_mho.                */
+    /* ---------------------------------------------------------------------- */
+    d21->reach_ohms = 10.0f;
+    d21->line_angle_deg = 75.0f;
+    d21->offset_mag = 0.0f;
+    d21->offset_angle_deg = 75.0f;
+    d21->prefault_v_threshold = 0.5f;
+    d21->prefault_duration_ms = 80;
+    d21->prefault_v = le_c_polar(50.0f, 75.0f * (float)M_PI / 180.0f);
+    TEST_ASSERT(fabsf(d21->reach_ohms - 10.0f) < 1e-4f,
+                "21: reach_ohms property round-trips");
+    TEST_ASSERT(d21->prefault_duration_ms == 80,
+                "21: prefault_duration_ms property round-trips");
 
     /* ---------------------------------------------------------------------- */
-    /* 4. Mho Distance Relaying (21)                                          */
+    /* 4. Dual-Slope Differential (87) - correct ANSI naming & dual-slope char. */
     /* ---------------------------------------------------------------------- */
-    img.dist21s[0].reach_ohms = 10.0f;
-    img.dist21s[0].line_angle_rad = 75.0f * (float)M_PI / 180.0f;
+    le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(&img, LE_BLK_DIFF_87, 0);
+    TEST_ASSERT(d87 != NULL, "87: diff state bound");
+    d87->o87p = 0.3f; d87->slp1 = 0.25f; d87->irs1 = 1.5f; d87->slp2 = 0.60f;
+    /* 2-in/1-out DIFF_87 block: [c0, c1, out_bool] */
+    b.d.in_count = 2; b.d.out_count = 1;
+    b.a[0] = LE_ADDR_MAKE_CMPLX(0); b.a[1] = LE_ADDR_MAKE_CMPLX(1); b.a[2] = LE_ADDR_MAKE_BOOL_REG(0);
+    le_instruction_t d87i = { LE_OP_BLOCK, LE_FUNC_DIFF_87, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
 
-    le_instruction_t inst_dist = {
-        .opcode = LE_OP_DIST_21,
-        .modifier = 0, /* dist zone 0 */
-        .in_a = 6,     /* phasor 6: V */
-        .in_b = 7,     /* phasor 7: I */
-        .out = LE_ADDR_MAKE_DOUT(3)
-    };
+    /* Two equal-magnitude phasors 180 deg apart: operate = |sum| ~ 0, restraint =
+     * sum of magnitudes = 2 -> below pickup -> no trip (healthy, no fault). */
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(1), le_c_make(-1.0f, 0.0f));
+    TEST_ASSERT(le_exec_instruction_ex(&d87i, &img, 0, &b.d, 1) == LE_OK, "87: DIFF_87 executes");
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(0)),
+                "87: balanced phasors -> no differential trip");
+    TEST_ASSERT(fabsf(d87->restraint - 2.0f) < 1e-4f, "87: restraint = sum of mags = 2");
 
-    /* In-zone fault: V = 50 < 75 deg, I = 10 < 0 deg -> Z = 5 < 75 deg (inside 10 ohm reach) */
-    img.phasors[6].phasor = le_c_polar(50.0f, 75.0f * (float)M_PI / 180.0f);
-    img.phasors[7].phasor = le_c_polar(10.0f, 0.0f);
-    le_exec_instruction(&inst_dist, &img, 0);
-    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(3)), "21: In-zone fault Z=5 ohms trips");
+    /* Two aligned phasors: operate = 2, restraint = sum = 2; I_rt=2 > irs1=1.5 so
+     * threshold = o87p + slp1*irs1 + slp2*(2-irs1) = 0.3+0.375+0.3 = 0.975.
+     * operate(2) > 0.975 -> trip (dual-slope SECOND segment). */
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(1), le_c_make(1.0f, 0.0f));
+    TEST_ASSERT(le_exec_instruction_ex(&d87i, &img, 0, &b.d, 1) == LE_OK, "87: DIFF_87 executes aligned");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(0)),
+                "87: aligned phasors -> differential trip (operate > dual-slope threshold)");
 
-    /* Out-of-zone fault: V = 150 < 75 deg, I = 10 < 0 deg -> Z = 15 < 75 deg (outside reach) */
-    img.phasors[6].phasor = le_c_polar(150.0f, 75.0f * (float)M_PI / 180.0f);
-    img.phasors[7].phasor = le_c_polar(10.0f, 0.0f);
-    le_exec_instruction(&inst_dist, &img, 0);
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(3)), "21: Out-of-zone fault Z=15 ohms blocks");
+    d87->tripped = false;
 
-    /* Reverse fault: V = 50 < -105 deg, I = 10 < 0 deg -> Z = 5 < -105 deg (reverse direction) */
-    img.phasors[6].phasor = le_c_polar(50.0f, -105.0f * (float)M_PI / 180.0f);
-    img.phasors[7].phasor = le_c_polar(10.0f, 0.0f);
-    le_exec_instruction(&inst_dist, &img, 0);
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(3)), "21: Reverse fault blocks (directional security)");
+    /* ---------------------------------------------------------------------- */
+    /* 5. 3-Phase Transformer Phase Compensation (87T)                        */
+    /* ---------------------------------------------------------------------- */
+    le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASE_COMP, 0);
+    TEST_ASSERT(c33 != NULL, "87T: comp state bound");
+    c33->comp = 1;                          /* odd k -> s = 1/sqrt(3) */
+    /* 3-in/3-out PHASE_COMP block: [ia, ib, ic, oa, ob, oc] */
+    b.d.in_count = 3; b.d.out_count = 3;
+    b.a[0] = LE_ADDR_MAKE_CMPLX(0); b.a[1] = LE_ADDR_MAKE_CMPLX(1); b.a[2] = LE_ADDR_MAKE_CMPLX(2);
+    b.a[3] = LE_ADDR_MAKE_CMPLX(3); b.a[4] = LE_ADDR_MAKE_CMPLX(4); b.a[5] = LE_ADDR_MAKE_CMPLX(5);
+    le_instruction_t phc = { LE_OP_BLOCK, LE_FUNC_PHASE_COMP, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+
+    /* k=1 matrix: [1,-1,0; 0,1,-1; -1,0,1] * (1/sqrt(3)).
+     * With I_A=1, I_B=0, I_C=0:
+     *   oa = (1*1 + -1*0 + 0)/sqrt3 = 1/sqrt3
+     *   ob = (0*1 + 1*0 + -1*0)/sqrt3 = 0
+     *   oc = (-1*1 + 0 + 1*0)/sqrt3 = -1/sqrt3   (exact SEL matrix row) */
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(1), le_c_make(0.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(2), le_c_make(0.0f, 0.0f));
+    TEST_ASSERT(le_exec_instruction_ex(&phc, &img, 0, &b.d, 1) == LE_OK, "87T: PHASE_COMP executes");
+    le_complex_t oa = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(3));
+    le_complex_t ob = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(4));
+    le_complex_t oc = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(5));
+    float inv_sqrt3 = 1.0f / sqrtf(3.0f);
+    TEST_ASSERT(fabsf(oa.r - inv_sqrt3) < 1e-4f && fabsf(oa.i) < 1e-4f, "87T: out_a = 1/sqrt3 (k=1 row0)");
+    TEST_ASSERT(fabsf(ob.r) < 1e-4f && fabsf(ob.i) < 1e-4f, "87T: out_b = 0 (k=1 row1)");
+    TEST_ASSERT(fabsf(oc.r + inv_sqrt3) < 1e-4f && fabsf(oc.i) < 1e-4f, "87T: out_c = -1/sqrt3 (k=1 row2)");
+
+    /* k=2 (even, s=1/3): balanced I_A=I_B=I_C=1 -> all compensated = 0. */
+    c33->comp = 2;
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(1), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(2), le_c_make(1.0f, 0.0f));
+    TEST_ASSERT(le_exec_instruction_ex(&phc, &img, 0, &b.d, 1) == LE_OK, "87T: PHASE_COMP executes k=2");
+    le_complex_t o2a = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(3));
+    TEST_ASSERT(le_c_mag(o2a) < 1e-4f, "87T: balanced through-load cancels to ~0 (operate=0)");
 }
 #endif
+
 
 #include "le_storage.h"
 #include "le_cli.h"
@@ -588,6 +652,11 @@ void test_serial_bus_i2c_spi(void)
 
     le_process_image_t img;
     le_process_image_init(&img);
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_I2C, 1, sizeof(le_i2c_device_state_t));
+        test_bind_kind(LE_BLK_SPI, 1, sizeof(le_spi_device_state_t));
+    le_i2c_device_state_t* i2cdev = (le_i2c_device_state_t*)le_process_image_kind_state(&img, LE_BLK_I2C, 0);
+    le_spi_device_state_t* spidev = (le_spi_device_state_t*)le_process_image_kind_state(&img, LE_BLK_SPI, 0);
 
     /* 1. I2C Device Test: Startup Config & Periodic Polling Rate */
     uint8_t i2c_startup[2] = {0x01, 0x60};
@@ -607,17 +676,17 @@ void test_serial_bus_i2c_spi(void)
 
     /* Cycle 0 at t=0ms: Trigger false -> executes startup code */
     le_exec_instruction(&inst_i2c, &img, 0);
-    TEST_ASSERT(img.i2c_devices[0].initialized, "I2C Device 0 executed startup code on cycle 0");
+    TEST_ASSERT(i2cdev->initialized, "I2C Device 0 executed startup code on cycle 0");
     TEST_ASSERT(le_sim_get_i2c_startup_len() == 2, "I2C Startup code sent exactly 2 config bytes");
-    TEST_ASSERT(img.i2c_devices[0].poll_count == 0, "No poll yet at t=0ms without trigger");
+    TEST_ASSERT(i2cdev->poll_count == 0, "No poll yet at t=0ms without trigger");
 
     /* Cycle 1 at t=50ms: Time elapsed 50ms < 100ms -> No poll */
     le_exec_instruction(&inst_i2c, &img, 50);
-    TEST_ASSERT(img.i2c_devices[0].poll_count == 0, "I2C does not poll before 100ms period");
+    TEST_ASSERT(i2cdev->poll_count == 0, "I2C does not poll before 100ms period");
 
     /* Cycle 2 at t=100ms: Polling rate timer expires -> Automatic rate poll */
     le_exec_instruction(&inst_i2c, &img, 100);
-    TEST_ASSERT(img.i2c_devices[0].poll_count == 1, "I2C polled automatically when 100ms polling rate expired");
+    TEST_ASSERT(i2cdev->poll_count == 1, "I2C polled automatically when 100ms polling rate expired");
     TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "I2C poll strobe asserted on OUT0");
     float temp_val = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(0));
     TEST_ASSERT(fabsf(temp_val - 25.0f) < 0.01f, "I2C received data converted into float %R[0] = 25.0");
@@ -629,13 +698,13 @@ void test_serial_bus_i2c_spi(void)
     /* Cycle 3 at t=110ms: Rising edge on IN0 (0 -> 1) */
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&inst_i2c, &img, 110);
-    TEST_ASSERT(img.i2c_devices[0].poll_count == 2, "I2C polled immediately on rising-edge trigger at t=110ms");
+    TEST_ASSERT(i2cdev->poll_count == 2, "I2C polled immediately on rising-edge trigger at t=110ms");
     temp_val = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(0));
     TEST_ASSERT(fabsf(temp_val - 30.0f) < 0.01f, "I2C %R[0] updated with new data = 30.0");
 
     /* Cycle 4 at t=120ms: IN0 remains high (steady high, no rising edge) -> No poll */
     le_exec_instruction(&inst_i2c, &img, 120);
-    TEST_ASSERT(img.i2c_devices[0].poll_count == 2, "I2C does NOT poll on steady high level (edge security)");
+    TEST_ASSERT(i2cdev->poll_count == 2, "I2C does NOT poll on steady high level (edge security)");
 
     /* 3. SPI Device Test: Startup Code & Rising Edge Polling */
     uint8_t spi_startup[4] = {0x90, 0x00, 0x00, 0x00};
@@ -655,25 +724,25 @@ void test_serial_bus_i2c_spi(void)
 
     /* Cycle 0 at t=0ms: Trigger false -> sends SPI startup bytes */
     le_exec_instruction(&inst_spi, &img, 0);
-    TEST_ASSERT(img.spi_devices[0].initialized, "SPI Device 0 executed startup code on first scan");
+    TEST_ASSERT(spidev->initialized, "SPI Device 0 executed startup code on first scan");
     TEST_ASSERT(le_sim_get_spi_startup_len() == 4, "SPI sent 4 startup bytes with CS pin 10");
-    TEST_ASSERT(img.spi_devices[0].poll_count == 0, "SPI did not poll without trigger (poll_rate=0)");
+    TEST_ASSERT(spidev->poll_count == 0, "SPI did not poll without trigger (poll_rate=0)");
 
     /* Advance time to t=5000ms: poll_rate=0 -> No automatic poll */
     le_exec_instruction(&inst_spi, &img, 5000);
-    TEST_ASSERT(img.spi_devices[0].poll_count == 0, "SPI does not poll on timer when poll_rate_ms=0");
+    TEST_ASSERT(spidev->poll_count == 0, "SPI does not poll on timer when poll_rate_ms=0");
 
     /* Pulse trigger DIN 1 (0 -> 1): Rising edge polls SPI slave */
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);
     le_exec_instruction(&inst_spi, &img, 5010);
-    TEST_ASSERT(img.spi_devices[0].poll_count == 1, "SPI polled immediately on rising edge trigger");
+    TEST_ASSERT(spidev->poll_count == 1, "SPI polled immediately on rising edge trigger");
     TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(1)), "SPI poll success output asserted");
     float spi_val = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(1));
     TEST_ASSERT(fabsf(spi_val - 512.0f) < 0.01f, "SPI received data converted into float %R[1] = 512.0");
 
     /* Steady high on DIN 1: No repeat poll */
     le_exec_instruction(&inst_spi, &img, 5020);
-    TEST_ASSERT(img.spi_devices[0].poll_count == 1, "SPI does not repeat poll on steady high trigger");
+    TEST_ASSERT(spidev->poll_count == 1, "SPI does not repeat poll on steady high trigger");
 }
 #endif
 
@@ -721,7 +790,7 @@ void test_board_capabilities_query(void)
 
     le_caps_payload_t caps;
     memcpy(&caps, &s_captured_uart[5], sizeof(caps));
-    TEST_ASSERT(caps.protocol_version == 1, "Reported protocol version is 1");
+    TEST_ASSERT(caps.protocol_version == 3, "Reported protocol version is 3");
     TEST_ASSERT(caps.firmware_major == 1 && caps.firmware_minor == 0, "Reported firmware version is v1.0");
     TEST_ASSERT(strcmp(caps.platform_name, "Simulator / Desktop") == 0, "Reported platform name matches HAL");
     TEST_ASSERT(caps.max_digital_in == LE_MAX_DIGITAL_IN, "Max DIN matches configuration");
@@ -729,8 +798,7 @@ void test_board_capabilities_query(void)
     TEST_ASSERT(caps.max_analog_in == LE_MAX_ANALOG_IN, "Max AIN matches configuration");
     TEST_ASSERT(caps.max_bool_regs == LE_MAX_BOOL_REGS, "Max Bool Regs matches configuration");
     TEST_ASSERT(caps.max_floats == LE_MAX_FLOATS, "Max Floats matches configuration");
-    TEST_ASSERT(caps.max_timers == LE_MAX_TIMERS, "Max Timers matches configuration");
-    TEST_ASSERT(caps.max_counters == LE_MAX_COUNTERS, "Max Counters matches configuration");
+    TEST_ASSERT(caps.workspace_bytes == LE_STATE_WORKSPACE_BYTES, "State workspace bytes matches configuration");
     TEST_ASSERT(caps.config_slots == LE_MAX_CONFIG_SLOTS, "Config slots matches LE_MAX_CONFIG_SLOTS");
     TEST_ASSERT(caps.slot_size_bytes == LE_SLOT_SIZE_BYTES, "Slot size matches LE_SLOT_SIZE_BYTES");
 
@@ -863,8 +931,11 @@ void test_custom_nodes_and_ext_call(void)
 void test_analog_inputs_and_scaling(void)
 {
     printf("Running test_analog_inputs_and_scaling...\n");
+    test_rt_reset();
     le_process_image_t img;
     le_process_image_init(&img);
+    test_rt_reset(); /* clean state arena for this test */
+    test_bind_kind(LE_BLK_SCALER, 4, sizeof(le_scale_state_t));
 
     /* 1. Test setting and getting raw AIN integer values */
     le_process_image_set_int(&img, LE_ADDR_MAKE_AIN(0), 2048);
@@ -930,8 +1001,25 @@ void test_analog_inputs_and_scaling(void)
 void test_dsp_filters(void)
 {
     printf("Running test_dsp_filters...\n");
+    test_rt_reset();
     le_process_image_t img;
     le_process_image_init(&img);
+    test_rt_reset(); /* clean state arena for this test */
+    test_bind_kind(LE_BLK_LPF, 1, sizeof(le_lpf_state_t));
+    test_bind_kind(LE_BLK_BIQUAD, 1, sizeof(le_biquad_state_t));
+    test_bind_kind(LE_BLK_MOVING_AVG, 1, sizeof(le_moving_avg_state_t));
+    test_bind_kind(LE_BLK_RATE_LIMITER, 1, sizeof(le_rate_limiter_state_t));
+    test_bind_kind(LE_BLK_DEADBAND, 1, sizeof(le_deadband_state_t));
+    test_bind_kind(LE_BLK_WASHOUT, 1, sizeof(le_washout_state_t));
+    test_bind_kind(LE_BLK_PEAK, 1, sizeof(le_peak_state_t));
+    test_bind_kind(LE_BLK_RMS, 1, sizeof(le_rms_state_t));
+    test_bind_kind(LE_BLK_MEDIAN, 1, sizeof(le_median_state_t));
+    test_bind_kind(LE_BLK_DERIVATIVE, 1, sizeof(le_derivative_state_t));
+    test_bind_kind(LE_BLK_ZERO_CROSSING, 1, sizeof(le_zero_crossing_state_t));
+    test_bind_kind(LE_BLK_LUT_1D, 1, sizeof(le_lut_1d_state_t));
+    test_bind_kind(LE_BLK_TOTALIZER, 1, sizeof(le_totalizer_state_t));
+    test_bind_kind(LE_BLK_MIN_MAX_HOLD, 1, sizeof(le_min_max_hold_state_t));
+    test_bind_kind(LE_BLK_SCALER, 1, sizeof(le_scale_state_t));
 
     /* 1. Test Low-Pass Filter (LPF_1P) */
     le_process_image_set_lpf(&img, 0, 0.2f);
@@ -1342,6 +1430,8 @@ void test_phasor_block_builtins(void)
     printf("Running test_phasor_block_builtins...\n");
     le_process_image_t img;
     le_process_image_init(&img);
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_PHASOR, 1, sizeof(le_phasor_state_t));
 
     /* contiguous descriptor header + args for the block ops */
     struct { le_block_desc_t d; uint16_t a[8]; } b;
@@ -1378,36 +1468,96 @@ void test_phasor_block_builtins(void)
     TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(3))) < 1e-4f, "PHASOR_SHIFT real'=0");
     TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(4)) - 1.0f) < 1e-4f, "PHASOR_SHIFT imag'=1");
 
-    /* PHASOR_1P sync: raw angle advances 30->60 deg, sync_angle tracks it, so the
-     * synced relative angle stays ~0 (does not rotate with the system). */
+    /* PHASOR_1P sync: complex phasor output (2-in/1-out):
+     * args = [sample, sync_complex, out_complex]. The raw phasor has its angle
+     * referenced to the sync phasor and magnitude normalized by the sync
+     * magnitude, so the result stays stable relative to the sync phasor. */
     le_process_image_init(&img); /* reset phasor state */
     const uint16_t N = 16; float ampA = 10.0f;
-    b.d.in_count = 3; b.d.out_count = 2;
-    b.a[0] = LE_ADDR_MAKE_FLOAT(0); b.a[1] = LE_ADDR_MAKE_FLOAT(1); b.a[2] = LE_ADDR_MAKE_FLOAT(2);
-    b.a[3] = LE_ADDR_MAKE_FLOAT(3); b.a[4] = LE_ADDR_MAKE_FLOAT(4);
-    img.phasors[0].samples_per_cycle = N;
-    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), ampA); /* sync mag = 10 -> norm to 1 */
+    b.d.in_count = 2; b.d.out_count = 1;
+    b.a[0] = LE_ADDR_MAKE_FLOAT(0);          /* sample wire */
+    b.a[1] = LE_ADDR_MAKE_CMPLX(0);          /* sync phasor */
+    b.a[2] = LE_ADDR_MAKE_CMPLX(1);          /* out phasor */
+    ((le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0))->samples_per_cycle = N;
+    /* Sync phasor = 10<30deg (matches raw phasor), so mag normalizes to ~1 and
+     * relative angle ~0. */
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0),
+        le_c_polar(ampA, 30.0f * (float)M_PI / 180.0f));
     le_instruction_t p1p = { LE_OP_BLOCK, LE_FUNC_PHASOR_1P, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
 
     float phi = 30.0f * (float)M_PI / 180.0f;
-    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(2), phi);
     for (uint16_t k = 0; k < N; k++) {
         le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0),
                                    ampA * cosf(2.0f * (float)M_PI * (float)k / (float)N + phi));
         TEST_ASSERT(le_exec_instruction_ex(&p1p, &img, 0, &b.d, 1) == LE_OK, "PHASOR_1P block step");
     }
-    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(3)) - 1.0f) < 0.05f, "PHASOR_1P synced mag normalized ~1");
-    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(4))) < 0.05f, "PHASOR_1P relative angle ~0");
+    le_complex_t ph1 = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(1));
+    TEST_ASSERT(fabsf(le_c_mag(ph1) - 1.0f) < 0.05f, "PHASOR_1P synced mag normalized ~1");
+    TEST_ASSERT(fabsf(le_c_ang(ph1)) < 0.05f, "PHASOR_1P relative angle ~0");
 
-    phi = 60.0f * (float)M_PI / 180.0f; /* system phase advanced + sync_angle tracks it */
-    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(2), phi);
+    phi = 60.0f * (float)M_PI / 180.0f; /* system phase advances + sync phasor tracks it */
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0),
+        le_c_polar(ampA, 60.0f * (float)M_PI / 180.0f));
     for (uint16_t k = 0; k < N; k++) {
         le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0),
                                    ampA * cosf(2.0f * (float)M_PI * (float)k / (float)N + phi));
         TEST_ASSERT(le_exec_instruction_ex(&p1p, &img, 0, &b.d, 1) == LE_OK, "PHASOR_1P block step 2");
     }
-    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(4))) < 0.05f,
+    le_complex_t ph2 = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(1));
+    TEST_ASSERT(fabsf(le_c_mag(ph2) - 1.0f) < 0.05f &&
+                fabsf(le_c_ang(ph2)) < 0.05f,
                 "PHASOR_1P relative angle stays ~0 after phase advance (sync prevents rotation)");
+}
+
+void test_multi_block_conversions(void)
+{
+    /* Verifies variable-arity block resolution with MULTIPLE block descriptors.
+     * Each block is variable-size, so the runtime must offset-walk to the index
+     * (a fixed-stride index previously corrupted blocks beyond the first). */
+    printf("Running test_multi_block_conversions (RECT2COMPLEX/COMPLEX2RECT/POLAR2COMPLEX/CLAMP)...\n");
+    le_process_image_t img;
+    le_process_image_init(&img);
+
+    /* Two blocks in one table, contiguous: blk0 = RECT2COMPLEX (2-in/1-out),
+     * blk1 = POLAR2COMPLEX (2-in/1-out). */
+    uint8_t tbl[LE_BLOCK_DESC_HEADER_BYTES * 2 + sizeof(uint16_t) * 7] = {0};
+    le_block_desc_t* d0 = (le_block_desc_t*)tbl;
+    d0->in_count = 2; d0->out_count = 1;
+    uint16_t* a0 = (uint16_t*)(d0 + 1);
+    a0[0] = LE_ADDR_MAKE_FLOAT(0); a0[1] = LE_ADDR_MAKE_FLOAT(1); a0[2] = LE_ADDR_MAKE_CMPLX(0);
+    le_block_desc_t* d1 = (le_block_desc_t*)(tbl + LE_BLOCK_DESC_HEADER_BYTES + 3 * sizeof(uint16_t));
+    d1->in_count = 2; d1->out_count = 1;
+    uint16_t* a1 = (uint16_t*)(d1 + 1);
+    a1[0] = LE_ADDR_MAKE_FLOAT(4); a1[1] = LE_ADDR_MAKE_FLOAT(5); a1[2] = LE_ADDR_MAKE_CMPLX(1);
+
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 3.0f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), 4.0f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(4), 5.0f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(5), atan2f(4, 3));
+
+    le_instruction_t blk0 = { LE_OP_BLOCK, LE_FUNC_RECT2COMPLEX, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+    TEST_ASSERT(le_exec_instruction_ex(&blk0, &img, 0, (le_block_desc_t*)tbl, 2) == LE_OK, "block[0] RECT2COMPLEX executes");
+    le_complex_t c0 = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(0));
+    TEST_ASSERT(fabsf(c0.r - 3.0f) < 1e-4f && fabsf(c0.i - 4.0f) < 1e-4f, "block[0] RECT2COMPLEX = 3+4j");
+
+    le_instruction_t blk1 = { LE_OP_BLOCK, LE_FUNC_POLAR2COMPLEX, 1, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+    TEST_ASSERT(le_exec_instruction_ex(&blk1, &img, 0, (le_block_desc_t*)tbl, 2) == LE_OK, "block[1] POLAR2COMPLEX executes");
+    le_complex_t c1 = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(1));
+    TEST_ASSERT(fabsf(c1.r - 3.0f) < 1e-4f && fabsf(c1.i - 4.0f) < 1e-4f, "block[1] POLAR2COMPLEX ~= 3+4j");
+
+    /* CLAMP: [value,min,max] -> out with proper independent bounds. */
+    d1->in_count = 3; d1->out_count = 1;
+    a1[0] = LE_ADDR_MAKE_FLOAT(6); a1[1] = LE_ADDR_MAKE_FLOAT(7); a1[2] = LE_ADDR_MAKE_FLOAT(8);
+    a1[3] = LE_ADDR_MAKE_FLOAT(9);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(6), 100.0f);  /* value */
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(7), -5.0f);   /* min */
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(8),  5.0f);   /* max */
+    le_instruction_t cl = { LE_OP_BLOCK, LE_FUNC_CLAMP_F, 1, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+    TEST_ASSERT(le_exec_instruction_ex(&cl, &img, 0, (le_block_desc_t*)tbl, 2) == LE_OK, "CLAMP block executes");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(9)) - 5.0f) < 1e-4f, "CLAMP hi -> max 5");
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(6), -42.0f);
+    TEST_ASSERT(le_exec_instruction_ex(&cl, &img, 0, (le_block_desc_t*)tbl, 2) == LE_OK, "CLAMP block executes low");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(9)) - (-5.0f)) < 1e-4f, "CLAMP lo -> min -5");
 }
 
 void test_counter_opcode(void)
@@ -1415,9 +1565,11 @@ void test_counter_opcode(void)
     printf("Running test_counter_opcode (CTU/CTD/CTUD)...\n");
     le_process_image_t img;
     le_process_image_init(&img);
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_COUNTER, 3, sizeof(le_counter_state_t));
 
     /* ---- CTU: count up to preset (3) ---- */
-    img.counters[0].preset = 3;
+    le_process_image_counter(&img, 0)->preset = 3;
     le_instruction_t ctu = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_COUNTER(0) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctu, &img, 0);                       /* edge1 -> count=1 */
@@ -1431,7 +1583,7 @@ void test_counter_opcode(void)
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctu, &img, 4);                       /* edge3 -> count=3 */
     TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(0)), "CTU done at count=3");
-    TEST_ASSERT(img.counters[0].count == 3, "CTU count == 3");
+    TEST_ASSERT(le_process_image_counter(&img, 0)->count == 3, "CTU count == 3");
 
     /* CTU reset via second input (in_b) */
     le_instruction_t ctu_r = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_COUNTER(0) };
@@ -1439,12 +1591,12 @@ void test_counter_opcode(void)
     le_exec_instruction(&ctu_r, &img, 5);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);  /* reset rising edge */
     le_exec_instruction(&ctu_r, &img, 6);
-    TEST_ASSERT(img.counters[0].count == 0, "CTU reset clears count");
+    TEST_ASSERT(le_process_image_counter(&img, 0)->count == 0, "CTU reset clears count");
 
     /* ---- CTD: count down to 0 ---- */
     le_process_image_init(&img);
-    img.counters[1].preset = 2;
-    img.counters[1].count = 2;
+    le_process_image_counter(&img, 1)->preset = 2;
+    le_process_image_counter(&img, 1)->count = 2;
     le_instruction_t ctd = { LE_OP_CTD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_COUNTER(1) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctd, &img, 0);                       /* edge1 -> 2->1 */
@@ -1454,11 +1606,11 @@ void test_counter_opcode(void)
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctd, &img, 2);                       /* edge2 -> 1->0 */
     TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(1)), "CTD done at count=0");
-    TEST_ASSERT(img.counters[1].count == 0, "CTD count == 0");
+    TEST_ASSERT(le_process_image_counter(&img, 1)->count == 0, "CTD count == 0");
 
     /* ---- CTUD: count up (in_a) / count down (in_b) ---- */
     le_process_image_init(&img);
-    img.counters[2].preset = 1;
+    le_process_image_counter(&img, 2)->preset = 1;
     le_instruction_t cud = { LE_OP_CTUD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_COUNTER(2) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);   /* cu rising -> count=1 */
     le_exec_instruction(&cud, &img, 0);
@@ -1468,50 +1620,40 @@ void test_counter_opcode(void)
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);   /* cd rising -> count=0 */
     le_exec_instruction(&cud, &img, 2);
     TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(2)), "CTUD count down to 0 -> not done");
-    TEST_ASSERT(img.counters[2].count == 0, "CTUD count == 0");
+    TEST_ASSERT(le_process_image_counter(&img, 2)->count == 0, "CTUD count == 0");
 }
 
 void test_heap_allocator(void)
 {
-    printf("Running test_heap_allocator (zero-heap state arena)...\n");
-    le_rt_init();
+    printf("Running test_heap_allocator (state workspace)...\n");
+    test_rt_reset();
 
-    /* Reserve a timer state slice from the arena -> pointer to mutable state. */
-    int trow = le_rt_reserve(LE_BLK_TIMER, sizeof(le_timer_state_t), 4);
-    TEST_ASSERT(trow >= 0, "le_rt_reserve(TIMER) returns a row");
-    le_rt_block_t* tb = le_rt_get(trow);
-    TEST_ASSERT(tb != NULL && tb->state != NULL, "timer row has a non-null state pointer");
-    TEST_ASSERT(tb->kind == LE_BLK_TIMER, "timer row kind == LE_BLK_TIMER");
-    ((le_timer_state_t*)tb->state)->preset_ms = 100;
-    TEST_ASSERT(((le_timer_state_t*)tb->state)->preset_ms == 100,
-                "state written through the heap pointer is readable");
+    /* Place a timer block into the workspace and resolve it by kind/index. */
+    le_timer_state_t t = {0};
+    t.preset_ms = 100;
+    memcpy(le_rt_workspace(), &t, sizeof(t));
+    le_rt_set_kind_base(LE_BLK_TIMER, 0);
+    le_timer_state_t* ts = le_process_image_timer(NULL, 0);
+    TEST_ASSERT(ts != NULL, "timer resolved from the workspace");
+    TEST_ASSERT(ts->preset_ms == 100, "state written into the workspace is readable");
 
-    /* A second, different block gets a distinct row and pointer. */
-    int crow = le_rt_reserve(LE_BLK_COUNTER, sizeof(le_counter_state_t), 4);
-    TEST_ASSERT(crow >= 0 && crow != trow, "counter gets a distinct row");
-    TEST_ASSERT(le_rt_get(crow)->state != tb->state, "counter state pointer differs from timer");
+    /* Blocks of different kinds sit at distinct offsets. */
+    uint16_t toff = le_rt_kind_base(LE_BLK_TIMER);
+    le_rt_set_kind_base(LE_BLK_COUNTER, toff + sizeof(le_timer_state_t));
+    le_counter_state_t* cs = le_process_image_counter(NULL, 0);
+    TEST_ASSERT(cs != NULL && (uint8_t*)cs > (uint8_t*)ts, "counter block offset differs from timer");
+    TEST_ASSERT(le_rt_kind_base(LE_BLK_TIMER) != le_rt_kind_base(LE_BLK_COUNTER),
+                "distinct kinds occupy distinct workspace offsets");
 
-    /* Row exhaustion: filling all rows makes le_rt_reserve return -1. */
-    int guard = 0;
-    while (le_rt_reserve(LE_BLK_TIMER, sizeof(le_timer_state_t), 4) >= 0 && guard < 2048) guard++;
-    TEST_ASSERT(le_rt_reserve(LE_BLK_TIMER, sizeof(le_timer_state_t), 4) < 0,
-                "le_rt_reserve fails once the row table is full");
+    /* le_rt_state bounds-checks: out-of-workspace index resolves to NULL. */
+    TEST_ASSERT(le_rt_state(LE_BLK_TIMER, 0u) != NULL, "block 0 of a placed kind resolves");
+    TEST_ASSERT(le_rt_state(LE_BLK_TIMER, 0xFFFFu) == NULL, "out-of-workspace index is rejected");
 
-    /* Heap exhaustion (rows available but arena full). */
-    le_rt_init();
-    TEST_ASSERT(le_rt_reserve(LE_BLK_TIMER, LE_STATE_HEAP_BYTES, 1) >= 0,
-                "one block sized as the whole arena fits");
-    TEST_ASSERT(le_rt_reserve(LE_BLK_TIMER, 1, 1) < 0,
-                "le_rt_reserve fails once the arena is exhausted");
+    /* Workspace capacity is fixed by the platform. */
+    TEST_ASSERT(le_rt_workspace_bytes() == LE_STATE_WORKSPACE_BYTES, "workspace size matches config");
 
-    /* le_rt_bind can mirror an existing fixed-array state into a row. */
-    le_rt_init();
-    le_process_image_t img;
-    le_process_image_init(&img);
-    le_rt_bind(0, LE_BLK_TIMER, sizeof(le_timer_state_t), (uint8_t*)&img.timers[0]);
-    le_rt_block_t* bound = le_rt_get(0);
-    TEST_ASSERT(bound != NULL && (uint8_t*)&img.timers[0] == bound->state,
-                "le_rt_bind points to caller-provided state");
+    /* le_rt_state rejects a kind that was never placed. */
+    TEST_ASSERT(le_rt_state(LE_BLK_LPF, 0) == NULL, "unbound kind resolves to NULL");
 }
 
 void test_overcurrent(void)
@@ -1519,8 +1661,12 @@ void test_overcurrent(void)
     printf("Running test_overcurrent (ANSI 51)...\n");
     le_process_image_t img;
     le_process_image_init(&img);
-    img.overcurrents[0].pickup = 1.0f;
-    img.overcurrents[0].time_dial = 0.05f;
+        test_rt_reset(); /* clean state arena for this test */
+        test_bind_kind(LE_BLK_OVERCURRENT, 1, sizeof(le_overcurrent_state_t));
+
+    le_overcurrent_state_t* ocs = (le_overcurrent_state_t*)le_process_image_kind_state(&img, LE_BLK_OVERCURRENT, 0);
+    ocs->pickup = 1.0f;
+    ocs->time_dial = 0.05f;
 
     le_instruction_t oc = { LE_OP_OVERCURRENT, 0, LE_ADDR_MAKE_FLOAT(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_DOUT(0) };
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 0.5f);   /* below pickup */
@@ -1565,6 +1711,7 @@ int main(void)
     test_block_call();
     test_phasor_shift();
     test_phasor_block_builtins();
+    test_multi_block_conversions();
     test_overcurrent();
 
     printf("============================================================\n");

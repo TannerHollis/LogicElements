@@ -6,6 +6,7 @@
 #ifndef LE_TYPES_H
 #define LE_TYPES_H
 
+#include "le_complex.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -42,26 +43,6 @@ extern "C" {
 #define LE_MAX_ANALOG_IN        16      /* Up to 16 Analog Inputs (ADC channels) */
 #endif
 
-#ifndef LE_MAX_SCALERS
-#define LE_MAX_SCALERS          16      /* Up to 16 linear scalers */
-#endif
-
-#ifndef LE_MAX_TIMERS
-#define LE_MAX_TIMERS           32      /* Up to 32 timers (TON/TOF/TP) */
-#endif
-
-#ifndef LE_MAX_COUNTERS
-#define LE_MAX_COUNTERS         16      /* Up to 16 counters (CTU/CTD) */
-#endif
-
-#ifndef LE_MAX_PID
-#define LE_MAX_PID              8       /* Up to 8 PID loop states */
-#endif
-
-#ifndef LE_MAX_OVERCURRENT
-#define LE_MAX_OVERCURRENT      8       /* Up to 8 Overcurrent elements */
-#endif
-
 /* ========================================================================== */
 /* Optional Protection & Control Relay Configuration                          */
 /* ========================================================================== */
@@ -70,22 +51,11 @@ extern "C" {
 #endif
 
 #if LE_ENABLE_PROTECTION
-#include "le_complex.h"
-
-#ifndef LE_MAX_PHASORS
-#define LE_MAX_PHASORS          16      /* Up to 16 1P Phasor filter windows */
+#ifndef LE_MAX_COMPLEX
+#define LE_MAX_COMPLEX          64      /* Up to 64 complex registers (%C, real+imag pairs) */
 #endif
-
-#ifndef LE_MAX_DIFF87
-#define LE_MAX_DIFF87           8       /* Up to 8 Differential elements */
-#endif
-
-#ifndef LE_MAX_DIST21
-#define LE_MAX_DIST21           8       /* Up to 8 Distance relay zones */
-#endif
-
 #ifndef LE_MAX_SAMPLES_PER_CYCLE
-#define LE_MAX_SAMPLES_PER_CYCLE 32     /* Up to 32 samples/cycle */
+#define LE_MAX_SAMPLES_PER_CYCLE 32     /* Samples per cycle buffer inside one phasor state */
 #endif
 #endif
 
@@ -97,13 +67,9 @@ extern "C" {
 #endif
 
 #if LE_ENABLE_SERIAL_BUS
-#ifndef LE_MAX_I2C_DEVICES
-#define LE_MAX_I2C_DEVICES      4       /* Up to 4 external I2C devices */
-#endif
-
-#ifndef LE_MAX_SPI_DEVICES
-#define LE_MAX_SPI_DEVICES      4       /* Up to 4 external SPI devices */
-#endif
+/* No static device-count limits: serial-bus device state is baked into the
+ * preconfigured state image and copied into the state workspace at load,
+ * bounded only by LE_STATE_WORKSPACE_BYTES. */
 #endif
 
 /* ========================================================================== */
@@ -114,24 +80,20 @@ extern "C" {
 #endif
 
 #if LE_ENABLE_DSP
-#ifndef LE_MAX_DSP_FILTERS
-#define LE_MAX_DSP_FILTERS      16      /* Up to 16 filter instances per DSP element type */
-#endif
-
 #ifndef LE_MOVING_AVG_MAX_WINDOW
-#define LE_MOVING_AVG_MAX_WINDOW 32     /* Up to 32 samples window for moving average */
+#define LE_MOVING_AVG_MAX_WINDOW 32     /* Samples window buffer inside a moving-avg state */
 #endif
 
 #ifndef LE_RMS_MAX_WINDOW
-#define LE_RMS_MAX_WINDOW       32      /* Up to 32 samples window for True RMS */
+#define LE_RMS_MAX_WINDOW       32      /* Samples window buffer inside a True RMS state */
 #endif
 
 #ifndef LE_MAX_MEDIAN_WINDOW
-#define LE_MAX_MEDIAN_WINDOW    9       /* Up to 9 samples window for median filter */
+#define LE_MAX_MEDIAN_WINDOW    9       /* Samples window buffer inside a median filter state */
 #endif
 
 #ifndef LE_MAX_LUT_POINTS
-#define LE_MAX_LUT_POINTS       16      /* Up to 16 breakpoints for 1D lookup table */
+#define LE_MAX_LUT_POINTS       16      /* Breakpoints buffer inside a 1D lookup table state */
 #endif
 #endif
 
@@ -141,7 +103,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define LE_BIN_MAGIC            0x4C454231  /* ASCII "LEB1" */
-#define LE_BIN_VERSION          3
+#define LE_BIN_VERSION          5
 
 /* Program Header Flags */
 #define LE_FLAG_AUTOSTART       (1U << 0)
@@ -177,12 +139,18 @@ extern "C" {
 #define LE_REGION_INT_REG       0xA000
 #define LE_REGION_AIN           0xB000
 #define LE_REGION_CONST         0xC000
+#if LE_ENABLE_PROTECTION
+#define LE_REGION_CMPLX         0xD000   /* Complex registers (%C): 12-bit index, real+imag pair each */
+#endif
 
 /* Predefined Constants */
 #define LE_CONST_FALSE          0xC000
 #define LE_CONST_TRUE           0xC001
 #define LE_CONST_ZERO_F         0xC002
 #define LE_CONST_ONE_F          0xC003
+#if LE_ENABLE_PROTECTION
+#define LE_CONST_ZERO_C         0xC004   /* Complex zero (0+0j) */
+#endif
 #define LE_ADDR_UNUSED          0xFFFF
 
 /* Helper Macros for Address Construction */
@@ -194,6 +162,10 @@ extern "C" {
 #define LE_ADDR_MAKE_TIMER(idx)    ((uint16_t)(LE_REGION_TIMER | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_COUNTER(idx)  ((uint16_t)(LE_REGION_COUNTER | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_AIN(idx)      ((uint16_t)(LE_REGION_AIN | ((idx) & LE_ADDR_INDEX_MASK)))
+#if LE_ENABLE_PROTECTION
+#define LE_ADDR_MAKE_CMPLX(idx)    ((uint16_t)(LE_REGION_CMPLX | ((idx) & LE_ADDR_INDEX_MASK)))
+#define LE_ADDR_MAKE_CMPLX_PAIR(idx) ((uint16_t)(LE_REGION_CMPLX | (((idx) & 0x0FFE))))  /* even index */
+#endif
 
 /* ========================================================================== */
 /* Opcodes                                                                    */
@@ -238,6 +210,15 @@ typedef enum {
     LE_OP_CLAMP_F           = 0x49,  /* clamp with min/max */
     LE_OP_SCALE_F           = 0x4A,  /* linear scaling */
 
+    /* 0x4B - 0x4E: Complex Arithmetic (T_CMPLX operands) */
+#if LE_ENABLE_PROTECTION
+    LE_OP_CADD_F            = 0x4B,  /* out_c = in_a_c + in_b_c  (complex add) */
+    LE_OP_CSUB_F            = 0x4C,  /* out_c = in_a_c - in_b_c  (complex sub) */
+    LE_OP_CMUL_F            = 0x4D,  /* out_c = in_a_c * in_b_c  (complex mul) */
+    LE_OP_CDIV_F            = 0x4E,  /* out_c = in_a_c / in_b_c  (complex div) */
+    LE_OP_MOVE_C            = 0x4F,  /* out_c = in_a_c (complex move) */
+#endif
+
     /* 0x60 - 0x6F: Comparison Operations (Float -> Bool) */
     LE_OP_CMP_GT            = 0x60,  /* out_bool = in_a_f > in_b_f */
     LE_OP_CMP_LT            = 0x61,  /* out_bool = in_a_f < in_b_f */
@@ -247,15 +228,14 @@ typedef enum {
     LE_OP_CMP_NE            = 0x65,  /* out_bool = in_a_f != in_b_f */
 
     /* 0x70 - 0x8F: Control, Protection & Conversions */
+#if LE_ENABLE_PROTECTION
     LE_OP_PID               = 0x70,  /* Closed-loop PID Controller */
     LE_OP_OVERCURRENT       = 0x71,  /* IEC/IEEE Inverse-Time Overcurrent */
     LE_OP_RECT2POLAR        = 0x72,  /* (x, y) -> (mag, angle) */
     LE_OP_POLAR2RECT        = 0x73,  /* (mag, angle) -> (x, y) */
     LE_OP_PHASOR_SHIFT      = 0x74,  /* Shift angle by delta */
-#if LE_ENABLE_PROTECTION
     LE_OP_PHASOR_1P         = 0x75,  /* 1-Phase Winding Phasor Extraction (DFT / Cosine Filter) */
     LE_OP_SYM_COMP          = 0x76,  /* 3-Phase Symmetrical Components (Seq 0, 1, 2) */
-    LE_OP_DIFF_87           = 0x77,  /* SEL-Style Dual-Slope Percentage Differential */
     LE_OP_DIST_21           = 0x78,  /* Mho Distance Relay Zone */
 #endif
 #if LE_ENABLE_SERIAL_BUS
@@ -299,40 +279,43 @@ typedef enum {
 /* A fixed byte arena (no malloc); blocks are bound to heap pointers at       */
 /* runtime start and instructions dereference those pointers each scan.       */
 /* ========================================================================== */
-#ifndef LE_STATE_HEAP_BYTES
-#define LE_STATE_HEAP_BYTES         4096    /* total arena available to state blocks */
+#ifndef LE_STATE_WORKSPACE_BYTES
+#define LE_STATE_WORKSPACE_BYTES    4096    /* platform data workspace (RAM) the state image is copied into */
 #endif
 
-#ifndef LE_MAX_RT_BLOCKS
-#define LE_MAX_RT_BLOCKS            128     /* max concurrently-active state blocks */
-#endif
-
-/** @brief Kind tag naming which state struct a runtime block row holds. */
+/** @brief Kind tag naming which state struct a runtime state block holds.
+ * Values are explicit so the on-disk `.lebin` state-desc table is stable
+ * regardless of which optional subsystems are compiled in. */
 typedef enum {
     LE_BLK_NONE      = 0,    /* stateless (variable-arity block call) */
-    LE_BLK_TIMER,            /* le_timer_state_t   */
-    LE_BLK_COUNTER,          /* le_counter_state_t */
-    LE_BLK_PID,              /* le_pid_state_t     */
-    LE_BLK_OVERCURRENT,      /* le_overcurrent_state_t */
-    LE_BLK_PHASOR,           /* le_phasor_state_t  */
-    LE_BLK_SCALER,           /* le_scale_state_t   */
-    LE_BLK_LPF,              /* le_lpf_state_t     */
-    LE_BLK_BIQUAD,           /* le_biquad_state_t  */
-    LE_BLK_MOVING_AVG,
-    LE_BLK_RATE_LIMITER,
-    LE_BLK_DEADBAND,
-    LE_BLK_WASHOUT,
-    LE_BLK_PEAK,
-    LE_BLK_RMS,
-    LE_BLK_MEDIAN,
-    LE_BLK_DERIVATIVE,
-    LE_BLK_ZERO_CROSSING,
-    LE_BLK_LUT_1D,
-    LE_BLK_TOTALIZER,
-    LE_BLK_MIN_MAX_HOLD,
-    LE_BLK_SYMCOMP,
-    LE_BLK_87,
-    LE_BLK_21,
+    LE_BLK_TIMER     = 1,   /* le_timer_state_t   */
+    LE_BLK_COUNTER   = 2,   /* le_counter_state_t */
+    LE_BLK_SCALER    = 3,   /* le_scale_state_t   */
+    LE_BLK_LPF       = 4,   /* le_lpf_state_t     */
+    LE_BLK_BIQUAD    = 5,   /* le_biquad_state_t  */
+    LE_BLK_MOVING_AVG = 6,
+    LE_BLK_RATE_LIMITER = 7,
+    LE_BLK_DEADBAND  = 8,
+    LE_BLK_WASHOUT   = 9,
+    LE_BLK_PEAK      = 10,
+    LE_BLK_RMS       = 11,
+    LE_BLK_MEDIAN    = 12,
+    LE_BLK_DERIVATIVE = 13,
+    LE_BLK_ZERO_CROSSING = 14,
+    LE_BLK_LUT_1D    = 15,
+    LE_BLK_TOTALIZER = 16,
+    LE_BLK_MIN_MAX_HOLD = 17,
+    LE_BLK_I2C       = 18,  /* le_i2c_device_state_t   (serial bus) */
+    LE_BLK_SPI       = 19,  /* le_spi_device_state_t   (serial bus) */
+#if LE_ENABLE_PROTECTION
+    LE_BLK_PID       = 20,  /* le_pid_state_t     */
+    LE_BLK_OVERCURRENT = 21, /* le_overcurrent_state_t */
+    LE_BLK_PHASOR    = 22,  /* le_phasor_state_t  */
+    LE_BLK_SYMCOMP   = 23,  /* le_symcomp_state_t */
+    LE_BLK_21        = 24,  /* le_dist21_state_t  */
+    LE_BLK_DIFF_87   = 25,  /* le_diff87_state_t (ANSI 87 differential) */
+    LE_BLK_PHASE_COMP = 26, /* le_comp33_state_t (3-phase transformer phase compensation) */
+#endif
     LE_BLK_LAST        /* sentinel (not a real block kind) */
 } le_block_kind_t;
 
@@ -358,32 +341,28 @@ typedef struct {
 /** @brief Bytes of one @ref le_state_desc_t record. */
 #define LE_STATE_DESC_BYTES 4
 
-/**
- * @brief Binary per-element configuration directive: applied to a bound state
- * block at load time so compiled circuits honor their tuning (e.g. LPF alpha,
- * PID gains, scaler mapping). `value` is float payload; integer/hybrid fields
- * are cast by the kind/slot handler.
- */
-typedef struct {
-    uint8_t  kind;    /**< le_block_kind_t. */
-    uint8_t  idx;     /**< Instance index within @p kind. */
-    uint8_t  slot;    /**< Field slot id (see le_rt_configure). */
-    uint8_t  reserved;/**< 0. */
-    float    value;   /**< Parameter value. */
-} le_config_t;
-
-/** @brief Bytes of one @ref le_config_t record. */
-#define LE_CONFIG_BYTES 8
-
 /* ========================================================================== */
 /* Variable-arity block function identifiers (modifier of LE_OP_BLOCK)        */
 /* ========================================================================== */
 #define LE_FUNC_NONE             0x00
 #define LE_FUNC_MUX_SELECT       0x01   /* [sel, in0, in1] -> [out]: out = args[2] ? args[1] : args[0] */
+#if LE_ENABLE_PROTECTION
 #define LE_FUNC_RECT2POLAR       0x02   /* [real, imag] -> [mag, angle_rad] */
 #define LE_FUNC_POLAR2RECT       0x03   /* [mag, angle_rad] -> [real, imag] */
 #define LE_FUNC_PHASOR_SHIFT     0x04   /* [real, imag, delta_rad] -> [real', imag']: CCW rotation by delta */
-#define LE_FUNC_PHASOR_1P        0x05   /* [sample, sync_mag, sync_angle] -> [mag, angle_rad]: synced phasor extractor */
+#define LE_FUNC_PHASOR_1P        0x05   /* [sample, sync_cplx] -> [cplx]: synced phasor extractor */
+#define LE_FUNC_COMPLEX2POLAR    0x06   /* [cplx] -> [mag, angle_rad] */
+#define LE_FUNC_COMPLEX2RECT     0x07   /* [cplx] -> [real, imag] (complex register to rectangular floats) */
+#define LE_FUNC_COMPLEX_MUL      0x08   /* [c_a, c_b] -> [c_out] */
+#define LE_FUNC_DIFF_87          0x09   /* [cph0..cphN-1] -> [bool]: N-input dual-slope differential (ANSI 87) */
+#define LE_FUNC_DIST_21          0x0A   /* [v_c, i_c, offset_on] -> [bool]: mho distance (21) with prefault V memory */
+#define LE_FUNC_RECT2COMPLEX     0x0B   /* [real, imag] -> [cplx] */
+#define LE_FUNC_POLAR2COMPLEX    0x0C   /* [mag, angle_rad] -> [cplx] */
+#endif
+#define LE_FUNC_CLAMP_F          0x0D   /* [value, min, max] -> [out]: clamp value to [min, max] */
+#if LE_ENABLE_PROTECTION
+#define LE_FUNC_PHASE_COMP       0x0E   /* [c_a, c_b, c_c] -> [c_a', c_b', c_c']: 3p transformer phase-shift compensation (ANSI 87T) */
+#endif
 #define LE_FUNC_CUSTOM_BASE      0x80   /* func_id >= this dispatches to the HAL ext_call. */
 
 /* ========================================================================== */
@@ -397,19 +376,18 @@ typedef struct {
  */
 typedef struct {
     uint32_t magic;             /**< Magic identifier: 0x4C454231 (ASCII "LEB1"). */
-    uint16_t version;           /**< Binary format version number (currently 2). */
+    uint16_t version;           /**< Binary format version number (currently 5). */
     uint16_t flags;             /**< Program execution flags (for example, LE_FLAG_AUTOSTART). */
     uint16_t instruction_count; /**< Total number of instructions in the bytecode payload. */
     uint16_t digital_in_count;  /**< Number of digital input channels (%I) required. */
     uint16_t digital_out_count; /**< Number of digital output channels (%Q) required. */
     uint16_t bool_reg_count;    /**< Number of internal boolean registers (%M) required. */
     uint16_t float_reg_count;   /**< Number of float registers (%R) required. */
-    uint16_t timer_count;       /**< Number of timer instances required. */
-    uint16_t counter_count;     /**< Number of counter instances required. */
+    uint16_t complex_reg_count; /**< Number of complex registers (%C, real+imag pairs) required. */
     uint16_t block_count;       /**< Number of variable-arity block descriptors in the payload. */
-    uint16_t state_desc_count;  /**< Number of state-directive records in the payload. */
-    uint16_t config_count;      /**< Number of per-element config directives in the payload. */
-    uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + config). */
+    uint16_t state_desc_count;  /**< Number of state-group records (kinds present) in the payload. */
+    uint32_t state_img_len;     /**< Bytes of the preconfigured state image (copied to RAM at load). */
+    uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + state image). */
 } le_header_t;
 
 /**
@@ -449,7 +427,15 @@ typedef struct {
 
 /* ========================================================================== */
 /* State structures for stateful runtime elements                             */
+/*                                                                           */
+/* These are laid out 1-byte-aligned (`#pragma pack`) so their in-memory     */
+/* byte layout is identical between the host compiler (which bakes a          */
+/* preconfigured state image into the .lebin) and the target MCU compiler     */
+/* (which memcpy's that image directly to RAM). No padding is inserted, so    */
+/* sizeof() is the exact sum of member sizes on every toolchain/endianness    */
+/* (all supported targets are little-endian).                                 */
 /* ========================================================================== */
+#pragma pack(push, 1)
 
 /**
  * @brief Runtime state tracking for timer blocks (TON, TOF, TP).
@@ -535,28 +521,64 @@ typedef struct {
 } le_symcomp_state_t;
 
 /**
- * @brief Dual-slope percentage restrained differential protection state (ANSI 87).
- */
-typedef struct {
-    float        o87p;      /**< Minimum operating current pickup threshold. */
-    float        slp1;      /**< Percentage restraint slope 1 (typically 0.15 to 0.40). */
-    float        irs1;      /**< Restraint current breakpoint knee-point. */
-    float        slp2;      /**< Percentage restraint slope 2 (typically 0.50 to 0.80). */
-    float        i_op;      /**< Calculated operating current magnitude. */
-    float        i_rt;      /**< Calculated restraint current magnitude. */
-    bool         tripped;   /**< Differential trip flag. */
-} le_diff87_state_t;
-
-/**
  * @brief Mho circle distance relay protection zone state (ANSI 21).
  */
 typedef struct {
-    float        reach_ohms;     /**< Zone reach impedance magnitude in secondary ohms. */
-    float        line_angle_rad; /**< Characteristic transmission line impedance angle in radians. */
-    float        r_meas;         /**< Measured apparent resistance (R). */
-    float        x_meas;         /**< Measured apparent reactance (X). */
-    bool         tripped;        /**< Distance zone trip flag. */
+    float  reach_ohms;           /**< Zone reach impedance magnitude (ohms). */
+    float  line_angle_deg;       /**< Line/impedance characteristic angle (degrees). */
+    float  offset_mag;           /**< Mho-offset compensation magnitude (ohms). */
+    float  offset_angle_deg;     /**< Mho-offset phasor angle (degrees). */
+    float  prefault_v_threshold; /**< If live |V| falls below this, treat as fault and use prefault V. */
+    uint32_t prefault_duration_ms; /**< How long to keep using prefault V after arming (ms). */
+    /* Prefault voltage memory: the last known-good V phasor, substituted for the
+     * configured duration when the measured voltage is depressed (faulted). */
+    le_complex_t prefault_v;     /**< Remembered pre-fault (known-good) voltage phasor. */
+    uint32_t prefault_arm_ms;    /**< Timestamp when prefault substitution was armed. */
+    bool   prefault_armed;       /**< True between arming and duration expiry. */
+    float  r_meas;               /**< Measured apparent resistance (R). */
+    float  x_meas;               /**< Measured apparent reactance (X). */
+    bool   tripped;              /**< Distance zone trip flag. */
 } le_dist21_state_t;
+
+/**
+ * @brief Dual-slope differential protection characteristic (ANSI 87).
+ *
+ * Implements the SEL-style proportional (dual-slope) differential restraint.
+ * The "operate" current is the phasor vector sum of the N differential inputs;
+ * the "restraint" current is their average magnitude (the through current).
+ * The relay trips when the operate current exceeds a dual-slope ramp whose
+ * slope changes at the restraint knee:
+ *     threshold = o87p + slp1 * I_rt                 for I_rt <= irs1
+ *     threshold = o87p + slp1*irs1 + slp2*(I_rt-irs1) for I_rt >  irs1
+ * Parameters mirror SEL 87 settings (O87P, SLP1, IPS1/IRS1, SLP2).
+ */
+typedef struct {
+    float  o87p;   /**< Differential pickup (pu), the y-intercept of the ramp. */
+    float  slp1;   /**< First slope (pu operate per pu restraint), I_rt <= irs1. */
+    float  irs1;   /**< Restraint-current knee where the slope changes slope (pu). */
+    float  slp2;   /**< Second slope (pu operate per pu restraint), I_rt > irs1. */
+    /* Runtime measure / trip state. */
+    float  operate;    /**< Measured operate current (|vector sum|), pu. */
+    float  restraint;  /**< Measured restraint current (avg magnitude), pu. */
+    bool   tripped;    /**< Differential (87) trip flag. */
+} le_diff87_state_t;
+
+/**
+ * @brief Three-phase transformer phase-shift compensation (ANSI 87T).
+ *
+ * For transformer differential protection, the wye/delta winding phase
+ * displacement must be removed so the operate (differential) current is zero
+ * under through-load. This transform applies the SEL delta/wye compensation
+ * matrix M(k) (k = 1..12) to the three winding phasors:
+ *     I'_x = s(k) * sum_j M(k)[x][j] * I_j
+ * where the scalar multiplier s(k) = 1/sqrt(3) for odd k, and 1/3 for even k.
+ * `comp` stores the SEL compensation setting index k (1..12). Other numeric
+ * settings used in some relays are phase shifts; this implementation uses the
+ * IEEE/IEC delta-wye transformer compensation table (TCOMP style).
+ */
+typedef struct {
+    uint8_t comp;   /**< SEL compensation matrix index k (1..12). */
+} le_comp33_state_t;
 #endif
 
 #if LE_ENABLE_SERIAL_BUS
@@ -751,6 +773,8 @@ typedef struct {
     bool     initialized;              /**< Set to true on first cycle. */
 } le_min_max_hold_state_t;
 #endif
+
+#pragma pack(pop)
 
 /**
  * @brief Status and return codes for runtime API operations.

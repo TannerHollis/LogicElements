@@ -1,0 +1,11 @@
+{
+  "name": "Element_PHASE_COMP",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "PHASE_COMP",
+      "compensation": 6
+    }
+  ],
+  "nets": []
+}

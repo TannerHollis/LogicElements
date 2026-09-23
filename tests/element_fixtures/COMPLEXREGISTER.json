@@ -1,0 +1,11 @@
+{
+  "name": "Element_COMPLEXREGISTER",
+  "elements": [
+    {
+      "name": "C1",
+      "type": "COMPLEXREGISTER",
+      "address": "%C0"
+    }
+  ],
+  "nets": []
+}

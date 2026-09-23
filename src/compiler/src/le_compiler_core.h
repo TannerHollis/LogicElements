@@ -97,6 +97,7 @@ private:
     uint16_t allocate_user_bool();
     uint16_t allocate_user_int();
     uint16_t allocate_user_float();
+    uint16_t allocate_user_complex();
     uint16_t allocate_timer();
     uint16_t allocate_counter();
 
@@ -104,20 +105,25 @@ private:
     void release_temp_bool(int temp_idx);
     uint16_t acquire_temp_float(int& out_temp_idx);
     void release_temp_float(int temp_idx);
+    uint16_t acquire_temp_complex(int& out_temp_idx);
+    void release_temp_complex(int temp_idx);
     uint16_t acquire_temp_int(int& out_temp_idx);
     void release_temp_int(int temp_idx);
 
     int m_user_bool_count = 0;
     int m_user_int_count = 0;
     int m_user_float_count = 0;
+    int m_user_complex_count = 0;
     int m_peak_temp_bool = 0;
     int m_peak_temp_float = 0;
+    int m_peak_temp_complex = 0;
     int m_peak_temp_int = 0;
     int m_timer_counter = 0;
     int m_counter_counter = 0;
 
     std::vector<int> m_free_temp_bool_pool;
     std::vector<int> m_free_temp_float_pool;
+    std::vector<int> m_free_temp_complex_pool;
     std::vector<int> m_free_temp_int_pool;
 };
 

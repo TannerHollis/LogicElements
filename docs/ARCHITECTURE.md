@@ -2,7 +2,7 @@
 
 This document is the technical overview of LogicElements: the runtime engine,
 the compiler pipeline, the `.lebin` binary format, the variable-arity block
-mechanism, the zero-heap state arena, the hardware abstraction layer, tooling,
+mechanism, the zero-heap state workspace, the hardware abstraction layer, tooling,
 and testing. It is written in the Google developer-documentation style: an
 overview first, then reference detail.
 
@@ -22,12 +22,12 @@ LogicElements is a two-sided system.
 - A **zero-heap ANSI C runtime** (`src/runtime`) that loads the `.lebin` and
   sweeps a scan loop over the process image, driving hardware through a HAL.
 - Stateful elements (timers, counters, PID, DSP filters, protection) get their
-  state **bound into a static zero-heap arena** at load time and dereference a
-  pointer each scan — never `malloc` after boot.
+  state **baked into a preconfigured state image** that the loader copies
+  into a static zero-heap workspace at load time — never `malloc` after boot.
 
 ```
 Circuit JSON ── compiler ──► .lebin ── UART/upload ──► loader ──► VM ──► process image ──► HAL
-                                                                 └─► zero-heap arena (bound state)
+                                                                 └─► zero-heap workspace (state image)
 ```
 
 ---
@@ -82,7 +82,7 @@ A fixed memory table of registers and per-region status bits:
 
 Accessors (`le_process_image_get_bool/float`, `set_bool/float`, and the
 timer/counter/kind resolvers) are the single funnel through which handlers and
-consumers read/write both fixed arrays and heap-bound state.
+consumers read/write registers and workspace-backed state.
 ---
 
 ## Variable-arity block mechanism
@@ -118,36 +118,43 @@ function ids `>= 0x80` are dispatched to the board HAL `ext_call`:
 | `0x02` | `LE_FUNC_RECT2POLAR` | `[real, imag] -> [mag, angle]` |
 | `0x03` | `LE_FUNC_POLAR2RECT` | `[mag, angle] -> [real, imag]` |
 | `0x04` | `LE_FUNC_PHASOR_SHIFT` | `[real, imag, delta] -> [real', imag']` |
-| `0x05` | `LE_FUNC_PHASOR_1P` | `[sample, sync_mag, sync_angle] -> [mag, angle]` |
+| `0x05` | `LE_FUNC_PHASOR_1P` | `[sample, sync_cplx] -> [cplx]` |
+| `0x06` | `LE_FUNC_COMPLEX2POLAR` | `[cplx] -> [mag, angle]` |
+| `0x07` | `LE_FUNC_COMPLEX2RECT` | `[cplx] -> [real, imag]` |
+| `0x0B` | `LE_FUNC_RECT2COMPLEX` | `[real, imag] -> [cplx]` |
+| `0x0C` | `LE_FUNC_POLAR2COMPLEX` | `[mag, angle] -> [cplx]` |
+| `0x0D` | `LE_FUNC_CLAMP_F` | `[value, min, max] -> [out]` |
+| `0x0E` | `LE_FUNC_PHASE_COMP` | `[c_a, c_b, c_c] -> [c_a', c_b', c_c']` (87T) |
 
 ---
 
-## Zero-heap state arena (`src/runtime/le_rt.c`)
+## Zero-heap state workspace (`src/runtime/src/le_rt.c`)
 
 All stateful "complex" elements (timers, counters, PID, phasors, scalers, DSP
 filters, protection) used to live in fixed arrays inside `le_process_image_t`.
-They now live in a **static byte arena** — a fixed array, never `malloc`ed —
-and each active block is bound to a heap pointer at load time.
+They now live in a **single contiguous RAM workspace** (`le_rt_workspace()`, sized
+`LE_STATE_WORKSPACE_BYTES`) that the loader fills by memcpy'ing a
+**preconfigured state image** carried in the `.lebin`. The compiler bakes every
+stateful block (defaults + all circuit properties as concrete bytes); the loader
+just copies it and records each kind group's byte offset.
 
 | Term | Meaning |
 | :--- | :--- |
-| `s_state_heap[LE_STATE_HEAP_BYTES]` | The static arena. |
-| `le_rt_block_t` (RBT) | `{ kind, state_size, state }` row table. |
-| `le_rt_reserve(kind, size)` | Bump/alignment slice out of the arena. |
-| `le_rt_group_base(kind)` | First RBT row for a kind group. |
-| `le_process_image_kind_state(kind, idx)` | Resolver: heap slice when bound, else fixed array. |
+| `le_rt_workspace()` / `le_rt_workspace_bytes()` | The platform's RAM state workspace. |
+| `le_rt_set_kind_base(kind, off)` / `le_rt_kind_base(kind)` | Byte offset of a kind group within the image. |
+| `le_rt_state(kind, idx)` | Resolves block `idx` of `kind` to `workspace + base + idx * sizeof`. |
+| `le_process_image_kind_state(kind, idx)` | Lookup used by handlers (delegates to `le_rt_state`). |
 
 At boot the loader:
 
 1. Reads the **state-directive table** (`{ kind, count, size }`).
-2. For each instance calls `le_rt_reserve()` and records the per-kind base row.
-3. Applies **factory defaults** (`le_rt_apply_defaults`) and then **per-element
-   config** (`le_rt_configure`) so compiled circuits honor their schema tuning
-   (e.g. `LPF` `"alpha": 0.5`, PID gains, scaler mapping).
+2. `memcpy`'s the **state image** into the workspace and records each kind
+   group's byte offset from the directives. No allocation and no config pass —
+   the image already contains defaults + every element's properties.
 
-During a scan, each stateful handler dereferences its pointer via the resolver
-instead of re-indexing a fixed array. Manual/legacy paths (no loader binding)
-fall back to the fixed arrays.
+During a scan, each stateful handler resolves its block via `le_rt_state(kind, idx)`.
+"Does it fit?" is checked at load (`state_img_len ≤ LE_STATE_WORKSPACE_BYTES`),
+not by any per-type element cap.
 
 **Why:** RAM proportional to use rather than per-type maxima; cross-type budget
 sharing under one byte cap; still *zero heap* at runtime.
@@ -177,8 +184,8 @@ circuit.json + board.json
      CSE, direct-destination coalescing, dead-code elimination)
   4. Instruction generation (emits an instruction per element,
      LE_OP_BLOCK + descriptors for variable-arity, state-directives +
-     config-directives for stateful elements)
-  5. Pack payload (instructions + block table + state table + config table),
+     a preconfigured state image for stateful elements)
+  5. Pack payload (instructions + block table + state table + state image),
      header, CRC32
 ```
 
@@ -228,6 +235,6 @@ The repository ships three automated suites (see root `CMakeLists.txt`):
 
 | Suite | Coverage |
 | :--- | :--- |
-| `test_c_runtime` | Process image, opcodes, timers/counters, DSP, protection, loader/storage, comms, serial bus, blocks, phasors, heap. |
-| `test_compiler` | Compilation, optimizer passes, multi-output selection, state-table binding, heap-backed timer execution. |
+| `test_c_runtime` | Process image, opcodes, timers/counters, DSP, protection, loader/storage, comms, serial bus, blocks, phasors, workspace. |
+| `test_compiler` | Compilation, optimizer passes, multi-output selection, state-image binding, workspace-backed timer execution. |
 | `test_element_assembly` | One fixture per element -> compile + parse disassembly for the exact opcode (see [element_fixtures.md](element_fixtures.md)). |

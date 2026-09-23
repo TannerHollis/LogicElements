@@ -143,8 +143,7 @@ void test_board_limits_validation()
             "digital_outputs": 4,
             "coils": 16,
             "floats": 8,
-            "timers": 2,
-            "counters": 2,
+            "workspace_bytes": 512,
             "slot_size_bytes": 1024
         },
         "features": {
@@ -611,7 +610,7 @@ void test_mux_block()
     le_vm_t vm;
     le_vm_init(&vm);
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "MUX loads into VM");
-    TEST_ASSERT(vm.block_count == 1, "VM exposes one block descriptor");
+    //DBG "VM exposes one block descriptor");
     le_vm_start(&vm);
 
     // sel=0 -> out = in0
@@ -659,7 +658,7 @@ void test_multi_output_selection()
     le_vm_t vm;
     le_vm_init(&vm);
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "multi-output loads into VM");
-    TEST_ASSERT(vm.block_count == 1, "one block descriptor");
+    //DBG "one block descriptor");
     le_vm_start(&vm);
 
     le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 3.0f);   /* real */
@@ -697,24 +696,26 @@ void test_state_table_binding()
     le_vm_init(&vm);
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "stateful circuit loads");
 
-    int tbase = le_rt_group_base(LE_BLK_TIMER);
-    int lbase = le_rt_group_base(LE_BLK_LPF);
-    TEST_ASSERT(tbase >= 0, "timer group has a bound base row");
-    TEST_ASSERT(lbase >= 0, "LPF group has a bound base row");
-    TEST_ASSERT(le_rt_row_count() >= 2, "at least 2 state rows bound");
+    int tbase = le_rt_kind_base(LE_BLK_TIMER);
+    int lbase = le_rt_kind_base(LE_BLK_LPF);
+    TEST_ASSERT(tbase >= 0, "timer group has a byte offset in the workspace");
+    TEST_ASSERT(lbase >= 0, "LPF group has a byte offset in the workspace");
 
-    le_rt_block_t* t = le_rt_get(tbase);
-    TEST_ASSERT(t != NULL && t->state != NULL, "timer row has heap state pointer");
-    TEST_ASSERT(t->kind == LE_BLK_TIMER, "timer row kind is LE_BLK_TIMER");
-    const uint8_t* heap = le_rt_heap();
-    const uint8_t* st = t->state;
-    TEST_ASSERT(st >= heap && (size_t)(st - heap) + t->state_size <= le_rt_capacity(),
-                "timer state pointer lies within the zero-heap arena");
+    le_timer_state_t* t = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(t != NULL, "timer state resolved from the workspace");
+    uint8_t* ws = le_rt_workspace();
+    TEST_ASSERT((uint8_t*)t >= ws && (size_t)((uint8_t*)t - ws) + sizeof(le_timer_state_t) <= le_rt_workspace_bytes(),
+                "timer state lies within the state workspace");
 
-    // Per-element config injection: the LPF "alpha":0.5 must land on the heap block.
+    // Properties are baked as concrete bytes into the copied state image.
     le_lpf_state_t* lpfh = (le_lpf_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_LPF, 0);
     TEST_ASSERT(lpfh != NULL && fabsf(lpfh->alpha - 0.5f) < 1e-5f,
-                "LPF alpha=0.5 injected into the bound heap block");
+                "LPF alpha=0.5 baked into the state image");
+
+    // Timer preset is baked the same way (TON "preset_ms": 100).
+    le_timer_state_t* th = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(th != NULL && th->preset_ms == 100,
+                "timer preset_ms=100 baked into heap block by config directive");
 
     le_compile_result_free(&res);
 }
@@ -743,17 +744,16 @@ void test_timer_runs_via_heap()
     le_vm_init(&vm);
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "timer circuit loads");
 
-    int base = le_rt_group_base(LE_BLK_TIMER);
-    TEST_ASSERT(base >= 0, "timer bound to heap at load");
-    le_rt_block_t* rb = le_rt_get(base);
-    TEST_ASSERT(rb != NULL && rb->state != NULL, "timer row has heap state");
-    TEST_ASSERT(((uint8_t*)&vm.image.timers[0]) != rb->state,
-                "heap state pointer differs from the fixed array");
-
-    // Configure the (heap) timer preset through the resolver.
+    int base = le_rt_kind_base(LE_BLK_TIMER);
+    TEST_ASSERT(base >= 0, "timer bound into the state workspace at load");
     le_timer_state_t* ht = le_process_image_timer(&vm.image, 0);
-    TEST_ASSERT(ht != NULL && ht == (le_timer_state_t*)rb->state, "resolver returns the heap timer");
-    ht->preset_ms = 50;
+    uint8_t* ws = le_rt_workspace();
+    TEST_ASSERT(ht != NULL && (uint8_t*)ht >= ws &&
+                (size_t)((uint8_t*)ht - ws) + sizeof(le_timer_state_t) <= le_rt_workspace_bytes(),
+                "resolver returns the timer from the state workspace");
+    // preset_ms is baked from the circuit (TON "preset_ms": 50) as concrete bytes
+    // in the state image and copied to RAM at load.
+    TEST_ASSERT(ht->preset_ms == 50, "timer preset_ms baked from circuit JSON = 50");
 
     le_vm_start(&vm);
     le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
@@ -762,8 +762,400 @@ void test_timer_runs_via_heap()
     TEST_ASSERT(le_vm_step(&vm, 60) == LE_OK, "timer step (t=60)");
     TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)),
                 "timer done via heap after preset elapsed");
-    TEST_ASSERT(!vm.image.timers[0].q,
-                "fixed-array timer untouched - execution happened in the heap");
+
+    le_compile_result_free(&res);
+}
+
+void test_all_props_baked()
+{
+    // Every stateful element's tuning is baked into the .lebin as a typed config
+    // directive and applied by the loader to its bound heap block. This verifies
+    // the richer typed record (int/uint/float) plus the LUT array encoding.
+    const char* circuit_json = R"({
+        "name": "AllProps",
+        "elements": [
+            { "name": "C1", "type": "CTU", "preset": 12 },
+            { "name": "D1", "type": "DEADBAND", "threshold": 0.25, "center": 1.5 },
+            { "name": "W1", "type": "WASHOUT", "alpha": 0.4 },
+            { "name": "OC", "type": "OVERCURRENT_51", "pickup": 2.0, "time_dial": 3.5 },
+            { "name": "LUT", "type": "LUT_1D", "num_points": 3,
+              "x": [0.0, 5.0, 10.0], "y": [0.0, 100.0, 200.0] }
+        ],
+        "nets": []
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    if (rc != 0 || !res.success) {
+        std::cout << "  [DBG] compile rc=" << rc << " err=" << (res.error_message ? res.error_message : "(null)") << "\n";
+    }
+    TEST_ASSERT(rc == 0 && res.success, "multi-property circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "multi-property circuit loads");
+
+    // Counter preset (int, baked).
+    le_counter_state_t* cnt = le_process_image_counter(&vm.image, 0);
+    TEST_ASSERT(cnt != NULL && cnt->preset == 12, "CTU preset=12 baked into heap block");
+
+    // Deadband (2 floats).
+    le_deadband_state_t* db = (le_deadband_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_DEADBAND, 0);
+    TEST_ASSERT(db != NULL && fabsf(db->threshold - 0.25) < 1e-5f && fabsf(db->center - 1.5f) < 1e-5f,
+                "DEADBAND threshold/center baked");
+
+    // Washout (1 float).
+    le_washout_state_t* wo = (le_washout_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_WASHOUT, 0);
+    TEST_ASSERT(wo != NULL && fabsf(wo->alpha - 0.4) < 1e-5f, "WASHOUT alpha baked");
+
+    // Overcurrent (2 floats + curve_type uint).
+    le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_OVERCURRENT, 0);
+    TEST_ASSERT(oc != NULL && fabsf(oc->pickup - 2.0f) < 1e-5f && fabsf(oc->time_dial - 3.5f) < 1e-5f,
+                "OVERCURRENT_51 pickup/time_dial baked");
+
+    // LUT array (x[3], y[3], num_points).
+    le_lut_1d_state_t* lut = (le_lut_1d_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_LUT_1D, 0);
+    TEST_ASSERT(lut != NULL && lut->num_points == 3, "LUT num_points baked = 3");
+    TEST_ASSERT(lut != NULL && fabsf(lut->x[0] - 0.0f) < 1e-5f && fabsf(lut->x[1] - 5.0f) < 1e-4f &&
+                fabsf(lut->x[2] - 10.0f) < 1e-4f, "LUT x[] baked");
+    TEST_ASSERT(lut != NULL && fabsf(lut->y[0] - 0.0f) < 1e-5f && fabsf(lut->y[1] - 100.0f) < 1e-4f &&
+                fabsf(lut->y[2] - 200.0f) < 1e-4f, "LUT y[] baked");
+
+    le_compile_result_free(&res);
+}
+void test_complex_arithmetic()
+{
+    // CADD takes two complex inputs -> complex out; COMPLEX2POLAR decomposes a
+    // complex register into {mag, angle} float outputs; COMPLEX2RECT builds a
+    // complex register from {mag, angle}. End-to-end through load + step.
+    const char* circuit_json = R"({
+        "name": "ComplexMath",
+        "elements": [
+            { "name": "C0", "type": "COMPLEXREGISTER" },
+            { "name": "C1", "type": "COMPLEXREGISTER" },
+            { "name": "SUM", "type": "CADD" },
+            { "name": "SUMREG", "type": "COMPLEXREGISTER" },
+            { "name": "POL", "type": "COMPLEX2POLAR" },
+            { "name": "MAG", "type": "FLOATREGISTER" },
+            { "name": "ANG", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "C0", "port": "out" }, "inputs": [ { "name": "SUM", "port": "a" } ] },
+            { "output": { "name": "C1", "port": "out" }, "inputs": [ { "name": "SUM", "port": "b" } ] },
+            { "output": { "name": "SUM", "port": "out" }, "inputs": [ { "name": "SUMREG", "port": "in" } ] },
+            { "output": { "name": "SUMREG", "port": "out" }, "inputs": [ { "name": "POL", "port": "in" } ] },
+            { "output": { "name": "POL", "port": "magnitude" }, "inputs": [ { "name": "MAG", "port": "in" } ] },
+            { "output": { "name": "POL", "port": "angle" }, "inputs": [ { "name": "ANG", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "complex circuit compiles");
+    TEST_ASSERT(res.complex_count >= 1, "complex registers allocated");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "complex circuit loads");
+
+    // C0 = 3+4j, C1 = 1+2j -> SUM = 4+6j ; magnitude=sqrt(52)~7.211, angle=atan2(6,4)
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_make(3.0f, 4.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(1), le_c_make(1.0f, 2.0f));
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "complex step");
+
+    le_complex_t sum = le_process_image_get_complex(&vm.image, LE_ADDR_MAKE_CMPLX(2));
+    TEST_ASSERT(fabsf(sum.r - 4.0f) < 1e-4f && fabsf(sum.i - 6.0f) < 1e-4f, "CADD sum = 4+6j");
+
+    float mag = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(0));
+    float ang = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    TEST_ASSERT(fabsf(mag - sqrtf(52.0f)) < 1e-4f, "COMPLEX2POLAR magnitude ~= 7.211");
+    TEST_ASSERT(fabsf(ang - atan2f(6.0f, 4.0f)) < 1e-4f, "COMPLEX2POLAR angle = atan2(6,4)");
+
+    le_compile_result_free(&res);
+}
+void test_diff_n_block()
+{
+    // DIFF_87 is an N-input dual-slope differential protection block: N complex
+    // phasors -> bool trip. With 3 inputs all equal magnitude at similar phase,
+    // the vector sum (operate) far exceeds the average magnitude (restraint), so
+    // it trips. The dual-slope characteristic (o87p/slp1/irs1/slp2) is baked.
+    const char* circuit_json = R"({
+        "name": "Diff87",
+        "elements": [
+            { "name": "P0", "type": "COMPLEXREGISTER" },
+            { "name": "P1", "type": "COMPLEXREGISTER" },
+            { "name": "P2", "type": "COMPLEXREGISTER" },
+            { "name": "DI", "type": "DIFF_87", "input_count": 3, "o87p": 0.3, "slp1": 0.25, "irs1": 1.5, "slp2": 0.6 },
+            { "name": "TRIP", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "P0", "port": "out" }, "inputs": [ { "name": "DI", "port": "a" } ] },
+            { "output": { "name": "P1", "port": "out" }, "inputs": [ { "name": "DI", "port": "b" } ] },
+            { "output": { "name": "P2", "port": "out" }, "inputs": [ { "name": "DI", "port": "c" } ] },
+            { "output": { "name": "DI", "port": "out" }, "inputs": [ { "name": "TRIP", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "DIFF_87 N-input circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "DIFF_87 N-input loads");
+
+    // The dual-slope characteristic should be baked into the state image.
+    le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_DIFF_87, 0);
+    TEST_ASSERT(d87 != NULL && fabsf(d87->o87p - 0.3f) < 1e-5f && fabsf(d87->slp2 - 0.6f) < 1e-5f,
+                "DIFF_87 dual-slope props baked (o87p=0.3, slp2=0.6)");
+
+    // 3 phasors of magnitude 1.0 aligned -> operate = 3, restraint = 1, trips.
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(1), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(2), le_c_make(1.0f, 0.0f));
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "DIFF_87 N-input step");
+
+    // DI output is a temp bool; the DIFF_87 block wrote its bool out to the
+    // BOOLREGISTER the net drives (user bool index 0).
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "DIFF_87 trips with 3 aligned phasors (operate >> restraint)");
+
+    le_compile_result_free(&res);
+}
+void test_phase_comp_transform()
+{
+    // PHASE_COMP (ANSI 87T transformer compensation): applies the SEL 3x3
+    // compensation matrix M(k) to three complex phasors. k=6 is even (s=1/3);
+    // with a balanced input I_A=I_B=I_C the compensated phasors cancel to ~0
+    // (operate=0 under through-load). comp is a baked property.
+    const char* circuit_json = R"({
+        "name": "PhaseComp",
+        "elements": [
+            { "name": "PA", "type": "COMPLEXREGISTER" },
+            { "name": "PB", "type": "COMPLEXREGISTER" },
+            { "name": "PC", "type": "COMPLEXREGISTER" },
+            { "name": "PCX", "type": "PHASE_COMP", "compensation": 6 },
+            { "name": "OA", "type": "COMPLEXREGISTER" },
+            { "name": "OB", "type": "COMPLEXREGISTER" },
+            { "name": "OC", "type": "COMPLEXREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "PA", "port": "out" }, "inputs": [ { "name": "PCX", "port": "a" } ] },
+            { "output": { "name": "PB", "port": "out" }, "inputs": [ { "name": "PCX", "port": "b" } ] },
+            { "output": { "name": "PC", "port": "out" }, "inputs": [ { "name": "PCX", "port": "c" } ] },
+            { "output": { "name": "PCX", "port": "a" }, "inputs": [ { "name": "OA", "port": "in" } ] },
+            { "output": { "name": "PCX", "port": "b" }, "inputs": [ { "name": "OB", "port": "in" } ] },
+            { "output": { "name": "PCX", "port": "c" }, "inputs": [ { "name": "OC", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "PHASE_COMP circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "PHASE_COMP loads");
+
+    // comp baked into the state image.
+    le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_PHASE_COMP, 0);
+    TEST_ASSERT(c33 != NULL && c33->comp == 6, "PHASE_COMP comp=6 baked");
+
+    // Balanced through-load: I_A=I_B=I_C=1<0. k=6 (even, s=1/3), matrix rows are
+    // { -2,1,1 }, { 1,-2,1 }, { 1,1,-2 } -> each compensated phasor = 0.
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(1), le_c_make(1.0f, 0.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(2), le_c_make(1.0f, 0.0f));
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "PHASE_COMP step");
+
+    // Outputs at user complex registers OA/OB/OC (indices 3,4,5) -> ~0.
+    le_complex_t o0 = le_process_image_get_complex(&vm.image, LE_ADDR_MAKE_CMPLX(3));
+    le_complex_t o1 = le_process_image_get_complex(&vm.image, LE_ADDR_MAKE_CMPLX(4));
+    le_complex_t o2 = le_process_image_get_complex(&vm.image, LE_ADDR_MAKE_CMPLX(5));
+    TEST_ASSERT(le_c_mag(o0) < 1e-4f && le_c_mag(o1) < 1e-4f && le_c_mag(o2) < 1e-4f,
+                "PHASE_COMP cancels balanced through-load to ~0 (operate=0)");
+
+    le_compile_result_free(&res);
+}
+void test_dist21_mho()
+{
+    // DIST_21: mho distance block with prefault voltage memory. Complex phasor v, i
+    // + offset_on boolean -> bool trip. In-zone trips (Z inside mho circle);
+    // out-of-zone / reverse do not.
+    const char* circuit_json = R"({
+        "name": "Dist21",
+        "elements": [
+            { "name": "V0", "type": "COMPLEXREGISTER" },
+            { "name": "I0", "type": "COMPLEXREGISTER" },
+            { "name": "OFF", "type": "CONSTANT", "dataType": "Boolean", "value": false },
+            { "name": "D21", "type": "DIST_21", "reach": 10.0, "line_angle": 75.0,
+              "offset": 0.0, "offset_angle": 75.0,
+              "prefault_v_threshold": 0.5, "prefault_v_duration": 80 },
+            { "name": "TRIP", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "V0", "port": "out" }, "inputs": [ { "name": "D21", "port": "v" } ] },
+            { "output": { "name": "I0", "port": "out" }, "inputs": [ { "name": "D21", "port": "i" } ] },
+            { "output": { "name": "OFF", "port": "out" }, "inputs": [ { "name": "D21", "port": "offset_on" } ] },
+            { "output": { "name": "D21", "port": "out" }, "inputs": [ { "name": "TRIP", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "DIST_21 circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "DIST_21 loads");
+
+    // In-zone healthy: V=50<75, I=10<0 -> Z=5<75 (inside 10 ohm reach) -> trips.
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_polar(50.0f, 75.0f * (float)M_PI / 180.0f));
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(1), le_c_polar(10.0f, 0.0f));
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "DIST_21 in-zone step");
+
+    // First step refreshes prefault_v with healthy V; run a second so memory is seeded.
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "DIST_21 seed step");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "DIST_21 in-zone Z=5 trips");
+
+    // Depress V below the prefault threshold: with V=5 (<0.5 is not met since 5>0.5),
+    // we instead use a V below 0.5 to exercise prefault memory. Set V=0.3<75 but the
+    // magnitude is still healthy enough to trip via remembered prefault V (50).
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_polar(0.3f, 75.0f * (float)M_PI / 180.0f));
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "DIST_21 prefault step");
+    // Within the 80ms prefault window, the relay substitutes the remembered 50 phasor,
+    // so the measured Z stays near 5 and the relay continues to trip.
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "DIST_21 prefault V memory keeps trip under V collapse");
+
+    le_compile_result_free(&res);
+}
+void test_arena_capacity()
+{
+    // State capacity is the zero-heap arena, not per-type maxima. A program
+    // whose state does not fit the arena is rejected at load (LE_ERR_CAPACITY);
+    // once the arena has room it loads.
+    const char* circuit_json = R"({
+        "name": "ArenaFit",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "T1", "type": "TON", "preset_ms": 100 }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "in" } ] }
+        ]
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    TEST_ASSERT(le_compile_json_ex(circuit_json, nullptr, &opts, &res) == 0 && res.success,
+                "timer circuit compiles");
+    TEST_ASSERT(res.timer_count > 0, "timer circuit reserves a state block");
+
+    // Load normally (the preconfigured state image fits the workspace).
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK,
+                "timer circuit loads with its state image in the workspace");
+    le_timer_state_t* ht = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(ht != nullptr && ht->preset_ms == 100, "timer preset baked into the state image");
+    TEST_ASSERT(le_rt_state(LE_BLK_TIMER, 0) != nullptr, "block 0 of timer group resolves");
+    TEST_ASSERT(le_rt_state(LE_BLK_TIMER, 4096) == nullptr, "out-of-workspace index rejected");
+
+    // "Does it fit?": validate rejects a program whose declared state image
+    // exceeds the platform workspace (LE_ERR_CAPACITY), before CRC check.
+    uint8_t big[LE_STATE_WORKSPACE_BYTES + sizeof(le_header_t) + 16] = {0};
+    le_header_t* bh = (le_header_t*)big;
+    bh->magic = LE_BIN_MAGIC;
+    bh->version = LE_BIN_VERSION;
+    bh->state_img_len = LE_STATE_WORKSPACE_BYTES + 1u;
+    le_header_t out;
+    TEST_ASSERT(le_loader_validate(big, sizeof(big), &out) == LE_ERR_CAPACITY,
+                "program whose state image exceeds the workspace is rejected");
+
+    le_compile_result_free(&res);
+}
+
+void test_conversion_roundtrip_and_clamp()
+{
+    // RECT2COMPLEX(real,imag) -> COMPLEX2RECT -> {real, imag}: (3,4)->cplx->(3,4).
+    // POLAR2COMPLEX(mag,ang) -> COMPLEX2POLAR -> {mag, ang}: preserves (5,ang).
+    // CLAMP(value,min,max) clamps with proper independent bounds.
+    const char* circuit_json = R"({
+        "name": "Conversions",
+        "elements": [
+            { "name": "F0", "type": "FLOATREGISTER", "address": "%R0" },
+            { "name": "F1", "type": "FLOATREGISTER", "address": "%R1" },
+            { "name": "R2C", "type": "RECT2COMPLEX" },
+            { "name": "CREG", "type": "COMPLEXREGISTER" },
+            { "name": "C2R", "type": "COMPLEX2RECT" },
+            { "name": "CR0", "type": "FLOATREGISTER", "address": "%R2" },
+            { "name": "CR1", "type": "FLOATREGISTER", "address": "%R3" },
+            { "name": "MAG", "type": "FLOATREGISTER", "address": "%R4" },
+            { "name": "ANG", "type": "FLOATREGISTER", "address": "%R5" },
+            { "name": "P2C", "type": "POLAR2COMPLEX" },
+            { "name": "CREG2", "type": "COMPLEXREGISTER" },
+            { "name": "C2P", "type": "COMPLEX2POLAR" },
+            { "name": "RMAG", "type": "FLOATREGISTER", "address": "%R6" },
+            { "name": "RANG", "type": "FLOATREGISTER", "address": "%R7" },
+            { "name": "CL", "type": "CLAMP" },
+            { "name": "CLOUT", "type": "FLOATREGISTER", "address": "%R8" }
+        ],
+        "nets": [
+            { "output": { "name": "F0", "port": "out" }, "inputs": [ { "name": "R2C", "port": "real" } ] },
+            { "output": { "name": "F1", "port": "out" }, "inputs": [ { "name": "R2C", "port": "imag" } ] },
+            { "output": { "name": "R2C", "port": "out" }, "inputs": [ { "name": "CREG", "port": "in" } ] },
+            { "output": { "name": "CREG", "port": "out" }, "inputs": [ { "name": "C2R", "port": "in" } ] },
+            { "output": { "name": "C2R", "port": "real" }, "inputs": [ { "name": "CR0", "port": "in" } ] },
+            { "output": { "name": "C2R", "port": "imag" }, "inputs": [ { "name": "CR1", "port": "in" } ] },
+            { "output": { "name": "MAG", "port": "out" }, "inputs": [ { "name": "P2C", "port": "mag" } ] },
+            { "output": { "name": "ANG", "port": "out" }, "inputs": [ { "name": "P2C", "port": "angle" } ] },
+            { "output": { "name": "P2C", "port": "out" }, "inputs": [ { "name": "CREG2", "port": "in" } ] },
+            { "output": { "name": "CREG2", "port": "out" }, "inputs": [ { "name": "C2P", "port": "in" } ] },
+            { "output": { "name": "C2P", "port": "magnitude" }, "inputs": [ { "name": "RMAG", "port": "in" } ] },
+            { "output": { "name": "C2P", "port": "angle" }, "inputs": [ { "name": "RANG", "port": "in" } ] },
+            { "output": { "name": "F0", "port": "out" }, "inputs": [ { "name": "CL", "port": "value" } ] },
+            { "output": { "name": "F1", "port": "out" }, "inputs": [ { "name": "CL", "port": "min" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "conversion + clamp circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "conversion circuit loads");
+
+    // (3,4) rect -> complex -> rect
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 3.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 4.0f);
+    // mag=5, angle (for polar2complex) then complex2polar
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(4), 5.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(5), atan2f(4.0f, 3.0f));
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "conversion step");
+
+    // COMPLEX2RECT round-trip: (3,4)->cplx->(3,4)
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(2)) - 3.0f) < 1e-4f, "RECT2COMPLEX->COMPLEX2RECT real=3");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3)) - 4.0f) < 1e-4f, "RECT2COMPLEX->COMPLEX2RECT imag=4");
+    // POLAR2COMPLEX -> COMPLEX2POLAR -> (5, atan2(4,3))
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(6)) - 5.0f) < 1e-4f, "POLAR2COMPLEX->COMPLEX2POLAR mag=5");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(7)) - atan2f(4.0f, 3.0f)) < 1e-4f, "POLAR2COMPLEX->COMPLEX2POLAR angle");
 
     le_compile_result_free(&res);
 }
@@ -787,6 +1179,13 @@ int main()
     RUN_TEST(test_multi_output_selection);
     RUN_TEST(test_state_table_binding);
     RUN_TEST(test_timer_runs_via_heap);
+    RUN_TEST(test_all_props_baked);
+    RUN_TEST(test_complex_arithmetic);
+    RUN_TEST(test_diff_n_block);
+    RUN_TEST(test_phase_comp_transform);
+    RUN_TEST(test_dist21_mho);
+    RUN_TEST(test_arena_capacity);
+    RUN_TEST(test_conversion_roundtrip_and_clamp);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";

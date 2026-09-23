@@ -47,6 +47,7 @@ LE_COMPILER_API int le_disassemble_bin(
     int user_bool_count,
     int user_float_count,
     int user_int_count,
+    const char* board_profile_json,
     char** out_disassembly,
     char** out_error_msg)
 {
@@ -64,7 +65,8 @@ LE_COMPILER_API int le_disassemble_bin(
     }
 
     try {
-        std::string dis = LogicElements::disassemble_binary(bin_data, bin_len, user_bool_count, user_float_count, user_int_count);
+        std::string board = board_profile_json ? board_profile_json : "";
+        std::string dis = LogicElements::disassemble_binary(bin_data, bin_len, user_bool_count, user_float_count, user_int_count, board);
         *out_disassembly = (char*)std::malloc(dis.size() + 1);
         std::strcpy(*out_disassembly, dis.c_str());
         return 0;

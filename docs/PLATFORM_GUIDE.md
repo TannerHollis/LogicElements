@@ -14,7 +14,7 @@ LogicElements turns any microcontroller into a field-programmable PLC where:
 - **Zero JTAG or SWD required**: Field engineers upload compiled `.lebin` binary circuits over standard USB-UART, RS-232, RS-485, or wireless serial (Bluetooth/Wi-Fi bridge).
 - **Zero microcontroller recompilation**: Modifying ladder logic, timers, interlocks, or protection thresholds never requires recompiling or reflashing the firmware C codebase.
 - **Multi-slot configuration management**: Store multiple independent `.lebin` programs in flash partitions (e.g. *Recipe A*, *Recipe B*, *Safe Mode*) and switch between them dynamically.
-- **Fail-safe and verified**: Every uploaded binary is validated with an IEEE 802.3 CRC32 checksum, 26-byte binary header, and hardware bounds verification before being committed to non-volatile memory or loaded into the virtual machine.
+- **Fail-safe and verified**: Every uploaded binary is validated with an IEEE 802.3 CRC32 checksum, 32-byte binary header, and hardware bounds verification before being committed to non-volatile memory or loaded into the virtual machine.
 
 ---
 
@@ -418,7 +418,7 @@ py tools/compiler/le_board.py --port COM3 --upload my_logic.lebin --slot 0
 
 Microcontrollers frequently feature specialized on-chip peripheralsâ€”such as hardware PWM timers, quadrature encoders, accelerated DSP filters, or coprocessorsâ€”that you can expose directly to schematic designers.
 
-LogicElements provides the `LE_OP_EXT_CALL` (`0x80`) opcode for this purpose. When the runtime virtual machine executes an `LE_OP_EXT_CALL` instruction, it invokes the adopter callback registered in `le_hal_t`:
+LogicElements carries custom nodes as `LE_OP_BLOCK` (`0xA0`) with a function id ≥ `LE_FUNC_CUSTOM_BASE (0x80)`, dispatched to the HAL `ext_call`. When the runtime executes such an `LE_OP_BLOCK` call, it dispatches to the adopter callback registered in `le_hal_t`:
 
 ```c
 le_status_t (*ext_call)(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img);
@@ -593,13 +593,16 @@ Adopters can fine-tune memory limits to match any microcontroller by setting def
 #define LE_MAX_CONFIG_SLOTS     3       /* 3 configurations */
 #define LE_SLOT_SIZE_BYTES      2048    /* 2 KB per slot */
 
-/* Variable memory budget per configuration: */
+/* Register memory is fixed-size; element state lives in the state workspace. */
 #define LE_MAX_DIGITAL_IN       64      /* %I (8 bytes) */
 #define LE_MAX_DIGITAL_OUT      64      /* %Q (8 bytes) */
 #define LE_MAX_COILS            128     /* %M (16 bytes) */
 #define LE_MAX_FLOATS           64      /* %R (256 bytes) */
-#define LE_MAX_TIMERS           16      /* Timers (128 bytes) */
-#define LE_MAX_COUNTERS         8       /* Counters (32 bytes) */
+
+/* Zero-heap state workspace shared by ALL stateful elements: the compiler
+   bakes each block state (defaults + properties) into a state image in the
+   .lebin and the loader copies it into this RAM workspace at load. */
+#define LE_STATE_WORKSPACE_BYTES 2048    /* workspace bytes (board-tunable) */
 ```
 
 ### Typical footprint across architectures
@@ -629,16 +632,13 @@ Example `my_board.leconfig`:
     "digital_outputs": 16,
     "coils": 128,
     "floats": 64,
-    "timers": 16,
-    "counters": 8,
+    "workspace_bytes": 2048,
     "config_slots": 3,
     "slot_size_bytes": 2048
   },
   "features": {
     "protection": true,
-    "serial_bus": true,
-    "i2c_devices": 4,
-    "spi_devices": 4
+    "serial_bus": true
   },
   "custom_nodes": [
     {
@@ -676,7 +676,7 @@ py tools/compiler/le_compiler.py circuit.json -b my_board.leconfig -o circuit.le
 
 - **Pin aliases**: The schematic can use symbolic names (`ESTOP_BUTTON`, `MOTOR_CONTACTOR`), and the compiler maps them to `%I0` and `%Q0`.
 - **Constraint checks**: Rejects circuits using more I/O than the board possesses or referencing opcodes not enabled on the board.
-- **Custom node resolution**: Resolves schematic blocks of type `BOARD_PWM` into `LE_OP_EXT_CALL` (`0x80`) instructions targeting function ID `1`.
+- **Custom node resolution**: Resolves schematic blocks of type `BOARD_PWM` into `LE_OP_BLOCK` calls with a custom function id (>= `LE_FUNC_CUSTOM_BASE (0x80)`).
 
 ---
 

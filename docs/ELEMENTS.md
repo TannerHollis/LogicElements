@@ -22,6 +22,58 @@ A circuit net connects an element port to a consumer port:
 
 ---
 
+## How element properties reach the runtime
+
+A "complex" element has **tuning properties** (e.g. `PID` `kp`/`ki`/`kd`,
+`LPF` `alpha`, `TON` `preset_ms`) plus wire operands. **Every** tuning property
+is set by the circuit designer in the circuit JSON and **baked into the `.lebin`**
+as concrete bytes of a **preconfigured state image** — no host/BSP code and no
+runtime config pass is needed. The compiled circuit *is* the configuration.
+
+At compile time the compiler materializes each stateful block's state struct
+(`le_pid_state_t`, `le_lpf_state_t`, `le_timer_state_t`, …): it starts from
+factory defaults (e.g. scaler `0..4095 → 0..100`, LPF `alpha=0.1`) and overwrites
+fields with the circuit's properties, then appends the raw bytes to the image.
+
+| Element | Properties baked into the state struct |
+| :--- | :--- |
+| `ANALOGINPUT` (scaled) / `SCALE_F` | `raw_min`,`raw_max`,`scale_min`,`scale_max`,`clamp` |
+| `TON` / `TOF` / `TP` | `preset_ms` |
+| `CTU` / `CTD` / `CTUD` | `preset` |
+| `LPF` | `alpha` |
+| `RATE_LIMITER` | `rising_rate`,`falling_rate` |
+| `BIQUAD` | `b0`,`b1`,`b2`,`a1`,`a2` |
+| `MOVING_AVG` / `RMS` / `MEDIAN` | `window_size` |
+| `PEAK_DETECTOR` | `decay_rate` |
+| `DEADBAND` | `threshold`,`center` |
+| `WASHOUT` | `alpha` |
+| `DERIVATIVE` | `alpha`,`gain` |
+| `ZERO_CROSSING` | `hysteresis`,`sample_rate_hz` |
+| `LUT_1D` | `x[]`, `y[]`, `num_points` |
+| `TOTALIZER` | `time_base_sec`,`scale_factor`,`sample_time_sec`,`max_limit` |
+| `MIN_MAX_HOLD` | `mode` |
+| `OVERCURRENT_51` | `pickup`,`time_dial`,`curve_type` |
+| `PID` | `kp`,`ki`,`kd`,`out_min`,`out_max` |
+| `DIST_21` | `reach`,`line_angle`,`offset`,`offset_angle`,`prefault_v_threshold`,`prefault_v_duration` |
+| `PHASOR_1P` | `samples_per_cycle` |
+| `DIFF_87` | `input_count` (N complex phasors), `o87p`,`slp1`,`irs1`,`slp2` |
+| `PHASE_COMP` | `compensation` (1-12, SEL matrix index) |
+
+At load, `le_loader_load` **memcpy's the state image** into the platform's RAM
+state workspace and records each kind group's byte offset; handlers resolve their
+block by `workspace + kind_base[kind] + idx * sizeof`. Capacity is checked once
+against the workspace size, not per-type element caps.
+
+> The **wire operands** (`in_a`/`in_b`/block `args`) are separate from properties:
+> they are the live signals wired in the circuit net, evaluated every scan.
+> Properties are static tuning baked at compile time; operands are data.
+
+The only things a host/BSP must still do at runtime are not block-tuning:
+serial-bus (I2C/SPI) peripheral payload buffers, and supplying raw ADC values —
+the block parameters themselves come from the circuit.
+
+---
+
 ## I/O and storage
 
 ### `DIGITALINPUT`
@@ -96,6 +148,10 @@ An analog input channel (`AIN`). In **raw** mode produces no instruction. In
 
 - Properties: `channel`, `mode` (`raw` | `float` | `scaled`), `raw_min`,
   `raw_max`, `scale_min`, `scale_max`, `units`, `clamp`.
+- The scaling parameters (`raw_min`, `raw_max`, `scale_min`, `scale_max`,
+  `clamp`) are **baked into the `.lebin`** as bytes of the scaler state
+  struct (the state image) (see
+  [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
 
 ```json
 { "name": "AI0", "type": "ANALOGINPUT", "channel": 0, "mode": "float",
@@ -199,13 +255,18 @@ Output `q` is persistent memory held at the destination.
 
 ## Timers
 
-Stateful `le_timer_state_t` instances bound into the zero-heap arena at load;
-the preset is configured by the runtime/board. Each emits one instruction.
+Stateful `le_timer_state_t` instances baked into the preconfigured state image.
+Each emits one instruction.
+
+> **`preset_ms` is baked into the `.lebin`** as bytes of the timer state
+> struct (the state image) (see
+> [How element properties reach the runtime](#how-element-properties-reach-the-runtime)),
+> so the circuit fully configures the timer — no host/BSP code needed.
 
 ### `TON`
 On-delay timer. `in` rising arms it; `q = 1` once `now - start >= preset_ms`.
 
-- Properties: `preset_ms`. Input: `in`. Output: `out` (`q`).
+- Properties: `preset_ms` (baked). Input: `in`. Output: `out` (`q`).
 
 ```json
 { "name": "T1", "type": "TON", "preset_ms": 1000 }
@@ -238,12 +299,20 @@ Pulse timer. Input: `in`. Output: `out` (`q`).
 
 ## Counters
 
-Stateful `le_counter_state_t` instances bound into the zero-heap arena. Each
-counts on rising edges of its trigger; the preset is runtime/board configured.
+Stateful `le_counter_state_t` instances baked into the preconfigured state image. Each
+counts on rising edges of its trigger.
+
+> **`preset` is baked into the `.lebin`** as bytes of the counter state
+> struct (the state image) (see
+> [How element properties reach the runtime](#how-element-properties-reach-the-runtime)),
+> so the circuit fully configures the counter — no host/BSP code needed.
 
 ### `CTU`
 Count-up. Input: `cu` (in `in`). Optional reset: `r`. Done when `count >= preset`.
 
+```json
+{ "name": "C1", "type": "CTU", "preset": 10 }
+```
 ```
 [0000]  CTU            FALSE        -            -> COUNTER[0]
 ```
@@ -278,17 +347,79 @@ Each float op reads two float operands and writes a temp float.
 | `NEG` | `NEG_F` | `-a` |
 | `MIN` | `MIN_F` | `min(a,b)` |
 | `MAX` | `MAX_F` | `max(a,b)` |
-| `CLAMP` | `CLAMP_F` | clamp `a` within `[-b, +b]` |
 
 Example disassembly (all single-operand/2-operand floats write a temp):
 
 ```
 [0000]  ADD_F          0.0f         0.0f         -> T_FLOAT[0]
 [0000]  ABS_F          0.0f         0.0f         -> T_FLOAT[0]
-[0000]  CLAMP_F        0.0f         0.0f         -> T_FLOAT[0]
 ```
 
----
+### `CLAMP` (variable-arity block)
+
+Clamps a float to **independent** `min`/`max` bounds (asymmetric; not `-b, +b`).
+Emitted as a **3-in / 1-out block**: `[value, min, max] -> [out]`. Both bounds are
+wireable inputs (registers, constants, or computed values), swapped-guarded so
+`min > max` still clamps correctly.
+
+```json
+{ "name": "CL1", "type": "CLAMP" }
+```
+```
+[0000]  CLAMP_F        BLK[0]       fn:0x0D      -> 3->1 [T_FLOAT[0] T_FLOAT[1] T_FLOAT[2] | T_FLOAT[3]]
+```
+
+### Complex arithmetic (`T_CMPLX`)
+
+Complex values use a dedicated register region (`%C`, `LE_REGION_CMPLX`). Each
+complex register holds a real+imaginary pair as one `CMPLX[n]` address.
+
+| Element | Opcode | Meaning |
+| :--- | :--- | :--- |
+| `CADD` | `CADD_F` | `c = a + b` |
+| `CSUB` | `CSUB_F` | `c = a - b` |
+| `CMUL` | `CMUL_F` | `c = a * b` |
+| `CDIV` | `CDIV_F` | `c = a / b` |
+| `COMPLEXREGISTER` | `MOVE_C` | named `%C` register (in→out) |
+
+```json
+{ "name": "SUM", "type": "CADD" }
+```
+```
+[0000]  CADD_F         CMPLX[0]     CMPLX[1]     -> T_CMPLX[0]
+```
+
+### Conversions (complex register <-> rect/polar floats)
+
+All conversions are variable-arity blocks. The six form a complete round-trip set:
+
+| Element (in -> out) | Block func | Signature |
+| :--- | :--- | :--- |
+| `RECT2POLAR` | `RECT2POLAR` | `[real, imag] -> [mag, angle]` |
+| `POLAR2RECT` | `POLAR2RECT` | `[mag, angle] -> [real, imag]` |
+| `COMPLEX2POLAR` | `COMPLEX2POLAR` | `[CMPLX] -> [mag, angle]` |
+| `COMPLEX2RECT` | `COMPLEX2RECT` | `[CMPLX] -> [real, imag]` |
+| `RECT2COMPLEX` | `RECT2COMPLEX` | `[real, imag] -> [CMPLX]` |
+| `POLAR2COMPLEX` | `POLAR2COMPLEX` | `[mag, angle] -> [CMPLX]` |
+
+```json
+{ "name": "POL", "type": "COMPLEX2POLAR" }
+```
+```
+[0000]  COMPLEX2POLAR  BLK[0]       fn:0x06      -> 1->2 [CMPLX[0] | T_FLOAT[0] T_FLOAT[1]]
+```
+
+```json
+{ "name": "C", "type": "RECT2COMPLEX" }
+```
+```
+[0000]  RECT2COMPLEX   BLK[0]       fn:0x0B      -> 2->1 [T_FLOAT[0] T_FLOAT[1] | T_CMPLX[0]]
+```
+
+> `COMPLEX2RECT` decomposes a complex register into **real and imaginary** floats
+> (it does *not* reconstruct a complex from polar floats — use `POLAR2COMPLEX` for
+> that). `COMPLEX2POLAR` decomposes into magnitude and angle.
+> ---
 
 ## Comparisons
 
@@ -311,42 +442,51 @@ Float inputs compared to a boolean output (`a OP b`).
 ## Control, protection & phasor conversions
 
 ### `PID`
-Closed-loop PID controller. State is an `le_pid_state_t` bound into the heap.
+Closed-loop PID controller. State is an `le_pid_state_t` baked into the state image.
 
 - Inputs: `sp` (setpoint), `pv` (process value). Output: control output.
-- Properties: `kp`, `ki`, `kd`, `out_min`, `out_max`.
+- Properties: `kp`, `ki`, `kd`, `out_min`, `out_max` — **baked into the `.lebin`**
+  as bytes of the PID state struct (the state image) (see
+  [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
 
 ```
 [0000]  PID            0.0f         0.0f         -> T_FLOAT[0]
 ```
 
-### `OVERCURRENT`
-IEC/IEEE inverse-time overcurrent (ANSI 51). Accumulates overcurrent time;
-trips once sustained past the time dial.
+### `OVERCURRENT` / `OVERCURRENT_51`
+IEC/IEEE inverse-time overcurrent (**ANSI 51**). `OVERCURRENT_51` is the preferred
+ANSI-convention name; `OVERCURRENT` is accepted as an alias. Accumulates
+overcurrent time; trips once sustained past the time dial.
 
 - Input: current (in `in_a`). Output: trip boolean.
-- Properties: `pickup`, `time_dial`.
+- Properties: `pickup`, `time_dial`, `curve_type` — **baked into the `.lebin`** and
+  applied at load (see [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
 
 ```
-[0000]  OVERCURRENT    <float>      -            -> T_BOOL[0]
+[0000]  OVERCURRENT_51 BLK[0]       -> 1->1 [FLOAT[0] | T_BOOL[0]]
 ```
 
 ### `PHASOR_1P` (variable-arity block)
-1-phase DFT phasor extractor with **sync** (mag + angle reference). Emitted as a
-**3-in / 2-out block**; the phasor instance is the descriptor index.
+1-phase DFT phasor extractor. Emitted as a **2-in / 1-out block** producing a
+**complex phasor** (`T_CMPLX`), synchronized to a reference phasor so the result
+stays stable relative to it instead of rotating with the system frequency.
 
-- Inputs: `sample`, `sync_mag`, `sync_angle`. Outputs: `magnitude`, `angle`.
+- Inputs: `sample` (wire), `sync` (reference complex phasor). Output: `phasor`
+  (`T_CMPLX`) — decompose with `COMPLEX2POLAR` to get mag/angle.
 
 ```json
-{ "name": "P1", "type": "PHASOR_1P", "samples_per_cycle": 16 }
+{ "name": "P1", "type": "PHASOR_1P" }
 ```
 ```
-[0000]  PHASOR_1P      BLK[0]       fn:0x05      -> 3->2 [0.0f 1.0f 0.0f | T_FLOAT[0] T_FLOAT[1]]
+[0000]  PHASOR_1P      BLK[0]       fn:0x05      -> 2->1 [AIN[0] CMPLX[0] | T_CMPLX[0]]
 ```
 
 ### `RECT2POLAR` (variable-arity block)
 Rectangular → polar. **2-in / 2-out** block: `[real, imag] -> [mag, angle]`.
 
+```json
+{ "name": "P1", "type": "RECT2POLAR" }
+```
 ```
 [0000]  RECT2POLAR     BLK[0]       fn:0x02      -> 2->2 [T_FLOAT[0] T_FLOAT[1] | T_FLOAT[1] T_FLOAT[0]]
 ```
@@ -371,21 +511,92 @@ Three-phase symmetrical (Fortescue) components from phasor state. Reads
 phase phasors by base index; writes `seq_0/1/2`.
 
 ```
-[0000]  SYM_COMP       <phIdxs>     -            -> T_FLOAT[0]
+[0000]  SYM_COMP       BLK[0]       -> 3->3 [FLOAT[0] FLOAT[1] FLOAT[2] | T_FLOAT[0] T_FLOAT[1] T_FLOAT[2]]
 ```
 
-### `DIFF_87`
-SEL-style dual-slope percentage differential protection.
+### `DIFF` / `DIFF_87` (variable-arity block, dynamic N-input, dual-slope)
+Dual-slope differential protection (**ANSI 87**) over **N user-defined complex
+phasor inputs** (`DIFF_87` is the preferred ANSI-convention name; `DIFF` is an
+alias). The designer sets `input_count` (2..**30**; large-bus differential uses
+many phasor terminals); the compiler emits one block call with N complex inputs.
+
+The **operate** current is the magnitude of the phasor vector sum; the
+**restraint** current is the **sum** of the phasor magnitudes (no averaging —
+large-bus convention). The relay trips when operate exceeds a **dual-slope**
+characteristic (SEL-style `O87P`/`SLP1`/`IRS1`/`SLP2`):
 
 ```
-[0000]  DIFF_87        <ph1>        <ph2>        -> T_BOOL[0]
+threshold = o87p + slp1 * I_rt                 for I_rt <= irs1
+threshold = o87p + slp1*irs1 + slp2*(I_rt-irs1) for I_rt >  irs1
 ```
 
-### `DIST_21`
-Mho-circle distance relay zone.
+- Properties: `input_count` (complex inputs, 2..30), plus the dual-slope curve:
+  `o87p` (pickup, default 0.3), `slp1` (first slope, default 0.25),
+  `irs1` (restraint knee, default 1.5, alias `ips1`), `slp2` (second slope,
+  default 0.60) — all **baked into the `.lebin`** state image.
+
+```json
+{ "name": "D1", "type": "DIFF_87", "input_count": 3, "o87p": 0.3, "slp1": 0.25, "irs1": 1.5, "slp2": 0.6 }
+```
+```
+[0000]  DIFF_87        BLK[0]       fn:0x09      -> 3->1 [CMPLX[0] CMPLX[1] CMPLX[2] | T_BOOL[0]]
+```
+
+### `PHASE_COMP` (variable-arity block, 3-in/3-out, ANSI 87T)
+Transformer differential **phase compensation** (aliases `TRANSFORM_33`, `TCOMP`).
+This is *not* a diff element — it is a transform that aligns the winding currents
+before they are summed by a downstream `DIFF_87`. It takes **three complex phasors**
+(one per phase/terminal) and applies the **SEL delta/wye compensation matrix
+`M(k)`** (k = 1..12) to produce three compensated phasors:
 
 ```
-[0000]  DIST_21        <vIdx>       <iIdx>       -> T_BOOL[0]
+I'_x = s * sum_j M(k)[x][j] * I_j      s = 1/sqrt(3) for odd k, 1/3 for even k
+```
+
+The matrices are the standard wye/delta transformer winding compensation table
+(e.g. k=1: `[1,-1,0; 0,1,-1; -1,0,1]`), so with a balanced through-load the
+compensated phasors cancel to ~0 (operate = 0). `comp` selects the SEL
+compensation matrix index k.
+
+- Inputs: `a`, `b`, `c` (phase phasors). Outputs: `a'`, `b'`, `c'`.
+- Property: `compensation` (1-12, default 6). Baked into the `.lebin` state
+  image as `le_comp33_state_t`.
+
+```json
+{ "name": "T1", "type": "PHASE_COMP", "compensation": 6 }
+```
+```
+[0000]  PHASE_COMP     BLK[0]       fn:0x0E      -> 3->3 [CMPLX[0] CMPLX[1] CMPLX[2] | T_CMPLX[0] T_CMPLX[1] T_CMPLX[2]]
+```
+
+### `DIST_21` — Mho distance relay with prefault-voltage memory
+Mho-circle distance relay (ANSI 21). Takes two **complex phasor** inputs
+(voltage `v`, current `i`) plus a boolean `offset_on`, and trips when the
+measured apparent impedance `Z = V / I` lies inside the mho circle (center at
+`reach/2` on the line angle, radius `reach/2`; an *offset-mho* circle is used
+when `offset_on` is true, shifting the center by the offset phasor).
+
+- Inputs: `v` (complex phasor), `i` (complex phasor), `offset_on` (boolean,
+  applies the mho-offset circle shift). Output: single boolean trip.
+- Properties:
+  - `reach` — zone reach (ohms)
+  - `line_angle` — line/impedance angle (degrees)
+  - `offset` — offset magnitude (ohms); `offset_angle` — offset phasor angle (degrees)
+  - `prefault_v_threshold` — if live `|V|` falls below this, treat as a fault
+  - `prefault_v_duration` — how long (ms) to keep using the remembered
+    pre-fault voltage phasor after the measured voltage is depressed
+
+When the live voltage collapses below `prefault_v_threshold`, the relay
+substitutes the last known-good `V` phasor for `prefault_v_duration` ms, so the
+apparent impedance stays accurate during a fault (SEL-style voltage memory).
+
+```json
+{ "name": "D21", "type": "DIST_21", "reach": 10, "line_angle": 75,
+  "offset": 0, "offset_angle": 75,
+  "prefault_v_threshold": 0.5, "prefault_v_duration": 80 }
+```
+```
+[0000]  DIST_21        BLK[0]       fn:0x0A      -> 3->1 [CMPLX[0] CMPLX[1] BOOL[2] | T_BOOL[0]]
 ```
 
 ---
@@ -404,8 +615,13 @@ Poll/transact with I2C/SPI peripherals. State is an `le_i2c/spi_device_state_t`.
 
 ## DSP & filters
 
-Every DSP filter is a stateful block (state in the arena) emitting one
+Every DSP filter is a stateful block (state baked into the state image) emitting one
 instruction; `modifier` carries the per-kind instance index.
+
+> **Baked-in tuning.** Every DSP filter's properties below are written into the
+> `.lebin` state image (see (see
+> [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
+> Unspecified properties use factory defaults — no host/BSP code needed.
 
 | Element | Opcode | Key properties |
 | :--- | :--- | :--- |

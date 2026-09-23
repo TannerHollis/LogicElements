@@ -39,9 +39,11 @@ std::string format_opcode(uint8_t op, uint8_t mod);
  * @param user_bool_count Number of user boolean registers (`-1` if unknown).
  * @param user_float_count Number of user float registers (`-1` if unknown).
  * @param user_int_count Number of user integer registers (`-1` if unknown).
+ * @param board_profile_json Optional board profile JSON. When provided, custom
+ *        board nodes declared in `custom_nodes` are shown alongside the state.
  * @return Multi-line formatted disassembly string.
  */
-std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user_bool_count = -1, int user_float_count = -1, int user_int_count = -1);
+std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user_bool_count = -1, int user_float_count = -1, int user_int_count = -1, const std::string& board_profile_json = "");
 
 } // namespace LogicElements
 

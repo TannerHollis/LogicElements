@@ -4,7 +4,12 @@
     {
       "name": "N1",
       "type": "DIST_21",
-      "z1_reach": 0.8
+      "reach": 10.0,
+      "line_angle": 75.0,
+      "offset": 0.0,
+      "offset_angle": 75.0,
+      "prefault_v_threshold": 0.5,
+      "prefault_v_duration": 80
     }
   ],
   "nets": []

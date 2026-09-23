@@ -9,17 +9,14 @@
     "digital_outputs": 16,
     "coils": 128,
     "floats": 64,
-    "timers": 16,
-    "counters": 8,
+    "workspace_bytes": 2048,
     "config_slots": 3,
     "slot_size_bytes": 2048
   },
   "features": {
     "protection": false,
-    "serial_bus": true,
-    "i2c_devices": 2,
-    "spi_devices": 2
-  },
+    "serial_bus": true
+},
   "custom_nodes": [
     {
       "type_id": "BOARD_PWM",

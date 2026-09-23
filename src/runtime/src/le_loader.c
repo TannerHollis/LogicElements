@@ -67,28 +67,31 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
     }
     size_t state_table_off = sizeof(le_header_t) + expected_payload_size + block_table_size;
     size_t state_table_size = (size_t)header->state_desc_count * LE_STATE_DESC_BYTES;
-    size_t config_table_size = (size_t)header->config_count * LE_CONFIG_BYTES;
-    if (state_table_off + state_table_size + config_table_size > size) {
+    if (state_table_off + state_table_size + (size_t)header->state_img_len > size) {
         return LE_ERR_OUT_OF_BOUNDS;
     }
-    size_t total_payload = expected_payload_size + block_table_size + state_table_size + config_table_size;
+    size_t total_payload = expected_payload_size + block_table_size + state_table_size +
+                           (size_t)header->state_img_len;
 
     if (size < sizeof(le_header_t) + total_payload) {
         return LE_ERR_OUT_OF_BOUNDS;
     }
 
-    /* Check MCU capacity limits */
+    /* Check MCU capacity limits (process-image register dimensions + the state
+     * workspace the preconfigured state image is copied into). */
     if (header->digital_in_count > LE_MAX_DIGITAL_IN ||
         header->digital_out_count > LE_MAX_DIGITAL_OUT ||
         header->bool_reg_count > LE_MAX_BOOL_REGS ||
         header->float_reg_count > LE_MAX_FLOATS ||
-        header->timer_count > LE_MAX_TIMERS ||
-        header->counter_count > LE_MAX_COUNTERS)
+#if LE_ENABLE_PROTECTION
+        header->complex_reg_count > LE_MAX_COMPLEX ||
+#endif
+        header->state_img_len > LE_STATE_WORKSPACE_BYTES)
     {
         return LE_ERR_CAPACITY;
     }
 
-    /* Verify CRC32 over the whole payload (instructions + block table + state table) */
+    /* Verify CRC32 over the whole payload (instructions + block table + state table + state image) */
     const uint8_t* payload = buffer + sizeof(le_header_t);
     uint32_t computed_crc = le_crc32(payload, total_payload);
     if (computed_crc != header->crc32) {
@@ -134,48 +137,38 @@ le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size)
         }
     }
 
-    /* Bind stateful blocks: walk the state-directive table (after the block
-     * table) and reserve heap slices + record per-kind base rows. */
-    if (header.state_desc_count > 0) {
-        size_t bt_size = 0;
-        {
-            size_t off = sizeof(le_header_t) + (size_t)header.instruction_count * sizeof(le_instruction_t);
-            for (uint16_t b = 0; b < header.block_count; b++) {
-                const le_block_desc_t* d = (const le_block_desc_t*)(buffer + off);
-                off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                       ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-                bt_size = off - (sizeof(le_header_t) + (size_t)header.instruction_count * sizeof(le_instruction_t));
-            }
+    /* Compute offsets of the state-desc table and the state image. */
+    size_t bt_size = 0;
+    {
+        size_t off = sizeof(le_header_t) + (size_t)header.instruction_count * sizeof(le_instruction_t);
+        for (uint16_t b = 0; b < header.block_count; b++) {
+            const le_block_desc_t* d = (const le_block_desc_t*)(buffer + off);
+            off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                   ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+            bt_size = off - (sizeof(le_header_t) + (size_t)header.instruction_count * sizeof(le_instruction_t));
         }
-        const uint8_t* st = buffer + sizeof(le_header_t) +
-                            (size_t)header.instruction_count * sizeof(le_instruction_t) + bt_size;
+    }
+    const uint8_t* st = buffer + sizeof(le_header_t) +
+                        (size_t)header.instruction_count * sizeof(le_instruction_t) + bt_size;
+    const uint8_t* img = st + (size_t)header.state_desc_count * LE_STATE_DESC_BYTES;
+
+    /* Copy the preconfigured state image verbatim into the state workspace and
+     * record each kind group's byte offset. No allocation or per-field config:
+     * the compiler baked defaults + all element properties into the image. */
+    le_rt_reset();
+    if (header.state_img_len > 0) {
+        if (header.state_img_len > le_rt_workspace_bytes()) {
+            return LE_ERR_CAPACITY;
+        }
+        memcpy(le_rt_workspace(), img, header.state_img_len);
+    }
+    if (header.state_desc_count > 0) {
+        uint32_t base = 0;
         for (uint16_t s = 0; s < header.state_desc_count; s++) {
             const le_state_desc_t* sd = (const le_state_desc_t*)(st + (size_t)s * LE_STATE_DESC_BYTES);
             if (sd->kind == LE_BLK_NONE || sd->count == 0) continue;
-            int base = -1;
-            for (uint16_t i = 0; i < sd->count; i++) {
-                int row = le_rt_reserve(sd->kind, sd->size, 4);
-                if (row < 0) return LE_ERR_CAPACITY;
-                le_rt_block_t* rr = le_rt_get(row);
-                if (rr) le_rt_apply_defaults(sd->kind, rr->state);
-                if (base < 0) base = row;
-            }
-            le_rt_set_group_base(sd->kind, base);
-        }
-    }
-
-    /* Apply per-element config directives to the bound heap blocks. */
-    if (header.config_count > 0) {
-        size_t cfg_off = sizeof(le_header_t) + (size_t)header.instruction_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < header.block_count; b++) {
-            const le_block_desc_t* d = (const le_block_desc_t*)(buffer + cfg_off);
-            cfg_off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                       ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-        }
-        cfg_off += (size_t)header.state_desc_count * LE_STATE_DESC_BYTES;
-        for (uint16_t k = 0; k < header.config_count; k++) {
-            const le_config_t* cfg = (const le_config_t*)(buffer + cfg_off + (size_t)k * LE_CONFIG_BYTES);
-            le_rt_configure(&vm->image, cfg->kind, cfg->idx, cfg->slot, cfg->value);
+            le_rt_set_kind_base(sd->kind, (int32_t)base);
+            base += (uint32_t)sd->size * (uint32_t)sd->count;
         }
     }
 

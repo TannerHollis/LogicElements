@@ -1,0 +1,10 @@
+{
+  "name": "Element_CMUL",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CMUL"
+    }
+  ],
+  "nets": []
+}

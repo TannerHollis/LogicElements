@@ -84,20 +84,31 @@ for _t in ["ADD", "SUB", "MUL", "DIV", "ABS", "NEG", "MIN", "MAX"]:
     add(_t, lambda t=_t: standalone(t))
 add("CLAMP", lambda: standalone("CLAMP"))
 
+# --- Complex math (T_CMPLX operands/out) ---
+for _t in ["CADD", "CSUB", "CMUL", "CDIV"]:
+    add(_t, lambda t=_t: standalone(t))
+add("COMPLEXREGISTER", lambda: ([e("C1", "COMPLEXREGISTER", address="%C0")], []))
+add("COMPLEX2POLAR", lambda: standalone("COMPLEX2POLAR"))
+add("COMPLEX2RECT", lambda: standalone("COMPLEX2RECT"))
+add("RECT2COMPLEX", lambda: standalone("RECT2COMPLEX"))
+add("POLAR2COMPLEX", lambda: standalone("POLAR2COMPLEX"))
+
 # --- Comparisons ---
 for _t in ["CMP_GT", "CMP_LT", "CMP_GE", "CMP_LE", "CMP_EQ", "CMP_NE"]:
     add(_t, lambda t=_t: standalone(t))
 
 # --- Control, protection & conversions ---
 add("PID", lambda: standalone("PID", kp=1.0, ki=0.1, kd=0.0, out_min=-100.0, out_max=100.0))
-add("OVERCURRENT", lambda: standalone("OVERCURRENT", pickup=1.0, time_dial=1.0))
+add("OVERCURRENT_51", lambda: standalone("OVERCURRENT_51", pickup=1.0, time_dial=1.0))
 add("RECT2POLAR", lambda: standalone("RECT2POLAR"))
 add("POLAR2RECT", lambda: standalone("POLAR2RECT"))
 add("PHASOR_SHIFT", lambda: standalone("PHASOR_SHIFT", delta_deg=45.0))
 add("PHASOR_1P", lambda: standalone("PHASOR_1P", samples_per_cycle=16))
 add("SYM_COMP", lambda: standalone("SYM_COMP"))
-add("DIFF_87", lambda: standalone("DIFF_87", slope1=10.0, pickup=0.2, tds=0.05))
-add("DIST_21", lambda: standalone("DIST_21", z1_reach=0.8))
+add("DIFF_87", lambda: standalone("DIFF_87", input_count=3, o87p=0.3, slp1=0.25, irs1=1.5, slp2=0.6))
+add("PHASE_COMP", lambda: standalone("PHASE_COMP", compensation=6))
+add("DIST_21", lambda: standalone("DIST_21", reach=10.0, line_angle=75.0,
+    offset=0.0, offset_angle=75.0, prefault_v_threshold=0.5, prefault_v_duration=80))
 
 # --- Serial bus ---
 add("I2C", lambda: standalone("I2C", addr=0x40, poll_rate_ms=100))

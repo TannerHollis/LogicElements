@@ -1,14 +1,19 @@
 /**
  * @file le_rt.h
- * @brief Static zero-heap state arena and runtime block table.
+ * @brief Runtime state workspace derived from the on-disk state image.
  *
  * Stateful "complex" elements (timers, counters, PID, phasors, DSP filters,
- * protection, scalers) store their state in a fixed static byte arena. At
- * runtime start the loader/VM "reserves" one heap slice per active state block
- * and records a pointer to it in the runtime block table. Each scan an
- * instruction dereferences that pointer instead of indexing a fixed array.
+ * protection, scalers, I2C/SPI devices) live in a single contiguous RAM
+ * workspace. The compiler bakes a preconfigured state image into the `.lebin`;
+ * the loader memcpy's that image directly into the workspace at load time and
+ * records the byte offset (kind base) of each kind group. An instruction then
+ * reaches block `idx` of `kind` via:
  *
- * The arena is a static array - there is never a malloc after boot.
+ *     block = le_rt_workspace() + kind_base[kind] + idx * sizeof(kind-state)
+ *
+ * Offset arithmetic (not a heap/allocator) replaces any runtime allocation, and
+ * the workspace is sized by the platform (LE_STATE_WORKSPACE_BYTES), not by a
+ * per-program cap. There is never a malloc after boot.
  */
 #ifndef LE_RT_H
 #define LE_RT_H
@@ -21,48 +26,40 @@ extern "C" {
 #endif
 
 /**
- * @brief (Re)initializes the state arena and runtime block table.
- * Idempotent; safe to call at every VM init.
+ * @brief (Re)initializes the state workspace: zeroes it and clears the kind-base
+ * table. Idempotent; safe to call at every VM init.
  */
-void le_rt_init(void);
+void le_rt_reset(void);
+
+/** @brief Returns the base of the state workspace (RAM the image is copied into). */
+uint8_t* le_rt_workspace(void);
+
+/** @brief Total workspace capacity in bytes (LE_STATE_WORKSPACE_BYTES). */
+uint32_t le_rt_workspace_bytes(void);
 
 /**
- * @brief Reserves a slice of the state arena and claims a runtime-block row.
- * @param kind State struct kind (le_block_kind_t); LE_BLK_NONE is rejected.
- * @param size Bytes of state to allocate.
- * @param align Alignment of the slice (0 or 1 == byte aligned).
- * @return row index into the runtime block table, or -1 if the arena or the row
- *         table is exhausted.
+ * @brief Returns the byte size of one state struct for @p kind (0 if the kind
+ * has no state). Used to index within a kind group.
  */
-int le_rt_reserve(uint8_t kind, uint16_t size, uint16_t align);
-
-/** @brief Binds a caller-supplied state pointer to a runtime-block row. */
-void le_rt_bind(int row, uint8_t kind, uint16_t size, uint8_t* state);
-
-/** @brief Returns the descriptor for a row, or NULL if unused/out of range. */
-le_rt_block_t* le_rt_get(int row);
-
-/** @brief Returns the current arena pointer (for low-level use / diagnostics). */
-uint8_t* le_rt_heap(void);
-
-/** @brief Number of bytes of the arena used so far. */
-uint32_t le_rt_used(void);
-
-/** @brief Total arena capacity in bytes. */
-uint32_t le_rt_capacity(void);
-
-/** @brief Number of rows currently claimed. */
-int le_rt_row_count(void);
-
-/** @brief Records the base runtime-block row for a kind group. */
-void le_rt_set_group_base(uint8_t kind, int base);
+uint16_t le_rt_kind_size(uint8_t kind);
 
 /**
- * @brief Returns the base runtime-block row for @p kind, or -1 if no state of
- * that kind has been bound (e.g. a program without that element type, or
- * manual instructions executed without the loader).
+ * @brief Records the byte offset of the @p kind group within the workspace.
+ * Set by the loader (and by tests) after the state image is placed.
  */
-int le_rt_group_base(uint8_t kind);
+void le_rt_set_kind_base(uint8_t kind, int32_t base);
+
+/**
+ * @brief Returns the workspace byte offset of the @p kind group, or -1 if no
+ * state of that kind is present.
+ */
+int32_t le_rt_kind_base(uint8_t kind);
+
+/**
+ * @brief Resolves block @p idx of @p kind to its state pointer in the workspace,
+ * or NULL if the kind is absent or @p idx falls outside the workspace.
+ */
+uint8_t* le_rt_state(uint8_t kind, uint16_t idx);
 
 #ifdef __cplusplus
 }

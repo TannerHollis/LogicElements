@@ -64,7 +64,7 @@ The compilation engine is implemented in standard C++17 (`src/compiler/src/le_co
                             ▼
 ┌────────────────────────────────────────────────────────┐
 │            5. Code Generation & Formatting             │
-│  - Pack 26-byte binary header with CRC32 checksum      │
+│  - Pack 32-byte binary header with CRC32 checksum      │
 │  - Emit 8-byte binary instructions (.lebin)            │
 │  - Generate human-readable disassembly text            │
 │  - Generate flash-embeddable C static array header     │
@@ -181,7 +181,7 @@ Performs reverse reachability analysis rooted at all hardware side-effect nodes:
 - Physical outputs (`DIGITALOUTPUT`, `DOUT`)
 - State registers (`BOOLREGISTER`, `FLOATREGISTER`, `INTREGISTER`)
 - Stateful elements (`TON`, `TOF`, `TP`, `CTU`, `CTD`, `CTUD`, `LATCH`, `SR`, `RS`)
-- Custom peripheral drivers (`LE_CUSTOM`, `OP_EXT_CALL`)
+- Custom peripheral drivers (`LE_CUSTOM`) — emitted as an `LE_OP_BLOCK` with a custom function id
 - Protection relays and serial bus elements (`PID`, `DIFF_87`, `I2C`, `SPI`)
 
 Any pure logic gate whose output is never consumed and cannot affect circuit state is pruned from the emitted bytecode.
@@ -258,8 +258,7 @@ Target board profiles define physical microcontroller limits and configuration:
     "bool_regs": 128,
     "floats": 64,
     "int_regs": 32,
-    "timers": 16,
-    "counters": 8,
+    "workspace_bytes": 2048,
     "slot_size_bytes": 2048,
     "slots": 3
   },
@@ -398,23 +397,34 @@ le_compile <circuit.json> [options]
 
 ## Binary bytecode specification (`.lebin`)
 
-A compiled LogicElements binary comprises a fixed **26-byte header** followed by $N$ contiguous **8-byte instructions**.
+A compiled LogicElements binary comprises a fixed **32-byte header** followed by
+$N$ contiguous **8-byte instructions**, then the variable-arity block table, the
+**state-group (directive) table**, and the **preconfigured state image** — all
+covered by a trailing IEEE 802.3 CRC32 over the whole payload.
 
-### Binary Header (26 Bytes)
+### Binary Header (32 Bytes)
 
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `1`). |
+| `0x04` | `version` | `uint16_t` | Format version (Current: `5`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
 | `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%I). |
 | `0x0C` | `digital_out_count` | `uint16_t` | Number of digital outputs allocated (%Q). |
 | `0x0E` | `bool_reg_count` | `uint16_t` | Total internal boolean registers allocated (%M). |
 | `0x10` | `float_reg_count` | `uint16_t` | Total float registers allocated (%R). |
-| `0x12` | `timer_count` | `uint16_t` | Number of timer state blocks allocated. |
-| `0x14` | `counter_count` | `uint16_t` | Number of counter state blocks allocated. |
-| `0x16` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 calculated over the instruction payload. |
+| `0x12` | `complex_reg_count` | `uint16_t` | Total complex registers allocated (%C). |
+| `0x14` | `block_count` | `uint16_t` | Number of variable-arity block descriptors. |
+| `0x16` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
+| `0x18` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
+| `0x1C` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image). |
+
+> State element instances are **not** enumerated per type in the header. The
+> compiler bakes each block's state (defaults + properties) as concrete bytes
+> into the state image; the `state-desc` table records `{ kind, count, size }`
+> per kind group so the loader can compute each group's byte offset, and
+> `state_img_len` is the bound for the platform's state workspace.
 
 ### Binary Instruction (8 Bytes)
 
@@ -451,8 +461,8 @@ LogicElements provides a suite of real-time digital signal processing blocks des
 ### Zero-heap static memory architecture
 
 To guarantee deterministic scan cycles and eliminate fragmentation risks on bare-metal microcontrollers, all DSP filter blocks adhere to a **zero-heap memory guarantee** (`malloc = 0`):
-- All filter internal states (delay lines, accumulators, sample buffers) are statically allocated inside `le_process_image_t`.
-- Maximum filter instances per type are fixed at compile time via capacity macros in `le_types.h` (default: 16 instances per type, e.g. `LE_MAX_LPF_BLOCKS 16`).
+- All filter internal states (delay lines, accumulators, sample buffers) are baked into the **preconfigured state image** and copied verbatim into the platform's state workspace at load — never allocated at runtime.
+- There are **no per-type instance caps**. Capacity is `state_img_len ≤ LE_STATE_WORKSPACE_BYTES` (the board's RAM workspace); the compiler validates the circuit's total state fits before it is ever loaded.
 - DSP state blocks persist across scan cycles and are re-initialized cleanly when switching configuration slots or issuing a system reset.
 - State blocks are enabled by default via `LE_ENABLE_DSP 1`.
 
@@ -565,4 +575,4 @@ The compiler validates circuit DSP usage against target `.leconfig` board profil
 ## Related guides
 
 - [Platform Integration Guide](../PLATFORM_GUIDE.md): Microcontroller porting, flash storage partitions, and UART upload protocols.
-- [Custom Nodes Guide](CUSTOM_NODES_GUIDE.md): Designing, declaring, and implementing custom hardware nodes (`LE_OP_EXT_CALL`).
+- [Custom Nodes Guide](CUSTOM_NODES_GUIDE.md): Designing, declaring, and implementing custom hardware nodes (`LE_OP_BLOCK` with a custom function id).

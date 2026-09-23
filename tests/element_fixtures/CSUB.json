@@ -1,0 +1,10 @@
+{
+  "name": "Element_CSUB",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CSUB"
+    }
+  ],
+  "nets": []
+}

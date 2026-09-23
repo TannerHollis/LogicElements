@@ -259,16 +259,8 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
             case LE_OP_ABS_F:  res = fabsf(a); break;
             case LE_OP_MIN_F:  res = (a < b) ? a : b; break;
             case LE_OP_MAX_F:  res = (a > b) ? a : b; break;
-            case LE_OP_CLAMP_F: {
-                /* clamp a between -b and +b */
-                float limit = fabsf(b);
-                if (a > limit) res = limit;
-                else if (a < -limit) res = -limit;
-                else res = a;
-                break;
-            }
             case LE_OP_SCALE_F: {
-                uint8_t s_idx = inst->modifier & 0x0F;
+                uint8_t s_idx = inst->modifier & 0xFF;
                 float in_val;
                 uint16_t in_reg = inst->in_a & LE_ADDR_REGION_MASK;
                 if (in_reg == LE_REGION_AIN) {
@@ -279,9 +271,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     in_val = a;
                 }
 
-                if (s_idx < LE_MAX_SCALERS) {
+                {
                     le_scale_state_t* s = (le_scale_state_t*)le_process_image_kind_state(img, LE_BLK_SCALER, s_idx);
-                    if (!s) s = &img->scalers[s_idx];
+                    if (!s) return LE_ERR_OUT_OF_BOUNDS;
                     float span = s->raw_max - s->raw_min;
                     if (fabsf(span) > 1e-9f) {
                         float norm = (in_val - s->raw_min) / span;
@@ -295,8 +287,6 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                         if (res < lower) res = lower;
                         if (res > upper) res = upper;
                     }
-                } else {
-                    res = in_val;
                 }
                 break;
             }
@@ -307,6 +297,28 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
         return LE_OK;
     }
 
+#if LE_ENABLE_PROTECTION
+/* Complex Arithmetic (T_CMPLX operands -> T_CMPLX out) */
+    if (op >= LE_OP_CADD_F && op <= LE_OP_MOVE_C)
+    {
+        le_complex_t a = le_process_image_get_complex(img, inst->in_a);
+        le_complex_t b = le_process_image_get_complex(img, inst->in_b);
+        le_complex_t res = le_c_make(0.0f, 0.0f);
+
+        switch (op)
+        {
+            case LE_OP_MOVE_C: res = a; break;
+            case LE_OP_CADD_F: res = le_c_add(a, b); break;
+            case LE_OP_CSUB_F: res = le_c_sub(a, b); break;
+            case LE_OP_CMUL_F: res = le_c_mul(a, b); break;
+            case LE_OP_CDIV_F: res = le_c_div(a, b); break;
+            default: break;
+        }
+
+        le_process_image_set_complex(img, inst->out, res);
+        return LE_OK;
+    }
+#endif
     /* ---------------------------------------------------------------------- */
     /* Float Comparisons (Float -> Boolean)                                   */
     /* ---------------------------------------------------------------------- */
@@ -332,6 +344,7 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
         return LE_OK;
     }
 
+    #if LE_ENABLE_PROTECTION
     /* ---------------------------------------------------------------------- */
     /* Control, Protection & Conversions                                      */
     /* ---------------------------------------------------------------------- */
@@ -340,10 +353,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     /* ---------------------------------------------------------------------- */
     if (op == LE_OP_OVERCURRENT)
     {
-        uint16_t oc_idx = inst->modifier & 0x0F;
-        if (oc_idx >= LE_MAX_OVERCURRENT) return LE_ERR_OUT_OF_BOUNDS;
+        uint16_t oc_idx = inst->modifier & 0xFF;
         le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, oc_idx);
-        if (!oc) oc = &img->overcurrents[oc_idx];
+        if (!oc) return LE_ERR_OUT_OF_BOUNDS;
 
         if (oc->pickup <= 0.0f) oc->pickup = 1.0f;       /* default 1.0 pu pickup */
         if (oc->time_dial <= 0.0f) oc->time_dial = 1.0f;
@@ -402,11 +414,10 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
 
     if (op == LE_OP_PID)
     {
-        uint16_t pid_idx = inst->modifier & 0x0F;
-        if (pid_idx >= LE_MAX_PID) return LE_ERR_OUT_OF_BOUNDS;
+        uint16_t pid_idx = inst->modifier & 0xFF;
 
         le_pid_state_t* p = (le_pid_state_t*)le_process_image_kind_state(img, LE_BLK_PID, pid_idx);
-        if (!p) p = &img->pids[pid_idx];
+        if (!p) return LE_ERR_OUT_OF_BOUNDS;
         float sp = le_process_image_get_float(img, inst->in_a);
         float pv = le_process_image_get_float(img, inst->in_b);
         float error = sp - pv;
@@ -436,17 +447,15 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
         return LE_OK;
     }
 
-#if LE_ENABLE_PROTECTION
     /* ---------------------------------------------------------------------- */
     /* Protection: 1P Phasor Extraction (DFT / Cosine Filter)                 */
     /* ---------------------------------------------------------------------- */
     if (op == LE_OP_PHASOR_1P)
     {
-        uint16_t p_idx = inst->modifier & 0x0F;
-        if (p_idx >= LE_MAX_PHASORS) return LE_ERR_OUT_OF_BOUNDS;
+        uint16_t p_idx = inst->modifier & 0xFF;
 
         le_phasor_state_t* p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p_idx);
-        if (!p) p = &img->phasors[p_idx];
+        if (!p) return LE_ERR_OUT_OF_BOUNDS;
         if (p->samples_per_cycle == 0 || p->samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE) {
             p->samples_per_cycle = 16; /* Default 16 samples per cycle (960 Hz @ 60Hz) */
         }
@@ -496,11 +505,10 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     if (op == LE_OP_SYM_COMP)
     {
         uint16_t sc_idx = inst->modifier & 0x07;
-        uint16_t base_p = (inst->in_a != LE_ADDR_UNUSED) ? (inst->in_a & 0x0F) : 0;
-        if (base_p + 2 >= LE_MAX_PHASORS) return LE_ERR_OUT_OF_BOUNDS;
+        uint16_t base_p = (inst->in_a != LE_ADDR_UNUSED) ? (inst->in_a & 0xFF) : 0;
 
         le_symcomp_state_t* sc = (le_symcomp_state_t*)le_process_image_kind_state(img, LE_BLK_SYMCOMP, sc_idx);
-        if (!sc) sc = &img->symcomps[sc_idx];
+        if (!sc) return LE_ERR_OUT_OF_BOUNDS;
         le_phasor_state_t* pa = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p);
         le_phasor_state_t* pb = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p + 1);
         le_phasor_state_t* pc = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p + 2);
@@ -531,107 +539,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     }
 
     /* ---------------------------------------------------------------------- */
-    /* Protection: SEL-Style Dual-Slope Percentage Differential (87)          */
+    /* Protection: Mho Distance Relaying (21) is a variable-arity block        */
+    /* (LE_FUNC_DIST_21). See the LE_OP_BLOCK dispatch below.                  */
     /* ---------------------------------------------------------------------- */
-    if (op == LE_OP_DIFF_87)
-    {
-        uint16_t d_idx = inst->modifier & 0x07;
-        if (d_idx >= LE_MAX_DIFF87) return LE_ERR_OUT_OF_BOUNDS;
-
-        le_diff87_state_t* d = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_87, d_idx);
-        if (!d) d = &img->diff87s[d_idx];
-        if (d->o87p <= 0.0f) d->o87p = 0.3f;  /* Default 0.3 pu pickup */
-        if (d->slp1 <= 0.0f) d->slp1 = 0.25f; /* Default 25% slope 1 */
-        if (d->irs1 <= 0.0f) d->irs1 = 1.5f;  /* Default 1.5 pu breakpoint */
-        if (d->slp2 <= 0.0f) d->slp2 = 0.60f; /* Default 60% slope 2 */
-
-        uint16_t p1_idx = inst->in_a & 0x0F;
-        uint16_t p2_idx = inst->in_b & 0x0F;
-        le_complex_t i1 = le_c_make(0,0), i2 = le_c_make(0,0);
-        if (p1_idx < LE_MAX_PHASORS) {
-            le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p1_idx);
-            if (ph) i1 = ph->phasor;
-        }
-        if (p2_idx < LE_MAX_PHASORS) {
-            le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p2_idx);
-            if (ph) i2 = ph->phasor;
-        }
-
-        /* Operating current: vector sum */
-        le_complex_t i_op_vec = le_c_add(i1, i2);
-        d->i_op = le_c_mag(i_op_vec);
-
-        /* Restraining current: average magnitude */
-        d->i_rt = (le_c_mag(i1) + le_c_mag(i2)) * 0.5f;
-
-        /* Dual slope threshold */
-        float trip_threshold = d->o87p;
-        if (d->i_rt <= d->irs1) {
-            trip_threshold += d->slp1 * d->i_rt;
-        } else {
-            trip_threshold += d->slp1 * d->irs1 + d->slp2 * (d->i_rt - d->irs1);
-        }
-
-        d->tripped = (d->i_op > trip_threshold);
-        le_process_image_set_bool(img, inst->out, d->tripped);
-        return LE_OK;
-    }
-
-    /* ---------------------------------------------------------------------- */
-    /* Protection: Mho Distance Relaying (21)                                 */
-    /* ---------------------------------------------------------------------- */
-    if (op == LE_OP_DIST_21)
-    {
-        uint16_t z_idx = inst->modifier & 0x07;
-        if (z_idx >= LE_MAX_DIST21) return LE_ERR_OUT_OF_BOUNDS;
-
-        le_dist21_state_t* dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, z_idx);
-        if (!dist) dist = &img->dist21s[z_idx];
-        if (dist->reach_ohms <= 0.0f) dist->reach_ohms = 5.0f; /* Default 5.0 ohms */
-        if (dist->line_angle_rad <= 0.0f) dist->line_angle_rad = 75.0f * (float)M_PI / 180.0f;
-
-        uint16_t v_idx = inst->in_a & 0x0F;
-        uint16_t i_idx = inst->in_b & 0x0F;
-        le_complex_t v = le_c_make(0,0), i = le_c_make(0,0);
-        if (v_idx < LE_MAX_PHASORS) {
-            le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, v_idx);
-            if (ph) v = ph->phasor;
-        }
-        if (i_idx < LE_MAX_PHASORS) {
-            le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, i_idx);
-            if (ph) i = ph->phasor;
-        }
-
-        float i_mag = le_c_mag(i);
-        if (i_mag < 0.05f) {
-            /* Minimum current supervision */
-            dist->tripped = false;
-            le_process_image_set_bool(img, inst->out, false);
-            return LE_OK;
-        }
-
-        /* Apparent Impedance Z = V / I */
-        le_complex_t z_meas = le_c_div(v, i);
-        dist->r_meas = z_meas.r;
-        dist->x_meas = z_meas.i;
-
-        /* Mho circle evaluation:
-         * Center: ( (Zreach/2)*cos(line_angle), (Zreach/2)*sin(line_angle) )
-         * Radius: Zreach / 2
-         */
-        float r_center = (dist->reach_ohms * 0.5f) * cosf(dist->line_angle_rad);
-        float x_center = (dist->reach_ohms * 0.5f) * sinf(dist->line_angle_rad);
-        float radius   = dist->reach_ohms * 0.5f;
-
-        float dr = dist->r_meas - r_center;
-        float dx = dist->x_meas - x_center;
-        float dist_sq = dr * dr + dx * dx;
-        float radius_sq = radius * radius;
-
-        dist->tripped = (dist_sq <= radius_sq);
-        le_process_image_set_bool(img, inst->out, dist->tripped);
-        return LE_OK;
-    }
 #endif
 
 #if LE_ENABLE_SERIAL_BUS
@@ -641,9 +551,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     if (op == LE_OP_I2C)
     {
         uint8_t idx = inst->modifier;
-        if (idx >= LE_MAX_I2C_DEVICES) return LE_ERR_OUT_OF_BOUNDS;
-
-        le_i2c_device_state_t* dev = &img->i2c_devices[idx];
+        le_i2c_device_state_t* dev =
+            (le_i2c_device_state_t*)le_process_image_kind_state(img, LE_BLK_I2C, idx);
+        if (!dev) return LE_ERR_OUT_OF_BOUNDS;
 
         /* 1. Startup Code: execute on first scan if not initialized */
         if (!dev->initialized) {
@@ -721,9 +631,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     if (op == LE_OP_SPI)
     {
         uint8_t idx = inst->modifier;
-        if (idx >= LE_MAX_SPI_DEVICES) return LE_ERR_OUT_OF_BOUNDS;
-
-        le_spi_device_state_t* dev = &img->spi_devices[idx];
+        le_spi_device_state_t* dev =
+            (le_spi_device_state_t*)le_process_image_kind_state(img, LE_BLK_SPI, idx);
+        if (!dev) return LE_ERR_OUT_OF_BOUNDS;
 
         /* 1. Startup Code: execute on first scan if not initialized */
         if (!dev->initialized) {
@@ -797,8 +707,7 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     /* ---------------------------------------------------------------------- */
     if (op >= LE_OP_LPF_1P && op <= LE_OP_MIN_MAX_HOLD)
     {
-        uint8_t idx = mod & 0x0F;
-        if (idx >= LE_MAX_DSP_FILTERS) return LE_ERR_OUT_OF_BOUNDS;
+        uint8_t idx = mod & 0xFF;
 
         float in_x = le_process_image_get_float(img, inst->in_a);
         float out_y = 0.0f;
@@ -1144,7 +1053,15 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
             return LE_ERR_OUT_OF_BOUNDS;
         }
 
-        const le_block_desc_t* desc = &blocks[inst->in_a];
+        /* Block descriptors are variable-size (4-byte header + in/out arg
+         * addresses appended after each header). Walk to the requested index
+         * rather than indexing with a fixed stride. */
+        const le_block_desc_t* desc = blocks;
+        for (uint16_t w = 0; w < inst->in_a; w++) {
+            uint16_t wc = (uint16_t)desc->in_count + (uint16_t)desc->out_count;
+            desc = (const le_block_desc_t*)((const uint8_t*)desc + LE_BLOCK_DESC_HEADER_BYTES +
+                                            (size_t)wc * sizeof(uint16_t));
+        }
         uint16_t argc = (uint16_t)desc->in_count + (uint16_t)desc->out_count;
         const uint16_t* args = (const uint16_t*)(desc + 1); /* args follow the header */
 
@@ -1161,7 +1078,8 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     return LE_OK;
                 }
 
-                case LE_FUNC_RECT2POLAR: {
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_RECT2POLAR: {
                     /* args = [real, imag, out_mag, out_angle_rad] (2-in/2-out) */
                     if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float x = le_process_image_get_float(img, args[0]);
@@ -1172,8 +1090,11 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     le_process_image_set_float(img, args[3], ang);
                     return LE_OK;
                 }
+#endif
 
-                case LE_FUNC_POLAR2RECT: {
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_POLAR2RECT: {
                     /* args = [mag, angle_rad, out_real, out_imag] (2-in/2-out) */
                     if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float mag = le_process_image_get_float(img, args[0]);
@@ -1182,8 +1103,230 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     le_process_image_set_float(img, args[3], mag * sinf(ang));
                     return LE_OK;
                 }
+#endif
 
-                case LE_FUNC_PHASOR_SHIFT: {
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_COMPLEX2POLAR: {
+                    /* complex in -> {mag, angle} (1-in/2-out) */
+                    if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
+                    le_complex_t c = le_process_image_get_complex(img, args[0]);
+                    le_process_image_set_float(img, args[1], le_c_mag(c));
+                    le_process_image_set_float(img, args[2], le_c_ang(c));
+                    return LE_OK;
+                }
+#endif
+
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_COMPLEX2RECT: {
+                    /* complex in -> {real, imag} (1-in/2-out) */
+                    if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
+                    le_complex_t c = le_process_image_get_complex(img, args[0]);
+                    le_process_image_set_float(img, args[1], c.r);
+                    le_process_image_set_float(img, args[2], c.i);
+                    return LE_OK;
+                }
+#endif
+
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_RECT2COMPLEX: {
+                    /* {real, imag} floats -> complex out (2-in/1-out) */
+                    if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+                    float re = le_process_image_get_float(img, args[0]);
+                    float im = le_process_image_get_float(img, args[1]);
+                    le_process_image_set_complex(img, args[2], le_c_make(re, im));
+                    return LE_OK;
+                }
+#endif
+
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_POLAR2COMPLEX: {
+                    /* {mag, angle} floats -> complex out (2-in/1-out) */
+                    if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+                    float mag = le_process_image_get_float(img, args[0]);
+                    float ang = le_process_image_get_float(img, args[1]);
+                    le_process_image_set_complex(img, args[2], le_c_polar(mag, ang));
+                    return LE_OK;
+                }
+#endif
+
+
+                case LE_FUNC_CLAMP_F: {
+                    /* [value, min, max] -> [out] (3-in/1-out) */
+                    if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+                    float v = le_process_image_get_float(img, args[0]);
+                    float mn = le_process_image_get_float(img, args[1]);
+                    float mx = le_process_image_get_float(img, args[2]);
+                    float lo = (mn < mx) ? mn : mx;   /* robust to swapped bounds */
+                    float hi = (mn < mx) ? mx : mn;
+                    float r = (v < lo) ? lo : ((v > hi) ? hi : v);
+                    le_process_image_set_float(img, args[3], r);
+                    return LE_OK;
+                }
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_PHASE_COMP: {
+                    /* 3-phase transformer phase-shift compensation (ANSI 87T).
+                     * args = [c_a, c_b, c_c, out_a, out_b, out_c]  (3-in/3-out).
+                     * Applies the SEL delta/wye compensation matrix M(k) (k = comp,
+                     * 1..12, baked in le_comp33_state_t) to the three winding phasors:
+                     *   I'_x = s * sum_j M[k][x][j] * I_j
+                     * with scalar s = 1/sqrt(3) for odd k, 1/3 for even k. This
+                     * cancels the winding phase displacement so operate = 0 under
+                     * through-load. */
+                    if (desc->in_count < 3 || desc->out_count < 3) return LE_ERR_OUT_OF_BOUNDS;
+                    le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, inst->in_a & 0xFF);
+                    if (!c33) return LE_ERR_OUT_OF_BOUNDS;
+                    int k = (int)c33->comp;
+                    if (k < 1) k = 1;
+                    if (k > 12) k = 12;
+                    /* scalar multiplier: odd k -> 1/sqrt(3), even k -> 1/3 */
+                    float s = (k & 1) ? (1.0f / sqrtf(3.0f)) : (1.0f / 3.0f);
+
+                    le_complex_t ia = le_process_image_get_complex(img, args[0]);
+                    le_complex_t ib = le_process_image_get_complex(img, args[1]);
+                    le_complex_t ic = le_process_image_get_complex(img, args[2]);
+
+                    /* row-major 3x3 matrix for index k */
+                    int8_t m[3][3];
+                    switch (k) {
+                        case 1:  m[0][0]=1;m[0][1]=-1;m[0][2]=0;  m[1][0]=0;m[1][1]=1;m[1][2]=-1; m[2][0]=-1;m[2][1]=0;m[2][2]=1; break;
+                        case 2:  m[0][0]=1;m[0][1]=-2;m[0][2]=1;  m[1][0]=1;m[1][1]=1;m[1][2]=-2; m[2][0]=-2;m[2][1]=1;m[2][2]=1; break;
+                        case 3:  m[0][0]=0;m[0][1]=-1;m[0][2]=1;  m[1][0]=1;m[1][1]=0;m[1][2]=-1; m[2][0]=-1;m[2][1]=1;m[2][2]=0; break;
+                        case 4:  m[0][0]=-1;m[0][1]=-1;m[0][2]=2;  m[1][0]=2;m[1][1]=-1;m[1][2]=-1; m[2][0]=-1;m[2][1]=2;m[2][2]=-1; break;
+                        case 5:  m[0][0]=-1;m[0][1]=0;m[0][2]=1;  m[1][0]=1;m[1][1]=-1;m[1][2]=0; m[2][0]=0;m[2][1]=1;m[2][2]=-1; break;
+                        case 6:  m[0][0]=-2;m[0][1]=1;m[0][2]=1;  m[1][0]=1;m[1][1]=-2;m[1][2]=1; m[2][0]=1;m[2][1]=1;m[2][2]=-2; break;
+                        case 7:  m[0][0]=-1;m[0][1]=1;m[0][2]=0;  m[1][0]=0;m[1][1]=-1;m[1][2]=1; m[2][0]=1;m[2][1]=0;m[2][2]=-1; break;
+                        case 8:  m[0][0]=-1;m[0][1]=2;m[0][2]=-1;  m[1][0]=-1;m[1][1]=-1;m[1][2]=2; m[2][0]=2;m[2][1]=-1;m[2][2]=-1; break;
+                        case 9:  m[0][0]=0;m[0][1]=1;m[0][2]=-1;  m[1][0]=-1;m[1][1]=0;m[1][2]=1; m[2][0]=1;m[2][1]=-1;m[2][2]=0; break;
+                        case 10: m[0][0]=1;m[0][1]=1;m[0][2]=-2;  m[1][0]=-2;m[1][1]=1;m[1][2]=1; m[2][0]=1;m[2][1]=-2;m[2][2]=1; break;
+                        case 11: m[0][0]=1;m[0][1]=0;m[0][2]=-1;  m[1][0]=-1;m[1][1]=1;m[1][2]=0; m[2][0]=0;m[2][1]=-1;m[2][2]=1; break;
+                        default: m[0][0]=2;m[0][1]=-1;m[0][2]=-1;  m[1][0]=-1;m[1][1]=2;m[1][2]=-1; m[2][0]=-1;m[2][1]=-1;m[2][2]=2; break; /* k=12 */
+                    }
+
+                    le_complex_t oa = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[0][0]), le_c_scale(ib, (float)m[0][1])), le_c_scale(ic, (float)m[0][2])), s);
+                    le_complex_t ob = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[1][0]), le_c_scale(ib, (float)m[1][1])), le_c_scale(ic, (float)m[1][2])), s);
+                    le_complex_t oc = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[2][0]), le_c_scale(ib, (float)m[2][1])), le_c_scale(ic, (float)m[2][2])), s);
+                    le_process_image_set_complex(img, args[3], oa);
+                    le_process_image_set_complex(img, args[4], ob);
+                    le_process_image_set_complex(img, args[5], oc);
+                    return LE_OK;
+                }
+#endif
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_DIFF_87: {
+                    /* N-complex dual-slope differential protection (ANSI 87).
+                     * args = [cph0, cph1, ..., cphN-1, out_bool]  (N-in/1-out)
+                     * Operate current = |vector sum of all phasors|; restraint
+                     * current = SUM of phasor magnitudes (per large-bus differential
+                     * convention, no averaging). Trips when operate exceeds the
+                     * dual-slope threshold from the baked le_diff87_state_t:
+                     *   th = o87p + slp1*I_rt                 for I_rt <= irs1
+                     *   th = o87p + slp1*irs1 + slp2*(I_rt-irs1) for I_rt > irs1  */
+                    if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+                    int cin = desc->in_count;
+                    le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, inst->in_a & 0xFF);
+                    if (!d87) return LE_ERR_OUT_OF_BOUNDS;
+                    le_complex_t op_sum = le_c_make(0.0f, 0.0f);
+                    float rt_sum = 0.0f;
+                    for (int k = 0; k < cin; k++) {
+                        le_complex_t c = le_process_image_get_complex(img, args[k]);
+                        op_sum = le_c_add(op_sum, c);
+                        rt_sum += le_c_mag(c);
+                    }
+                    float i_op = le_c_mag(op_sum);
+                    float i_rt = rt_sum;   /* restraint = sum of magnitudes (no averaging) */
+                    d87->operate = i_op;
+                    d87->restraint = i_rt;
+
+                    /* SEL-style dual-slope percentage threshold (O87P + SLP1/SLP2). */
+                    float o87p = (d87->o87p > 0.0f) ? d87->o87p : 0.3f;
+                    float slp1 = (d87->slp1 > 0.0f) ? d87->slp1 : 0.25f;
+                    float irs1 = d87->irs1;
+                    float slp2 = (d87->slp2 > 0.0f) ? d87->slp2 : 0.60f;
+                    float trip_threshold = o87p;
+                    if (i_rt <= irs1) trip_threshold += slp1 * i_rt;
+                    else trip_threshold += slp1 * irs1 + slp2 * (i_rt - irs1);
+
+                    d87->tripped = (i_op > trip_threshold);
+                    le_process_image_set_bool(img, args[cin], d87->tripped);
+                    return LE_OK;
+                }
+#endif
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_DIST_21: {
+                    /* Mho distance (21) block with prefault voltage memory.
+                     * args = [v_c, i_c, offset_on, out_bool] (3-in/1-out)
+                     * v_c, i_c are complex phasors; offset_on is a boolean that gates
+                     * the mho-offset circle shift. Computes Z = V/I and trips when Z is
+                     * inside the offset-mho circle (center reach/2 at line angle, shifted
+                     * by the offset phasor; radius reach/2). */
+                    if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+                    uint16_t d_idx = (uint16_t)(inst->in_a & 0xFF);
+                    le_dist21_state_t* dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, d_idx);
+                    if (!dist) return LE_ERR_OUT_OF_BOUNDS;
+
+                    le_complex_t v = le_process_image_get_complex(img, args[0]);
+                    le_complex_t i = le_process_image_get_complex(img, args[1]);
+                    bool offset_on = le_process_image_get_bool(img, args[2]);
+
+                    /* Prefault voltage memory. */
+                    float v_mag = le_c_mag(v);
+                    bool faulted = (dist->prefault_v_threshold > 0.0f) && (v_mag < dist->prefault_v_threshold);
+                    if (!faulted) {
+                        dist->prefault_v = v;
+                        dist->prefault_armed = false;
+                        dist->prefault_arm_ms = 0;
+                    } else if (!dist->prefault_armed) {
+                        dist->prefault_armed = true;
+                        dist->prefault_arm_ms = now_ms;
+                    }
+
+                    le_complex_t v_use = v;
+                    if (dist->prefault_armed) {
+                        if (now_ms - dist->prefault_arm_ms < dist->prefault_duration_ms) {
+                            v_use = dist->prefault_v;
+                        } else {
+                            dist->prefault_armed = false;
+                            v_use = v;
+                        }
+                    }
+
+                    float i_mag = le_c_mag(i);
+                    if (i_mag < 0.05f) {
+                        le_process_image_set_bool(img, args[3], false);
+                        return LE_OK;
+                    }
+
+                    le_complex_t z = le_c_div(v_use, i);
+                    dist->r_meas = z.r;
+                    dist->x_meas = z.i;
+
+                    float la = dist->line_angle_deg * (float)M_PI / 180.0f;
+                    float oc = 0.0f, os = 0.0f;
+                    if (offset_on && dist->offset_mag > 0.0f) {
+                        float oa = dist->offset_angle_deg * (float)M_PI / 180.0f;
+                        oc = dist->offset_mag * cosf(oa);
+                        os = dist->offset_mag * sinf(oa);
+                    }
+
+                    float r_center = (dist->reach_ohms * 0.5f) * cosf(la) + oc;
+                    float x_center = (dist->reach_ohms * 0.5f) * sinf(la) + os;
+                    float radius   = dist->reach_ohms * 0.5f;
+                    float dr = dist->r_meas - r_center;
+                    float dx = dist->x_meas - x_center;
+                    dist->tripped = ((dr * dr + dx * dx) <= (radius * radius));
+                    le_process_image_set_bool(img, args[3], dist->tripped);
+                    return LE_OK;
+                }
+#endif
+
+                #if LE_ENABLE_PROTECTION
+case LE_FUNC_PHASOR_SHIFT: {
                     /* args = [real, imag, delta_rad, out_real, out_imag] (3-in/2-out) */
                     if (desc->in_count < 3 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float x = le_process_image_get_float(img, args[0]);
@@ -1195,19 +1338,22 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     le_process_image_set_float(img, args[4], x * sn + y * cs);
                     return LE_OK;
                 }
+#endif
 
+
+#if LE_ENABLE_PROTECTION
                 case LE_FUNC_PHASOR_1P: {
-                    /* Synced phasor extractor.
-                     * args = [sample, sync_mag, sync_angle_rad, out_mag, out_angle_rad] (3-in/2-out)
-                     * The phasor instance is identified by the descriptor index. The output is
-                     * synchronized to (sync_mag, sync_angle): the raw angle has the sync angle
-                     * subtracted and the magnitude is normalized against the sync magnitude, so the
-                     * result stays stable relative to the sync phasor instead of rotating with the
-                     * system frequency. */
-                    if (desc->in_count < 3 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
+                    /* Synced phasor extractor (emits a complex phasor).
+                     * args = [sample, sync_complex, out_complex] (2-in/1-out)
+                     * The phasor instance is identified by the descriptor index. The raw
+                     * phasor is synchronized to the sync phasor: its angle is referenced to
+                     * the sync angle and its magnitude normalized by the sync magnitude, so
+                     * the result stays stable relative to the sync phasor instead of
+                     * rotating with the system frequency. */
+                    if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
                     uint16_t p_idx = inst->in_a;
-                    if (p_idx >= LE_MAX_PHASORS) return LE_ERR_OUT_OF_BOUNDS;
-                    le_phasor_state_t* p = &img->phasors[p_idx];
+                    le_phasor_state_t* p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p_idx);
+                    if (!p) return LE_ERR_OUT_OF_BOUNDS;
                     if (p->samples_per_cycle == 0 || p->samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE) {
                         p->samples_per_cycle = 16;
                     }
@@ -1227,26 +1373,26 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     }
                     float real = (2.0f / (float)N) * sum_cos;
                     float imag = (2.0f / (float)N) * sum_sin;
-                    p->phasor = le_c_make(real, imag);
-                    float mag = le_c_mag(p->phasor);
-                    float ang = le_c_ang(p->phasor);
+                    le_complex_t ph = le_c_make(real, imag);
 
-                    /* Synchronize to the reference phasor (mag + angle). */
-                    float sync_mag = le_process_image_get_float(img, args[1]);
-                    float sync_ang = le_process_image_get_float(img, args[2]);
-                    ang -= sync_ang;
+                    /* Synchronize to the reference phasor (complex). */
+                    le_complex_t sync = le_process_image_get_complex(img, args[1]);
+                    float sync_mag = le_c_mag(sync);
+                    float sync_ang = le_c_ang(sync);
+                    float mag = le_c_mag(ph);
+                    float ang = le_c_ang(ph) - sync_ang;
                     while (ang > (float)M_PI) ang -= 2.0f * (float)M_PI;
                     while (ang < -(float)M_PI) ang += 2.0f * (float)M_PI;
                     if (fabsf(sync_mag) > 1e-6f) mag = (mag / sync_mag);
 
+                    le_complex_t out = le_c_polar(mag, ang);
                     p->magnitude = mag;
                     p->angle_rad = ang;
-                    p->phasor = le_c_polar(mag, ang);
-
-                    le_process_image_set_float(img, args[3], mag);
-                    le_process_image_set_float(img, args[4], ang);
+                    p->phasor = out;
+                    le_process_image_set_complex(img, args[2], out);
                     return LE_OK;
                 }
+#endif
 
                 default:
                     return LE_ERR_UNKNOWN_OPCODE;

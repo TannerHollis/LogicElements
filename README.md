@@ -7,13 +7,13 @@ LogicElements compiles graphical/JSON circuit schematics into a compact
 `.lebin` bytecode format that an ANSI C runtime executes on-field, with a
 variable-arity block mechanism for multi-input/multi-output elements. It is
 written for flash-constrained MCUs: **no malloc at boot**, a static
-zero-heap state arena, and UART/telemetry support.
+zero-heap state workspace, and UART/telemetry support.
 
 | | |
 | :--- | :--- |
 | **Language** | ANSI C99 runtime · C++17 compiler |
 | **Runtime core** | ~10 KB flash, zero-heap, execute-in-place (XIP) |
-| **Binary format** | `.lebin` v3 — `LEB1` magic, IEEE 802.3 CRC32 |
+| **Binary format** | `.lebin` v5 — `LEB1` magic, IEEE 802.3 CRC32 |
 | **License** | MIT |
 
 ## Quick start
@@ -39,7 +39,7 @@ All documentation lives in `docs/`.
 
 - **[Architecture](docs/ARCHITECTURE.md)** — end-to-end design: the runtime,
   the compiler pipeline, the `.lebin` binary format, the variable-arity block
-  mechanism, the zero-heap state arena, the HAL, and the tooling.
+  mechanism, the zero-heap state workspace, the HAL, and the tooling.
 - **[Elements Reference](docs/ELEMENTS.md)** — every element: description,
   usage (ports & properties), and an example disassembly.
 
@@ -62,7 +62,7 @@ All documentation lives in `docs/`.
 - **Elements** — [all elements and their disassembly](docs/ELEMENTS.md)
 - **Board profiles & UART protocol** — [communications & profiles](docs/COMMUNICATIONS_BOARD_PROFILES.md)
 - **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/ports.md))
-- **Binary format** — [`.lebin` v3](docs/ARCHITECTURE.md#binary-format-lebin-v3)
+- **Binary format** — [`.lebin` v5](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
 - **Generation & tooling** — `tools/compiler/le_compiler.py`,
   `le_board.py`, `le_disasm.py`; `tools/sim/main.c`
 
@@ -91,7 +91,7 @@ Circuit JSON + board profile
    │  le_compile / le_compiler.py
    ▼
 .lebin  ──UART/upload──►  loader  ──►  VM step loop  ──►  process image  ──►  HAL  ──►  physical I/O
-                          (state blocks bound into a zero-heap arena at load)
+                          (state blocks baked into a preconfigured state image, copied into the zero-heap workspace at load)
 ```
 
 ## License

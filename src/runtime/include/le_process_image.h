@@ -17,40 +17,12 @@ typedef struct {
     uint8_t                dout[(LE_MAX_DIGITAL_OUT + 7) / 8];
     uint8_t                bool_regs[(LE_MAX_BOOL_REGS + 7) / 8];
     float                  floats[LE_MAX_FLOATS];
+#if LE_ENABLE_PROTECTION
+    le_complex_t           cmplx[LE_MAX_COMPLEX];
+#endif
     int32_t                int_regs[LE_MAX_INT_REGS];
     int32_t                ain_raw[LE_MAX_ANALOG_IN];
     float                  ain[LE_MAX_ANALOG_IN];
-    le_scale_state_t       scalers[LE_MAX_SCALERS];
-    le_timer_state_t       timers[LE_MAX_TIMERS];
-    le_counter_state_t     counters[LE_MAX_COUNTERS];
-    le_pid_state_t         pids[LE_MAX_PID];
-    le_overcurrent_state_t overcurrents[LE_MAX_OVERCURRENT];
-#if LE_ENABLE_PROTECTION
-    le_phasor_state_t      phasors[LE_MAX_PHASORS];
-    le_symcomp_state_t     symcomps[LE_MAX_PHASORS / 3 + 1];
-    le_diff87_state_t      diff87s[LE_MAX_DIFF87];
-    le_dist21_state_t      dist21s[LE_MAX_DIST21];
-#endif
-#if LE_ENABLE_SERIAL_BUS
-    le_i2c_device_state_t  i2c_devices[LE_MAX_I2C_DEVICES];
-    le_spi_device_state_t  spi_devices[LE_MAX_SPI_DEVICES];
-#endif
-#if LE_ENABLE_DSP
-    le_lpf_state_t         lpfs[LE_MAX_DSP_FILTERS];
-    le_biquad_state_t      biquads[LE_MAX_DSP_FILTERS];
-    le_moving_avg_state_t  moving_avgs[LE_MAX_DSP_FILTERS];
-    le_rate_limiter_state_t rate_limiters[LE_MAX_DSP_FILTERS];
-    le_deadband_state_t    deadbands[LE_MAX_DSP_FILTERS];
-    le_washout_state_t     washouts[LE_MAX_DSP_FILTERS];
-    le_peak_state_t        peaks[LE_MAX_DSP_FILTERS];
-    le_rms_state_t         rms_meters[LE_MAX_DSP_FILTERS];
-    le_median_state_t      medians[LE_MAX_DSP_FILTERS];
-    le_derivative_state_t  derivatives[LE_MAX_DSP_FILTERS];
-    le_zero_crossing_state_t zero_crossings[LE_MAX_DSP_FILTERS];
-    le_lut_1d_state_t      luts[LE_MAX_DSP_FILTERS];
-    le_totalizer_state_t   totalizers[LE_MAX_DSP_FILTERS];
-    le_min_max_hold_state_t min_max_holds[LE_MAX_DSP_FILTERS];
-#endif
 } le_process_image_t;
 
 /**
@@ -115,10 +87,30 @@ int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr);
 void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t val);
 
 /**
+ * @brief Reads a complex value from the specified 16-bit process image address.
+ *
+ * @param img Pointer to the process image structure.
+ * @param addr Encoded 16-bit address indicating complex register index (LE_REGION_CMPLX).
+ * @return Returns the complex value at the address; `0+0j` if invalid.
+ */
+#if LE_ENABLE_PROTECTION
+le_complex_t le_process_image_get_complex(const le_process_image_t* img, uint16_t addr);
+
+/**
+ * @brief Writes a complex value to the specified 16-bit process image address.
+ *
+ * @param img Pointer to the process image structure.
+ * @param addr Encoded 16-bit address indicating complex register index (LE_REGION_CMPLX).
+ * @param val Complex value to write.
+ */
+void le_process_image_set_complex(le_process_image_t* img, uint16_t addr, le_complex_t val);
+#endif
+
+/**
  * @brief Configures parameters for a linear scaling function block.
  *
  * @param img Pointer to the process image structure.
- * @param idx Zero-based scaler block index (`0` to `LE_MAX_SCALERS - 1`).
+ * @param idx Zero-based scaler block index (state-bound, see le_rt).
  * @param raw_min Minimum expected raw input value.
  * @param raw_max Maximum expected raw input value.
  * @param scale_min Scaled engineering unit minimum.
@@ -135,7 +127,7 @@ void le_process_image_set_scaler(le_process_image_t* img, uint8_t idx,
  * @brief Configures parameters for an external I2C peripheral block.
  *
  * @param img Pointer to the process image structure.
- * @param idx Zero-based device index (`0` to `LE_MAX_I2C_DEVICES - 1`).
+ * @param idx Zero-based device index (state-bound, see le_rt).
  * @param addr_7bit 7-bit slave hardware address on the I2C bus.
  * @param startup_data Pointer to startup command bytes (or `NULL` if unused).
  * @param startup_len Number of startup configuration bytes (`0` to `16`).
@@ -155,7 +147,7 @@ void le_i2c_device_config(le_process_image_t* img, uint8_t idx, uint8_t addr_7bi
  * @brief Configures parameters for an external SPI peripheral block.
  *
  * @param img Pointer to the process image structure.
- * @param idx Zero-based device index (`0` to `LE_MAX_SPI_DEVICES - 1`).
+ * @param idx Zero-based device index (state-bound, see le_rt).
  * @param cs_pin Chip select GPIO pin identifier.
  * @param startup_data Pointer to startup command bytes (or `NULL` if unused).
  * @param startup_len Number of startup configuration bytes (`0` to `16`).
@@ -271,18 +263,6 @@ le_counter_state_t* le_process_image_counter(const le_process_image_t* img, uint
  * out of range for the bound rows or the fixed array.
  */
 uint8_t* le_process_image_kind_state(const le_process_image_t* img, uint8_t kind, uint16_t idx);
-
-/**
- * @brief Applies per-kind factory defaults to a freshly bound state block so
- * heap-bound elements behave like their fixed-array counterparts.
- */
-void le_rt_apply_defaults(uint8_t kind, uint8_t* state);
-
-/**
- * @brief Applies one per-element config directive to a state block (heap-bound
- * or fixed-array fallback). See the kind/slot mapping in le_rt_configure.
- */
-void le_rt_configure(const le_process_image_t* img, uint8_t kind, uint8_t idx, uint8_t slot, float value);
 
 #ifdef __cplusplus
 }

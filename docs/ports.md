@@ -10,8 +10,8 @@ Adding LogicElements to your microcontroller project takes less than 5 minutes:
 
 ### Step 1: Copy Source Files into Your IDE Project
 Copy the `src/runtime/` directory into your project. It contains only standard C files (`.c` and `.h`) with **zero external dependencies**:
-- `le_types.h`, `le_process_image.h`, `le_opcodes.h`, `le_vm.h`, `le_loader.h`, `le_comms.h`, `le_complex.h`
-- `le_process_image.c`, `le_opcodes.c`, `le_vm.c`, `le_loader.c`, `le_comms.c`
+- `le_types.h`, `le_process_image.h`, `le_opcodes.h`, `le_vm.h`, `le_loader.h`, `le_comms.h`, `le_complex.h`, `le_hal.h`, `le_rt.h`
+- `le_process_image.c`, `le_opcodes.c`, `le_vm.c`, `le_loader.c`, `le_comms.c`, `le_rt.c`
 
 ### Step 2: Choose Your Board Port
 Select the port for your microcontroller family from `ports/` and add it to your project:

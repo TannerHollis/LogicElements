@@ -69,16 +69,26 @@ static const element_spec_t g_oracle[] = {
     SPEC("DIV", "DIV_F", 1), SPEC("ABS", "ABS_F", 1), SPEC("NEG", "NEG_F", 1),
     SPEC("MIN", "MIN_F", 1), SPEC("MAX", "MAX_F", 1),
     SPEC("CLAMP", "CLAMP_F", 1),
+    /* Complex math (T_CMPLX) */
+    SPEC("CADD", "CADD_F", 1), SPEC("CSUB", "CSUB_F", 1),
+    SPEC("CMUL", "CMUL_F", 1), SPEC("CDIV", "CDIV_F", 1),
+    SPECN("COMPLEXREGISTER"),
+    SPEC("COMPLEX2POLAR", "COMPLEX2POLAR", 1),
+    SPEC("COMPLEX2RECT", "COMPLEX2RECT", 1),
+    SPEC("RECT2COMPLEX", "RECT2COMPLEX", 1),
+    SPEC("POLAR2COMPLEX", "POLAR2COMPLEX", 1),
     /* Comparisons */
     SPEC("CMP_GT", "CMP_GT", 1), SPEC("CMP_LT", "CMP_LT", 1),
     SPEC("CMP_GE", "CMP_GE", 1), SPEC("CMP_LE", "CMP_LE", 1),
     SPEC("CMP_EQ", "CMP_EQ", 1), SPEC("CMP_NE", "CMP_NE", 1),
     /* Control / protection / conversions */
-    SPEC("PID", "PID", 1), SPEC("OVERCURRENT", "OVERCURRENT", 1),
+    SPEC("PID", "PID", 1), SPEC("OVERCURRENT_51", "OVERCURRENT_51", 1),
     SPEC("RECT2POLAR", "RECT2POLAR", 1), SPEC("POLAR2RECT", "POLAR2RECT", 1),
     SPEC("PHASOR_SHIFT", "PHASOR_SHIFT", 1),
     SPEC("PHASOR_1P", "PHASOR_1P", 1), SPEC("SYM_COMP", "SYM_COMP", 1),
-    SPEC("DIFF_87", "DIFF_87", 1), SPEC("DIST_21", "DIST_21", 1),
+    SPEC("DIST_21", "DIST_21", 1),
+    SPEC("DIFF_87", "DIFF_87", 1),
+    SPEC("PHASE_COMP", "PHASE_COMP", 1),
     /* Serial bus */
     SPEC("I2C", "I2C", 1), SPEC("SPI", "SPI", 1),
     /* DSP & filters */

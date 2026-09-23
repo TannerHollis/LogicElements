@@ -1,9 +1,9 @@
 {
-  "name": "Element_OVERCURRENT",
+  "name": "Element_OVERCURRENT_51",
   "elements": [
     {
       "name": "N1",
-      "type": "OVERCURRENT",
+      "type": "OVERCURRENT_51",
       "pickup": 1.0,
       "time_dial": 1.0
     }

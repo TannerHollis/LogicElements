@@ -57,10 +57,11 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
             std::string dir = to_lower(el.get("direction").as_string());
             if (dir == "send") node.is_root = true;
         } else if (type == "PID" || type == "LE_PID" ||
-                   type == "OVERCURRENT" || type == "LE_OVERCURRENT" ||
+                   type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT" ||
                    type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING" ||
                    type == "SYM_COMP" || type == "LE_SYM_COMP" ||
-                   type == "DIFF_87" || type == "LE_DIFF_87" ||
+                   type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF" ||
+                   type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" ||
                    type == "DIST_21" || type == "LE_DIST_21" ||
                    type == "I2C" || type == "LE_I2C" ||
                    type == "SPI" || type == "LE_SPI" ||
@@ -119,6 +120,10 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         else if (type == "SUB" || type == "SUBTRACT" || type == "LE_SUB") node.opcode = LE_OP_SUB_F;
         else if (type == "MUL" || type == "MULTIPLY" || type == "LE_MUL") node.opcode = LE_OP_MUL_F;
         else if (type == "DIV" || type == "DIVIDE" || type == "LE_DIV") node.opcode = LE_OP_DIV_F;
+        else if (type == "CADD" || type == "LE_CADD" || type == "C_ADD") node.opcode = LE_OP_CADD_F;
+        else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") node.opcode = LE_OP_CSUB_F;
+        else if (type == "CMUL" || type == "LE_CMUL" || type == "C_MUL") node.opcode = LE_OP_CMUL_F;
+        else if (type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") node.opcode = LE_OP_CDIV_F;
         else if (type == "CMP_GT" || type == "LE_CMP_GT") node.opcode = LE_OP_CMP_GT;
         else if (type == "CMP_LT" || type == "LE_CMP_LT") node.opcode = LE_OP_CMP_LT;
         else if (type == "CMP_GE" || type == "LE_CMP_GE") node.opcode = LE_OP_CMP_GE;
@@ -139,7 +144,11 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         else if (type == "LUT_1D" || type == "LE_LUT_1D" || type == "LUT") node.opcode = LE_OP_LUT_1D;
         else if (type == "TOTALIZER" || type == "LE_TOTALIZER") node.opcode = LE_OP_TOTALIZER;
         else if (type == "MIN_MAX_HOLD" || type == "LE_MIN_MAX_HOLD") node.opcode = LE_OP_MIN_MAX_HOLD;
-        else if (type == "CLAMP" || type == "LE_CLAMP") node.opcode = LE_OP_CLAMP_F;
+        else if (type == "CLAMP" || type == "LE_CLAMP") node.opcode = LE_OP_BLOCK;
+        else if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") node.opcode = LE_OP_BLOCK;
+        else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") node.opcode = LE_OP_BLOCK;
+        else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") node.opcode = LE_OP_BLOCK;
+        else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") node.opcode = LE_OP_BLOCK;
         else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") node.opcode = LE_OP_RECT2POLAR;
         else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") node.opcode = LE_OP_POLAR2RECT;
         else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") node.opcode = LE_OP_PHASOR_SHIFT;

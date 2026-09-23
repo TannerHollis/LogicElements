@@ -73,7 +73,7 @@ extern "C" {
  * compilers and IDEs can validate logic programs against target capabilities.
  */
 typedef struct {
-    uint8_t  protocol_version;       /**< Comms protocol version (currently 1). */
+    uint8_t  protocol_version;       /**< Comms protocol version (currently 3). */
     uint8_t  firmware_major;         /**< Major firmware version. */
     uint8_t  firmware_minor;         /**< Minor firmware version. */
     char     platform_name[32];      /**< Null-terminated platform or board identifier string. */
@@ -82,13 +82,10 @@ typedef struct {
     uint16_t max_analog_in;          /**< Maximum analog inputs supported. */
     uint16_t max_bool_regs;          /**< Maximum internal boolean memory coils (%M) supported. */
     uint16_t max_floats;             /**< Maximum floating-point registers (%R) supported. */
-    uint16_t max_timers;             /**< Maximum hardware timer blocks supported. */
-    uint16_t max_counters;           /**< Maximum counter blocks supported. */
+    uint16_t workspace_bytes;        /**< State workspace capacity in RAM (LE_STATE_WORKSPACE_BYTES). */
     uint8_t  config_slots;           /**< Number of multi-program storage slots available. */
     uint16_t slot_size_bytes;        /**< Maximum byte capacity per configuration slot. */
     uint16_t feature_flags;          /**< Bitmask of enabled optional subsystems (@ref LE_CAP_PROTECTION, etc.). */
-    uint8_t  max_i2c_devices;        /**< Maximum configured I2C devices. */
-    uint8_t  max_spi_devices;        /**< Maximum configured SPI devices. */
 } le_caps_payload_t;
 #pragma pack(pop)
 

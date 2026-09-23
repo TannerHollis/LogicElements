@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
 LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 3
+LE_BIN_VERSION = 4
 LE_FLAG_AUTOSTART = 0x0001
 
 # Address Regions
@@ -101,6 +101,7 @@ class _LeCompileResult(Structure):
         ("ain_count", c_int),
         ("bool_reg_count", c_int),
         ("float_count", c_int),
+        ("complex_count", c_int),
         ("int_count", c_int),
         ("timer_count", c_int),
         ("counter_count", c_int),
@@ -109,6 +110,8 @@ class _LeCompileResult(Structure):
         ("temp_bool_count", c_int),
         ("user_float_count", c_int),
         ("temp_float_count", c_int),
+        ("user_complex_count", c_int),
+        ("temp_complex_count", c_int),
         ("user_int_count", c_int),
         ("temp_int_count", c_int),
         ("eliminated_instructions", c_int),
@@ -169,7 +172,7 @@ def get_compiler_lib():
 
     lib.le_disassemble_bin.argtypes = [
         POINTER(c_uint8), c_size_t, c_int, c_int, c_int,
-        POINTER(c_char_p), POINTER(c_char_p)
+        c_char_p, POINTER(c_char_p), POINTER(c_char_p)
     ]
     lib.le_disassemble_bin.restype = c_int
 
@@ -212,7 +215,7 @@ class LeCompiler:
             opt_level: Optional optimization level override (LE_OPT_NONE, LE_OPT_BASIC, LE_OPT_FULL, LE_OPT_SIZE).
 
         Returns:
-            A bytes object containing the complete 26-byte header and bytecode payload.
+            A bytes object containing the complete v5 header and bytecode payload.
         """
         if isinstance(json_data, dict):
             circuit_json_str = json.dumps(json_data)

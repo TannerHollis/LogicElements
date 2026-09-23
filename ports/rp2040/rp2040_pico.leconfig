@@ -9,17 +9,14 @@
     "digital_outputs": 16,
     "coils": 128,
     "floats": 64,
-    "timers": 16,
-    "counters": 8,
+    "workspace_bytes": 4096,
     "config_slots": 4,
     "slot_size_bytes": 4096
   },
   "features": {
     "protection": true,
-    "serial_bus": true,
-    "i2c_devices": 4,
-    "spi_devices": 4
-  },
+    "serial_bus": true
+},
   "pin_map": {
     "inputs": {
       "%I0": {"alias": "BTN_A", "pin": "GP14", "desc": "Pushbutton A (Pull-up)"},

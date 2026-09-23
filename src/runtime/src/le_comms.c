@@ -89,7 +89,7 @@ static void handle_packet(le_comms_t* comms)
             pong[4] = (uint8_t)(LE_MAX_BOOL_REGS & 0xFF);
             pong[5] = (uint8_t)((LE_MAX_BOOL_REGS >> 8) & 0xFF);
             pong[6] = LE_MAX_FLOATS;
-            pong[7] = LE_MAX_TIMERS;
+            pong[7] = (uint8_t)(LE_STATE_WORKSPACE_BYTES & 0xFF); /* workspace bytes (low) */
             send_packet(LE_CMD_PONG, seq, pong, sizeof(pong));
             break;
         }
@@ -97,7 +97,7 @@ static void handle_packet(le_comms_t* comms)
         case LE_CMD_GET_CAPS: {
             le_caps_payload_t caps;
             memset(&caps, 0, sizeof(caps));
-            caps.protocol_version = 1;
+            caps.protocol_version = 3;
             caps.firmware_major = 1;
             caps.firmware_minor = 0;
 
@@ -110,8 +110,7 @@ static void handle_packet(le_comms_t* comms)
             caps.max_analog_in = LE_MAX_ANALOG_IN;
             caps.max_bool_regs = LE_MAX_BOOL_REGS;
             caps.max_floats = LE_MAX_FLOATS;
-            caps.max_timers = LE_MAX_TIMERS;
-            caps.max_counters = LE_MAX_COUNTERS;
+            caps.workspace_bytes = LE_STATE_WORKSPACE_BYTES;
             caps.config_slots = LE_MAX_CONFIG_SLOTS;
             caps.slot_size_bytes = LE_SLOT_SIZE_BYTES;
 
@@ -123,8 +122,6 @@ static void handle_packet(le_comms_t* comms)
             flags |= LE_CAP_SERIAL_BUS;
             flags |= LE_CAP_I2C;
             flags |= LE_CAP_SPI;
-            caps.max_i2c_devices = LE_MAX_I2C_DEVICES;
-            caps.max_spi_devices = LE_MAX_SPI_DEVICES;
 #endif
             caps.feature_flags = flags;
 

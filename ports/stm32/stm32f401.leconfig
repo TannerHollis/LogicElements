@@ -9,17 +9,14 @@
     "digital_outputs": 16,
     "coils": 128,
     "floats": 64,
-    "timers": 16,
-    "counters": 8,
+    "workspace_bytes": 2048,
     "config_slots": 3,
     "slot_size_bytes": 2048
   },
   "features": {
     "protection": true,
-    "serial_bus": true,
-    "i2c_devices": 4,
-    "spi_devices": 4
-  },
+    "serial_bus": true
+},
   "pin_map": {
     "inputs": {
       "%I0": {"alias": "USER_BUTTON", "pin": "PC13", "desc": "Onboard User Pushbutton (active-low)"},

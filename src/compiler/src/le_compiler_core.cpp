@@ -10,12 +10,29 @@
 
 namespace LogicElements {
 
+/* Pack an integer payload into a float bit-storage field losslessly.
+ * The runtime reinterprets the same 32 bits via ctype. */
+static float le_pack_i32_bits(int32_t v)
+{
+    union { int32_t i; float f; } u;
+    u.i = v;
+    return u.f;
+}
+static float le_pack_u32_bits(uint32_t v)
+{
+    union { uint32_t u; float f; } x;
+    x.u = v;
+    return x.f;
+}
+
 CompilerCore::CompilerCore()
     : m_user_bool_count(0)
     , m_user_int_count(0)
     , m_user_float_count(0)
+    , m_user_complex_count(0)
     , m_peak_temp_bool(0)
     , m_peak_temp_float(0)
+    , m_peak_temp_complex(0)
     , m_peak_temp_int(0)
     , m_timer_counter(0)
     , m_counter_counter(0)
@@ -43,6 +60,12 @@ uint16_t CompilerCore::allocate_user_float()
     return addr;
 }
 
+uint16_t CompilerCore::allocate_user_complex()
+{
+    uint16_t addr = static_cast<uint16_t>(LE_REGION_CMPLX | (m_user_complex_count & LE_ADDR_INDEX_MASK));
+    m_user_complex_count++;
+    return addr;
+}
 uint16_t CompilerCore::allocate_timer()
 {
     uint16_t addr = static_cast<uint16_t>(LE_REGION_TIMER | (m_timer_counter & 0x0FFF));
@@ -93,6 +116,23 @@ void CompilerCore::release_temp_float(int temp_idx)
     }
 }
 
+uint16_t CompilerCore::acquire_temp_complex(int& out_temp_idx)
+{
+    if (!m_free_temp_complex_pool.empty()) {
+        out_temp_idx = m_free_temp_complex_pool.back();
+        m_free_temp_complex_pool.pop_back();
+    } else {
+        out_temp_idx = m_peak_temp_complex++;
+    }
+    return static_cast<uint16_t>(LE_REGION_CMPLX | ((m_user_complex_count + out_temp_idx) & LE_ADDR_INDEX_MASK));
+}
+
+void CompilerCore::release_temp_complex(int temp_idx)
+{
+    if (temp_idx >= 0 && std::find(m_free_temp_complex_pool.begin(), m_free_temp_complex_pool.end(), temp_idx) == m_free_temp_complex_pool.end()) {
+        m_free_temp_complex_pool.push_back(temp_idx);
+    }
+}
 uint16_t CompilerCore::acquire_temp_int(int& out_temp_idx)
 {
     if (!m_free_temp_int_pool.empty()) {
@@ -318,13 +358,16 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     m_user_bool_count = 0;
     m_user_int_count = 0;
     m_user_float_count = 0;
+    m_user_complex_count = 0;
     m_peak_temp_bool = 0;
     m_peak_temp_float = 0;
+    m_peak_temp_complex = 0;
     m_peak_temp_int = 0;
     m_timer_counter = 0;
     m_counter_counter = 0;
     m_free_temp_bool_pool.clear();
     m_free_temp_float_pool.clear();
+    m_free_temp_complex_pool.clear();
     m_free_temp_int_pool.clear();
 
     std::map<std::string, uint16_t> din_map;
@@ -406,6 +449,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             element_outputs[name] = allocate_user_int();
         } else if (type == "FLOATREGISTER" || type == "LE_FLOATREGISTER") {
             element_outputs[name] = allocate_user_float();
+        } else if (type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER") {
+            element_outputs[name] = allocate_user_complex();
         } else if (type == "ANALOGINPUT" || type == "LE_ANALOG_INPUT" || type == "LE_ANALOGINPUT") {
             int ch = el.get("channel").as_int(0);
             uint16_t addr = static_cast<uint16_t>(LE_REGION_AIN | (ch & 0x0FFF));
@@ -526,7 +571,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     }
 
     // Step 3.5: Liveness Analysis & Consumer Reference Counting
-    enum class TempType { None, Bool, Float, Int };
+    enum class TempType { None, Bool, Float, Int, Complex };
     std::map<std::string, int> node_temp_idx;
     std::map<std::string, TempType> node_temp_type;
     std::map<std::string, int> ref_counts;
@@ -566,6 +611,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                     if (it_tt != node_temp_type.end()) {
                         if (it_tt->second == TempType::Bool) release_temp_bool(it_ti->second);
                         else if (it_tt->second == TempType::Float) release_temp_float(it_ti->second);
+                        else if (it_tt->second == TempType::Complex) release_temp_complex(it_ti->second);
                         else if (it_tt->second == TempType::Int) release_temp_int(it_ti->second);
                     }
                     node_temp_idx.erase(it_ti);
@@ -589,17 +635,17 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     std::vector<BlockCall> block_calls;
 
     /* Per-kind count of stateful blocks (timers, counters, DSP filters, ...).
-     * Emitted as a compact state-directive table so the loader can reserve
-     * heap slices and bind pointers at load time. */
+     * Emitted as a compact state-directive table so the loader can compute each
+     * kind group's byte offset within the state image. */
     std::map<uint8_t, int> state_descs;
 
-    /* Per-element configuration directives applied to bound heap blocks at load
-     * (kind, instance index, field slot, value). */
-    std::vector<le_config_t> configs;
-    auto emit_config = [&](uint8_t kind, uint8_t idx, uint8_t slot, float val) {
-        le_config_t c;
-        c.kind = kind; c.idx = idx; c.slot = slot; c.reserved = 0; c.value = val;
-        configs.push_back(c);
+    /* The preconfigured state image: one materialized state struct (defaults +
+     * all circuit properties baked as concrete bytes) per stateful instance,
+     * grouped by kind. The loader memcpy's this image into RAM at load. */
+    std::map<uint8_t, std::vector<std::vector<uint8_t> > > state_instances;
+    auto append_state = [&](uint8_t kind, const void* p, size_t n) {
+        const uint8_t* b = (const uint8_t*)p;
+        state_instances[kind].push_back(std::vector<uint8_t>(b, b + n));
     };
 
     auto push_block = [&](uint8_t func_id, std::vector<uint16_t> args,
@@ -692,11 +738,11 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 sm.units = el.get("units").as_string("%");
                 sm.clamp = el.get("clamp").as_bool(true);
                 scaler_list.push_back(sm);
-                emit_config(LE_BLK_SCALER, static_cast<uint8_t>(s_idx), 0, sm.raw_min);
-                emit_config(LE_BLK_SCALER, static_cast<uint8_t>(s_idx), 1, sm.raw_max);
-                emit_config(LE_BLK_SCALER, static_cast<uint8_t>(s_idx), 2, sm.scale_min);
-                emit_config(LE_BLK_SCALER, static_cast<uint8_t>(s_idx), 3, sm.scale_max);
-                emit_config(LE_BLK_SCALER, static_cast<uint8_t>(s_idx), 4, sm.clamp ? 1.0f : 0.0f);
+                le_scale_state_t sc{};
+                sc.raw_min = sm.raw_min; sc.raw_max = sm.raw_max;
+                sc.scale_min = sm.scale_min; sc.scale_max = sm.scale_max;
+                sc.clamp = sm.clamp;
+                append_state(LE_BLK_SCALER, &sc, sizeof(sc));
 
                 int temp_idx = -1;
                 uint16_t out_flt = acquire_temp_float(temp_idx);
@@ -762,7 +808,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
         // User registers: emit MOVE
         if (type == "BOOLREGISTER" || type == "LE_BOOLREGISTER" || type == "INTREGISTER" ||
-            type == "LE_INTREGISTER" || type == "FLOATREGISTER" || type == "LE_FLOATREGISTER") {
+            type == "LE_INTREGISTER" || type == "FLOATREGISTER" || type == "LE_FLOATREGISTER" ||
+            type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER") {
             if (!opt_node.inputs.empty()) {
                 std::string consumer_port = opt_node.inputs.begin()->first;
                 std::string in_src = opt_node.inputs.begin()->second;
@@ -770,7 +817,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 if (src_addr != LE_ADDR_UNUSED) {
                     uint16_t reg_addr = element_outputs[name];
                     le_instruction_t inst;
-                    inst.opcode = (type.find("FLOAT") != std::string::npos) ? LE_OP_MOVE_F : LE_OP_MOVE;
+                    if (type.find("COMPLEX") != std::string::npos) inst.opcode = LE_OP_MOVE_C;
+                    else inst.opcode = (type.find("FLOAT") != std::string::npos) ? LE_OP_MOVE_F : LE_OP_MOVE;
                     inst.modifier = 0;
                     inst.in_a = src_addr;
                     inst.in_b = LE_ADDR_UNUSED;
@@ -785,6 +833,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         // Standard opcodes
         uint8_t opcode = LE_OP_NOP;
         bool is_float_op = false;
+        bool is_complex_op = false;
         bool is_int_op = false;
         bool is_timer_op = false;
         bool is_counter_op = false;
@@ -824,7 +873,19 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "NEG" || type == "LE_NEG") { opcode = LE_OP_NEG_F; is_float_op = true; }
         else if (type == "MIN" || type == "LE_MIN") { opcode = LE_OP_MIN_F; is_float_op = true; }
         else if (type == "MAX" || type == "LE_MAX") { opcode = LE_OP_MAX_F; is_float_op = true; }
-        else if (type == "CLAMP" || type == "LE_CLAMP") { opcode = LE_OP_CLAMP_F; is_float_op = true; }
+        else if (type == "CLAMP" || type == "LE_CLAMP") { opcode = LE_OP_BLOCK; } /* block func LE_FUNC_CLAMP_F */
+        else if (type == "CADD" || type == "LE_CADD" || type == "C_ADD") { opcode = LE_OP_CADD_F; is_complex_op = true; }
+        else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") { opcode = LE_OP_CSUB_F; is_complex_op = true; }
+        else if (type == "CMUL" || type == "LE_CMUL" || type == "C_MUL") { opcode = LE_OP_CMUL_F; is_complex_op = true; }
+        else if (type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") { opcode = LE_OP_CDIV_F; is_complex_op = true; }
+        else if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
+        else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
+        else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
+        else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
+        else if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF") { opcode = LE_OP_EXT_CALL; uses_protection = true;
+            if (state_descs.find(LE_BLK_DIFF_87) == state_descs.end()) state_descs[LE_BLK_DIFF_87] = 1; }
+        else if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" || type == "LE_TRANSFORM_33") { opcode = LE_OP_BLOCK; uses_protection = true;
+            if (state_descs.find(LE_BLK_PHASE_COMP) == state_descs.end()) state_descs[LE_BLK_PHASE_COMP] = 1; }
         else if (type == "CMP_GT" || type == "LE_CMP_GT") opcode = LE_OP_CMP_GT;
         else if (type == "CMP_LT" || type == "LE_CMP_LT") opcode = LE_OP_CMP_LT;
         else if (type == "CMP_GE" || type == "LE_CMP_GE") opcode = LE_OP_CMP_GE;
@@ -833,7 +894,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "CMP_NE" || type == "LE_CMP_NE") opcode = LE_OP_CMP_NE;
         else if (type == "PID" || type == "LE_PID") { opcode = LE_OP_PID; uses_protection = true; is_float_op = true;
             if (state_descs.find(LE_BLK_PID) == state_descs.end()) state_descs[LE_BLK_PID] = 1; }
-        else if (type == "OVERCURRENT" || type == "LE_OVERCURRENT") { opcode = LE_OP_OVERCURRENT; uses_protection = true;
+        else if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") { opcode = LE_OP_OVERCURRENT; uses_protection = true;
             if (state_descs.find(LE_BLK_OVERCURRENT) == state_descs.end()) state_descs[LE_BLK_OVERCURRENT] = 1; }
         else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
         else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
@@ -841,12 +902,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") { opcode = LE_OP_PHASOR_1P; uses_protection = true; }
         else if (type == "SYM_COMP" || type == "LE_SYM_COMP") { opcode = LE_OP_SYM_COMP; uses_protection = true;
             if (state_descs.find(LE_BLK_SYMCOMP) == state_descs.end()) state_descs[LE_BLK_SYMCOMP] = 1; }
-        else if (type == "DIFF_87" || type == "LE_DIFF_87") { opcode = LE_OP_DIFF_87; uses_protection = true;
-            if (state_descs.find(LE_BLK_87) == state_descs.end()) state_descs[LE_BLK_87] = 1; }
         else if (type == "DIST_21" || type == "LE_DIST_21") { opcode = LE_OP_DIST_21; uses_protection = true;
             if (state_descs.find(LE_BLK_21) == state_descs.end()) state_descs[LE_BLK_21] = 1; }
-        else if (type == "I2C" || type == "LE_I2C") { opcode = LE_OP_I2C; uses_serial_bus = true; }
-        else if (type == "SPI" || type == "LE_SPI") { opcode = LE_OP_SPI; uses_serial_bus = true; }
+        else if (type == "I2C" || type == "LE_I2C") { opcode = LE_OP_I2C; uses_serial_bus = true; state_descs[LE_BLK_I2C] = 1; }
+        else if (type == "SPI" || type == "LE_SPI") { opcode = LE_OP_SPI; uses_serial_bus = true; state_descs[LE_BLK_SPI] = 1; }
         else if (type == "LPF" || type == "LE_LPF" || type == "LPF_1P") { opcode = LE_OP_LPF_1P; uses_dsp = true; is_float_op = true; }
         else if (type == "BIQUAD" || type == "LE_BIQUAD" || type == "BIQUAD_IIR") { opcode = LE_OP_BIQUAD_IIR; uses_dsp = true; is_float_op = true; }
         else if (type == "MOVING_AVG" || type == "LE_MOVING_AVG" || type == "WINDOW_AVG") { opcode = LE_OP_MOVING_AVG; uses_dsp = true; is_float_op = true; }
@@ -889,46 +948,46 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 else if (ot == "int" || ot == "integer") is_int_op = true;
             }
         } else if (opcode == LE_OP_LPF_1P) {
-            modifier = static_cast<uint8_t>(lpf_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(lpf_counter++);
             state_descs[LE_BLK_LPF]++;
         } else if (opcode == LE_OP_BIQUAD_IIR) {
-            modifier = static_cast<uint8_t>(biquad_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(biquad_counter++);
             state_descs[LE_BLK_BIQUAD]++;
         } else if (opcode == LE_OP_MOVING_AVG) {
-            modifier = static_cast<uint8_t>(moving_avg_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(moving_avg_counter++);
             state_descs[LE_BLK_MOVING_AVG]++;
         } else if (opcode == LE_OP_RATE_LIMITER) {
-            modifier = static_cast<uint8_t>(rate_limiter_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(rate_limiter_counter++);
             state_descs[LE_BLK_RATE_LIMITER]++;
         } else if (opcode == LE_OP_DEADBAND) {
-            modifier = static_cast<uint8_t>(deadband_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(deadband_counter++);
             state_descs[LE_BLK_DEADBAND]++;
         } else if (opcode == LE_OP_WASHOUT) {
-            modifier = static_cast<uint8_t>(washout_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(washout_counter++);
             state_descs[LE_BLK_WASHOUT]++;
         } else if (opcode == LE_OP_PEAK_DETECTOR) {
-            modifier = static_cast<uint8_t>(peak_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(peak_counter++);
             state_descs[LE_BLK_PEAK]++;
         } else if (opcode == LE_OP_RMS) {
-            modifier = static_cast<uint8_t>(rms_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(rms_counter++);
             state_descs[LE_BLK_RMS]++;
         } else if (opcode == LE_OP_MEDIAN) {
-            modifier = static_cast<uint8_t>(median_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(median_counter++);
             state_descs[LE_BLK_MEDIAN]++;
         } else if (opcode == LE_OP_DERIVATIVE) {
-            modifier = static_cast<uint8_t>(derivative_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(derivative_counter++);
             state_descs[LE_BLK_DERIVATIVE]++;
         } else if (opcode == LE_OP_ZERO_CROSSING) {
-            modifier = static_cast<uint8_t>(zero_crossing_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(zero_crossing_counter++);
             state_descs[LE_BLK_ZERO_CROSSING]++;
         } else if (opcode == LE_OP_LUT_1D) {
-            modifier = static_cast<uint8_t>(lut_1d_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(lut_1d_counter++);
             state_descs[LE_BLK_LUT_1D]++;
         } else if (opcode == LE_OP_TOTALIZER) {
-            modifier = static_cast<uint8_t>(totalizer_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(totalizer_counter++);
             state_descs[LE_BLK_TOTALIZER]++;
         } else if (opcode == LE_OP_MIN_MAX_HOLD) {
-            modifier = static_cast<uint8_t>(min_max_hold_counter++ & 0x0F);
+            modifier = static_cast<uint8_t>(min_max_hold_counter++);
             state_descs[LE_BLK_MIN_MAX_HOLD]++;
         } else if (opcode == LE_OP_PHASOR_SHIFT) {
             /* Rotation angle (degrees, 0..255) is carried in the modifier byte. */
@@ -940,34 +999,29 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             continue;
         }
 
-        /* Per-element config for stateful DSP / PID instances: applied to the
-         * bound heap blocks by the loader at load time (honors schema tuning). */
+/* Materialize each stateful element\'s state struct (defaults + circuit
+         * properties baked as concrete bytes) into the preconfigured state image
+         * that the loader copies to RAM verbatim at load. */
         switch (opcode) {
-            case LE_OP_LPF_1P:
-                emit_config(LE_BLK_LPF, modifier, 0, el.get("alpha").as_float(0.1f)); break;
-            case LE_OP_RATE_LIMITER:
-                emit_config(LE_BLK_RATE_LIMITER, modifier, 0, el.get("rising_rate").as_float(1.0f));
-                emit_config(LE_BLK_RATE_LIMITER, modifier, 1, el.get("falling_rate").as_float(1.0f)); break;
-            case LE_OP_BIQUAD_IIR:
-                emit_config(LE_BLK_BIQUAD, modifier, 0, el.get("b0").as_float(1.0f));
-                emit_config(LE_BLK_BIQUAD, modifier, 1, el.get("b1").as_float(0.0f));
-                emit_config(LE_BLK_BIQUAD, modifier, 2, el.get("b2").as_float(0.0f));
-                emit_config(LE_BLK_BIQUAD, modifier, 3, el.get("a1").as_float(0.0f));
-                emit_config(LE_BLK_BIQUAD, modifier, 4, el.get("a2").as_float(0.0f)); break;
-            case LE_OP_MOVING_AVG:
-                emit_config(LE_BLK_MOVING_AVG, modifier, 0, el.get("window_size").as_float(8.0f)); break;
-            case LE_OP_PEAK_DETECTOR:
-                emit_config(LE_BLK_PEAK, modifier, 0, el.get("decay_rate").as_float(0.995f)); break;
-            case LE_OP_RMS:
-                emit_config(LE_BLK_RMS, modifier, 0, el.get("window_size").as_float(16.0f)); break;
-            case LE_OP_MEDIAN:
-                emit_config(LE_BLK_MEDIAN, modifier, 0, el.get("window_size").as_float(5.0f)); break;
-            case LE_OP_PID:
-                emit_config(LE_BLK_PID, modifier, 0, el.get("kp").as_float(1.0f));
-                emit_config(LE_BLK_PID, modifier, 1, el.get("ki").as_float(0.0f));
-                emit_config(LE_BLK_PID, modifier, 2, el.get("kd").as_float(0.0f));
-                emit_config(LE_BLK_PID, modifier, 3, el.get("out_min").as_float(-1e6f));
-                emit_config(LE_BLK_PID, modifier, 4, el.get("out_max").as_float(1e6f)); break;
+            case LE_OP_LPF_1P: { le_lpf_state_t st{}; st.alpha = el.get("alpha").as_float(0.1f); append_state(LE_BLK_LPF, &st, sizeof(st)); break; }
+            case LE_OP_RATE_LIMITER: { le_rate_limiter_state_t st{}; st.rising_rate = el.get("rising_rate").as_float(1.0f); st.falling_rate = el.get("falling_rate").as_float(1.0f); append_state(LE_BLK_RATE_LIMITER, &st, sizeof(st)); break; }
+            case LE_OP_BIQUAD_IIR: { le_biquad_state_t st{}; st.b0 = el.get("b0").as_float(1.0f); st.b1 = el.get("b1").as_float(0.0f); st.b2 = el.get("b2").as_float(0.0f); st.a1 = el.get("a1").as_float(0.0f); st.a2 = el.get("a2").as_float(0.0f); append_state(LE_BLK_BIQUAD, &st, sizeof(st)); break; }
+            case LE_OP_MOVING_AVG: { le_moving_avg_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(8.0f); append_state(LE_BLK_MOVING_AVG, &st, sizeof(st)); break; }
+            case LE_OP_PEAK_DETECTOR: { le_peak_state_t st{}; st.decay_rate = el.get("decay_rate").as_float(0.995f); append_state(LE_BLK_PEAK, &st, sizeof(st)); break; }
+            case LE_OP_RMS: { le_rms_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(16.0f); append_state(LE_BLK_RMS, &st, sizeof(st)); break; }
+            case LE_OP_MEDIAN: { le_median_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(5.0f); append_state(LE_BLK_MEDIAN, &st, sizeof(st)); break; }
+            case LE_OP_DEADBAND: { le_deadband_state_t st{}; st.threshold = el.get("threshold").as_float(0.0f); st.center = el.get("center").as_float(0.0f); append_state(LE_BLK_DEADBAND, &st, sizeof(st)); break; }
+            case LE_OP_WASHOUT: { le_washout_state_t st{}; st.alpha = el.get("alpha").as_float(0.95f); append_state(LE_BLK_WASHOUT, &st, sizeof(st)); break; }
+            case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = el.get("alpha").as_float(0.8f); st.gain = el.get("gain").as_float(1000.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
+            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = el.get("hysteresis").as_float(0.05f); st.sample_rate_hz = el.get("sample_rate_hz").as_float(1000.0f); append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
+            case LE_OP_LUT_1D: { le_lut_1d_state_t st{}; st.num_points = (uint16_t)el.get("num_points").as_float(2.0f); const auto& xarr = el.get("x").arr_val; const auto& yarr = el.get("y").arr_val; for (size_t k = 0; k < xarr.size() && k < LE_MAX_LUT_POINTS; k++) st.x[k] = (float)xarr[k].as_float(0.0f); for (size_t k = 0; k < yarr.size() && k < LE_MAX_LUT_POINTS; k++) st.y[k] = (float)yarr[k].as_float(0.0f); if (st.num_points < 2) st.num_points = 2; if (st.num_points > LE_MAX_LUT_POINTS) st.num_points = LE_MAX_LUT_POINTS; append_state(LE_BLK_LUT_1D, &st, sizeof(st)); break; }
+            case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = el.get("time_base_sec").as_float(60.0f); st.scale_factor = el.get("scale_factor").as_float(1.0f); st.sample_time_sec = el.get("sample_time_sec").as_float(0.001f); st.max_limit = el.get("max_limit").as_float(0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
+            case LE_OP_MIN_MAX_HOLD: { le_min_max_hold_state_t st{}; st.mode = (uint8_t)el.get("mode").as_float(0.0f); append_state(LE_BLK_MIN_MAX_HOLD, &st, sizeof(st)); break; }
+            case LE_OP_OVERCURRENT: { le_overcurrent_state_t st{}; st.pickup = el.get("pickup").as_float(1.0f); st.time_dial = el.get("time_dial").as_float(1.0f); st.curve_type = (uint8_t)el.get("curve_type").as_float(0.0f); append_state(LE_BLK_OVERCURRENT, &st, sizeof(st)); break; }
+            case LE_OP_DIST_21: { le_dist21_state_t st{}; st.reach_ohms = el.get("reach").as_float(el.get("reach_ohms").as_float(10.0f)); st.line_angle_deg = el.get("line_angle").as_float(el.get("line_angle_deg").as_float(75.0f)); st.offset_mag = el.get("offset").as_float(el.get("offset_ohms").as_float(0.0f)); st.offset_angle_deg = el.get("offset_angle").as_float(el.get("offset_angle_deg").as_float(75.0f)); st.prefault_v_threshold = el.get("prefault_v_threshold").as_float(0.5f); st.prefault_duration_ms = (uint32_t)el.get("prefault_v_duration").as_float(el.get("prefault_duration_ms").as_float(80.0f)); append_state(LE_BLK_21, &st, sizeof(st)); break; }
+            case LE_OP_PID: { le_pid_state_t st{}; st.kp = el.get("kp").as_float(1.0f); st.ki = el.get("ki").as_float(0.0f); st.kd = el.get("kd").as_float(0.0f); st.out_min = el.get("out_min").as_float(-1e6f); st.out_max = el.get("out_max").as_float(1e6f); append_state(LE_BLK_PID, &st, sizeof(st)); break; }
+            case LE_OP_I2C: { le_i2c_device_state_t st{}; st.addr_7bit = (uint8_t)el.get("addr").as_float(0.0f); st.poll_rate_ms = (uint32_t)el.get("poll_rate_ms").as_float(0.0f); st.poll_tx_len = (uint8_t)el.get("poll_tx_len").as_float(0.0f); st.poll_rx_len = (uint8_t)el.get("poll_rx_len").as_float(0.0f); st.data_dest_addr = (uint16_t)el.get("data_dest_addr").as_float(0.0f); append_state(LE_BLK_I2C, &st, sizeof(st)); break; }
+            case LE_OP_SPI: { le_spi_device_state_t st{}; st.cs_pin = (uint8_t)el.get("cs_pin").as_float(0.0f); st.poll_rate_ms = (uint32_t)el.get("poll_rate_ms").as_float(0.0f); st.poll_len = (uint8_t)el.get("poll_len").as_float(0.0f); st.data_dest_addr = (uint16_t)el.get("data_dest_addr").as_float(0.0f); append_state(LE_BLK_SPI, &st, sizeof(st)); break; }
             default: break;
         }
 
@@ -1049,9 +1103,260 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             continue;
         }
 
-        /* Phasor conversions / synced phasor extractor: 2-in (or 3-in) -> 2-out blocks. */
+if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF") {
+            /* N-input dual-slope differential protection (ANSI 87): N complex phasors
+             * -> bool trip. input_count is designer-defined (default 2); the dual-slope
+             * restraint characteristic (o87p/slp1/irs1/slp2) is baked into the state
+             * image, SEL-style (O87P/SLP1/IRS1/SLP2). Supports large-bus differential
+             * with up to 30 phasor inputs. */
+            std::vector<uint16_t> args;
+            int n_in = (int)el.get("input_count").as_float(2.0);
+            if (n_in < 2) n_in = 2;
+            if (n_in > 30) n_in = 30;
+            int n_added = 0;
+            for (int k = 0; k < n_in; k++) {
+                std::vector<std::string> names = { "in", "a", "c", "complex", "in_a" };
+                if (k == 1) names = { "b", "in_b" };
+                std::string src = find_port(names);
+                args.push_back(block_src_addr(src, LE_CONST_ZERO_C));
+                consume_input(src);
+                n_added++;
+            }
+
+            le_diff87_state_t d87{};
+            d87.o87p = (float)el.get("o87p").as_float(el.get("pickup").as_float(0.3));
+            d87.slp1 = (float)el.get("slp1").as_float(0.25);
+            d87.irs1 = (float)el.get("irs1").as_float(el.get("ips1").as_float(1.5));
+            d87.slp2 = (float)el.get("slp2").as_float(0.60);
+            append_state(LE_BLK_DIFF_87, &d87, sizeof(d87));
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_bool(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Bool;
+            element_outputs[name] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_DIFF_87, args, static_cast<uint8_t>(n_added), 1);
+            continue;
+        }
+
+if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" || type == "LE_TRANSFORM_33") {
+            /* 3-phase transformer phase-shift compensation (ANSI 87T): three complex
+             * phasors in -> three complex phasors out, transformed by the SEL
+             * compensation matrix M(k) where k=comp (odd k s=1/sqrt(3), even k
+             * s=1/3). comp (1..12) is baked into le_comp33_state_t. */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"a", "phase_a", "ia", "in_a", "ca"}), LE_CONST_ZERO_C);
+            add_in(find_port({"b", "phase_b", "ib", "in_b", "cb"}), LE_CONST_ZERO_C);
+            add_in(find_port({"c", "phase_c", "ic", "in_c", "cc"}), LE_CONST_ZERO_C);
+
+            le_comp33_state_t c33{};
+            c33.comp = (uint8_t)((int)el.get("compensation").as_float(el.get("comp").as_float(el.get("tcomp").as_float(6.0))) % 13);
+            append_state(LE_BLK_PHASE_COMP, &c33, sizeof(c33));
+
+            for (int k = 0; k < 3; k++) {
+                int t = -1;
+                uint16_t o = acquire_temp_complex(t);
+                element_outputs_port[name][(k == 0) ? "a" : (k == 1) ? "b" : "c"] = o;
+                if (k == 0) {
+                    node_temp_idx[name] = t;
+                    node_temp_type[name] = TempType::Complex;
+                    element_outputs[name] = o;
+                }
+                args.push_back(o);
+            }
+            push_block(LE_FUNC_PHASE_COMP, args, static_cast<uint8_t>(n_in), 3);
+            continue;
+        }
+
+if (type == "DIST_21" || type == "LE_DIST_21") {
+            /* Mho distance (21): v_c, i_c complex phasors + offset_on boolean -> bool trip.
+             * Prefault voltage memory uses the offset_on-independent threshold/duration
+             * properties; the boolean only gates the mho-offset circle shift. */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"v", "voltage", "v_c", "cplx_v", "a", "in_a"}), LE_CONST_ZERO_C);
+            add_in(find_port({"i", "current", "i_c", "cplx_i", "b", "in_b"}), LE_CONST_ZERO_C);
+            add_in(find_port({"offset_on", "offset_en", "offset", "oe"}), LE_CONST_FALSE);
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_bool(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Bool;
+            element_outputs[name] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_DIST_21, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+        if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") {
+            /* COMPLEX2POLAR: one complex in -> {mag, angle} floats (1-in/2-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"in", "a", "c", "complex", "in_a"}), LE_CONST_ZERO_C);
+
+            int t0 = -1, t1 = -1;
+            uint16_t out0 = acquire_temp_float(t0);
+            uint16_t out1 = acquire_temp_float(t1);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Float;
+            element_outputs[name] = out0;
+            args.push_back(out0);
+            args.push_back(out1);
+            element_outputs_port[name]["magnitude"] = out0;
+            element_outputs_port[name]["mag"] = out0;
+            element_outputs_port[name]["angle"] = out1;
+            element_outputs_port[name]["ang"] = out1;
+            push_block(LE_FUNC_COMPLEX2POLAR, args, static_cast<uint8_t>(n_in), 2);
+            continue;
+        }
+
+        if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") {
+            /* COMPLEX2RECT: one complex in -> {real, imag} floats (1-in/2-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"in", "a", "c", "complex", "in_a"}), LE_CONST_ZERO_C);
+
+            int t0 = -1, t1 = -1;
+            uint16_t out0 = acquire_temp_float(t0);
+            uint16_t out1 = acquire_temp_float(t1);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Float;
+            element_outputs[name] = out0;
+            args.push_back(out0);
+            args.push_back(out1);
+            element_outputs_port[name]["real"] = out0;
+            element_outputs_port[name]["imag"] = out1;
+            push_block(LE_FUNC_COMPLEX2RECT, args, static_cast<uint8_t>(n_in), 2);
+            continue;
+        }
+
+        if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") {
+            /* RECT2COMPLEX: {real, imag} floats -> one complex out (2-in/1-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"real", "a", "in_a", "in", "x"}), LE_CONST_ZERO_F);
+            add_in(find_port({"imag", "imaginary", "b", "in_b", "y"}), LE_CONST_ZERO_F);
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_complex(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Complex;
+            element_outputs[name] = out0;
+            element_outputs_port[name]["real"] = out0;
+            element_outputs_port[name]["imag"] = out0;
+            element_outputs_port[name]["out"] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_RECT2COMPLEX, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+
+        if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") {
+            /* POLAR2COMPLEX: {mag, angle} floats -> one complex out (2-in/1-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"mag", "magnitude", "a", "in_a", "in"}), LE_CONST_ZERO_F);
+            add_in(find_port({"ang", "angle", "b", "in_b"}), LE_CONST_ZERO_F);
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_complex(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Complex;
+            element_outputs[name] = out0;
+            element_outputs_port[name]["real"] = out0;
+            element_outputs_port[name]["imag"] = out0;
+            element_outputs_port[name]["out"] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_POLAR2COMPLEX, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+
+        if (type == "CLAMP" || type == "LE_CLAMP") {
+            /* CLAMP: {value, min, max} floats -> one float out (3-in/1-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"in", "value", "a", "in_a", "x", "input"}), LE_CONST_ZERO_F);
+            add_in(find_port({"min", "lo", "low", "min_val", "b", "in_b"}), LE_CONST_ZERO_F);
+            add_in(find_port({"max", "hi", "high", "max_val"}), LE_CONST_ZERO_F);
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_float(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Float;
+            element_outputs[name] = out0;
+            element_outputs_port[name]["out"] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_CLAMP_F, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+
+if (opcode == LE_OP_PHASOR_1P) {
+            /* PHASOR_1P: complex output phasor (2-in/1-out). */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"in", "a", "sample", "x", "pv"}), LE_CONST_ZERO_F);
+            add_in(find_port({"sync", "sync_complex", "ref", "b", "sync_phasor"}), LE_CONST_ZERO_C);
+            state_descs[LE_BLK_PHASOR]++;
+            le_phasor_state_t ph{};
+            ph.samples_per_cycle = (uint16_t)el.get("samples_per_cycle").as_float(16.0f);
+            if (ph.samples_per_cycle == 0 || ph.samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE)
+                ph.samples_per_cycle = 16;
+            append_state(LE_BLK_PHASOR, &ph, sizeof(ph));
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_complex(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Complex;
+            element_outputs[name] = out0;
+            element_outputs_port[name]["phasor"] = out0;
+            element_outputs_port[name]["out"] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_PHASOR_1P, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+        /* Phasor conversions: 2-in (or 3-in) -> 2-out blocks (RECT2POLAR/POLAR2RECT/PHASOR_SHIFT). */
         if (opcode == LE_OP_RECT2POLAR || opcode == LE_OP_POLAR2RECT ||
-            opcode == LE_OP_PHASOR_SHIFT || opcode == LE_OP_PHASOR_1P) {
+            opcode == LE_OP_PHASOR_SHIFT) {
             std::vector<uint16_t> args;
             uint8_t fid = LE_FUNC_NONE;
             int n_in = 0;
@@ -1073,12 +1378,6 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 add_in(find_port({"b", "imag", "in_b"}), LE_CONST_ZERO_F);
                 add_in(find_port({"delta", "delta_rad", "angle"}), LE_CONST_ZERO_F);
                 fid = LE_FUNC_PHASOR_SHIFT;
-            } else { /* PHASOR_1P */
-                add_in(find_port({"in", "a", "sample", "x", "pv"}), LE_CONST_ZERO_F);
-                add_in(find_port({"sync_mag", "syncmag", "ref_mag", "sync"}), LE_CONST_ONE_F);
-                add_in(find_port({"sync_angle", "syncangle", "ref_angle", "sync_ang"}), LE_CONST_ZERO_F);
-                fid = LE_FUNC_PHASOR_1P;
-                state_descs[LE_BLK_PHASOR]++;
             }
 
             /* Two float outputs: the first (magnitude / real) is the canonical
@@ -1181,8 +1480,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
         bool is_cmp = (opcode >= LE_OP_CMP_GT && opcode <= LE_OP_CMP_NE);
         bool has_bool_b = (opcode == LE_OP_TOTALIZER || opcode == LE_OP_MIN_MAX_HOLD || opcode == LE_OP_ZERO_CROSSING);
-        uint16_t default_a = (is_float_op || is_cmp) ? LE_CONST_ZERO_F : LE_CONST_FALSE;
-        uint16_t default_b = (is_float_op && !has_bool_b) ? LE_CONST_ZERO_F : LE_ADDR_UNUSED;
+        uint16_t default_a = (is_float_op || is_cmp) ? LE_CONST_ZERO_F : (is_complex_op ? LE_CONST_ZERO_C : LE_CONST_FALSE);
+        uint16_t default_b = (is_float_op && !has_bool_b) ? LE_CONST_ZERO_F : (is_complex_op ? LE_ADDR_UNUSED : LE_ADDR_UNUSED);
 
         uint16_t in_a = in0_src.empty() ? default_a : src_address(in0_src,
                       source_port_of(name, !used_keys.empty() ? used_keys[0] : ""), default_a);
@@ -1205,14 +1504,26 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             if (is_timer_op) {
                 out_addr = allocate_timer();
                 state_descs[LE_BLK_TIMER]++;
+                le_timer_state_t tst{};
+                tst.preset_ms = (uint32_t)el.get("preset_ms").as_float(
+                    el.get("preset").as_float(0.0f));
+                append_state(LE_BLK_TIMER, &tst, sizeof(tst));
             } else if (is_counter_op) {
                 out_addr = allocate_counter();
                 state_descs[LE_BLK_COUNTER]++;
+                le_counter_state_t cst{};
+                cst.preset = (int32_t)el.get("preset").as_float(0.0f);
+                append_state(LE_BLK_COUNTER, &cst, sizeof(cst));
             } else if (is_float_op) {
                 int temp_idx = -1;
                 out_addr = acquire_temp_float(temp_idx);
                 node_temp_idx[name] = temp_idx;
                 node_temp_type[name] = TempType::Float;
+            } else if (is_complex_op) {
+                int temp_idx = -1;
+                out_addr = acquire_temp_complex(temp_idx);
+                node_temp_idx[name] = temp_idx;
+                node_temp_type[name] = TempType::Complex;
             } else if (is_int_op) {
                 int temp_idx = -1;
                 out_addr = acquire_temp_int(temp_idx);
@@ -1237,6 +1548,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
         if (ref_counts[name] <= 0 && node_temp_idx.find(name) != node_temp_idx.end()) {
             if (is_float_op) release_temp_float(node_temp_idx[name]);
+            else if (is_complex_op) release_temp_complex(node_temp_idx[name]);
             else if (is_int_op) release_temp_int(node_temp_idx[name]);
             else if (!is_timer_op && !is_counter_op) release_temp_bool(node_temp_idx[name]);
             node_temp_idx.erase(name);
@@ -1295,37 +1607,43 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 #if LE_ENABLE_PROTECTION
             case LE_BLK_PHASOR: return (uint16_t)sizeof(le_phasor_state_t);
             case LE_BLK_SYMCOMP: return (uint16_t)sizeof(le_symcomp_state_t);
-            case LE_BLK_87: return (uint16_t)sizeof(le_diff87_state_t);
             case LE_BLK_21: return (uint16_t)sizeof(le_dist21_state_t);
+            case LE_BLK_DIFF_87: return (uint16_t)sizeof(le_diff87_state_t);
+            case LE_BLK_PHASE_COMP: return (uint16_t)sizeof(le_comp33_state_t);
 #endif
+            case LE_BLK_I2C: return (uint16_t)sizeof(le_i2c_device_state_t);
+            case LE_BLK_SPI: return (uint16_t)sizeof(le_spi_device_state_t);
             default: return 0;
         }
     };
-    std::vector<uint8_t> state_bytes;
+    /* Build the state-directive table and the preconfigured state image.
+     * Groups are emitted in ascending kind order; each group's blocks are
+     * concatenated (instance order). The loader copies the whole image to RAM
+     * and uses the directives to compute per-kind byte offsets. Defaults and
+     * all circuit properties are already baked into these bytes. */
+    std::vector<uint8_t> state_bytes;   /* the state-desc (kind/count/size) table */
+    std::vector<uint8_t> state_image;   /* the preconfigured state struct bytes */
     int state_records = 0;
     for (int k = 1; k < LE_BLK_LAST; k++) {
         uint8_t kind = (uint8_t)k;
-        auto sit = state_descs.find(kind);
-        if (sit == state_descs.end() || sit->second <= 0) continue;
+        auto sit = state_instances.find(kind);
+        if (sit == state_instances.end() || sit->second.empty()) continue;
         uint16_t sz = state_kind_size(kind);
         if (sz == 0) continue;
-        int cnt = sit->second;
+        int cnt = (int)sit->second.size();
         if (cnt > 255) cnt = 255;
         le_state_desc_t sd;
-        sd.kind = kind;
-        sd.count = (uint8_t)cnt;
-        sd.size = sz;
+        sd.kind = kind; sd.count = (uint8_t)cnt; sd.size = sz;
         const uint8_t* sh = (const uint8_t*)&sd;
         for (int bi = 0; bi < (int)sizeof(sd); bi++) state_bytes.push_back(sh[bi]);
         state_records++;
+        for (size_t i = 0; i < sit->second.size(); i++) {
+            const std::vector<uint8_t>& blob = sit->second[i];
+            if ((int)blob.size() != (int)sz) continue; /* defensive */
+            for (uint8_t b : blob) state_image.push_back(b);
+        }
     }
-    /* Per-element config directives go after the state table. */
-    std::vector<uint8_t> config_bytes;
-    for (const le_config_t& c : configs) {
-        const uint8_t* ch = (const uint8_t*)&c;
-        for (int bi = 0; bi < (int)sizeof(c); bi++) config_bytes.push_back(ch[bi]);
-    }
-    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() + config_bytes.size();
+    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size();
 
     std::vector<uint8_t> payload_all(total_payload);
     if (payload_bytes > 0) {
@@ -1337,15 +1655,16 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     if (!state_bytes.empty()) {
         std::memcpy(payload_all.data() + payload_bytes + block_bytes.size(), state_bytes.data(), state_bytes.size());
     }
-    if (!config_bytes.empty()) {
+    if (!state_image.empty()) {
         std::memcpy(payload_all.data() + payload_bytes + block_bytes.size() + state_bytes.size(),
-                    config_bytes.data(), config_bytes.size());
+                    state_image.data(), state_image.size());
     }
 
     uint32_t crc = compute_crc32(payload_all.data(), total_payload);
 
     int total_bool_regs = m_user_bool_count + m_peak_temp_bool;
     int total_float_regs = m_user_float_count + m_peak_temp_float;
+    int total_complex_regs = m_user_complex_count + m_peak_temp_complex;
     int total_int_regs = m_user_int_count + m_peak_temp_int;
 
     le_header_t header;
@@ -1358,11 +1677,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     header.digital_out_count = static_cast<uint16_t>(dout_map.size());
     header.bool_reg_count = static_cast<uint16_t>(total_bool_regs);
     header.float_reg_count = static_cast<uint16_t>(total_float_regs);
-    header.timer_count = static_cast<uint16_t>(m_timer_counter);
-    header.counter_count = static_cast<uint16_t>(m_counter_counter);
+    header.complex_reg_count = static_cast<uint16_t>(total_complex_regs);
     header.block_count = static_cast<uint16_t>(block_calls.size());
     header.state_desc_count = static_cast<uint16_t>(state_records);
-    header.config_count = static_cast<uint16_t>(configs.size());
+    header.state_img_len = static_cast<uint32_t>(state_image.size());
     header.crc32 = crc;
 
     size_t total_bin_size = sizeof(le_header_t) + total_payload;
@@ -1416,18 +1734,19 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
         }
 
-        int max_timers = limits.get("timers").as_int(32);
-        if (m_timer_counter > max_timers) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(m_timer_counter) +
-                " timers, but target board '" + dev_name + "' only supports up to " + std::to_string(max_timers) + ".");
+        int workspace_bytes = limits.get("workspace_bytes").as_int(LE_STATE_WORKSPACE_BYTES);
+        int total_state_bytes = 0;
+        for (int k = 1; k < LE_BLK_LAST; k++) {
+            auto sit = state_descs.find((uint8_t)k);
+            if (sit == state_descs.end() || sit->second <= 0) continue;
+            uint16_t sz = state_kind_size((uint8_t)k);
+            if (sz == 0) continue;
+            total_state_bytes += (int)sz * sit->second;
         }
-
-        int max_counters = limits.get("counters").as_int(16);
-        if (m_counter_counter > max_counters) {
+        if (total_state_bytes > workspace_bytes) {
             board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(m_counter_counter) +
-                " counters, but target board '" + dev_name + "' only supports up to " + std::to_string(max_counters) + ".");
+            validation_errors.push_back("Board Validation Error: Circuit state requires " + std::to_string(total_state_bytes) +
+                " bytes, but target board '" + dev_name + "' has a " + std::to_string(workspace_bytes) + "-byte state workspace.");
         }
 
         int slot_size = limits.get("slot_size_bytes").as_int(2048);
@@ -1454,17 +1773,6 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Circuit uses Digital Signal Processing (DSP) features, but target board '" + dev_name + "' has DSP disabled.");
         }
-
-        int max_dsp_filters = limits.get("dsp_filters").as_int(16);
-        int total_dsp_filters = lpf_counter + biquad_counter + moving_avg_counter + rate_limiter_counter +
-                                deadband_counter + washout_counter + peak_counter + rms_counter +
-                                median_counter + derivative_counter + zero_crossing_counter +
-                                lut_1d_counter + totalizer_counter + min_max_hold_counter;
-        if (total_dsp_filters > max_dsp_filters) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_dsp_filters) +
-                " DSP filter blocks, but target board '" + dev_name + "' only supports up to " + std::to_string(max_dsp_filters) + ".");
-        }
     }
 
     // Step 7: Populate out_result
@@ -1475,6 +1783,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     out_result->ain_count = static_cast<int>(ain_map.size());
     out_result->bool_reg_count = total_bool_regs;
     out_result->float_count = total_float_regs;
+    out_result->complex_count = total_complex_regs;
     out_result->int_count = total_int_regs;
     out_result->timer_count = m_timer_counter;
     out_result->counter_count = m_counter_counter;
@@ -1483,6 +1792,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     out_result->temp_bool_count = m_peak_temp_bool;
     out_result->user_float_count = m_user_float_count;
     out_result->temp_float_count = m_peak_temp_float;
+    out_result->user_complex_count = m_user_complex_count;
+    out_result->temp_complex_count = m_peak_temp_complex;
     out_result->user_int_count = m_user_int_count;
     out_result->temp_int_count = m_peak_temp_int;
     out_result->eliminated_instructions = stats.eliminated_instructions;

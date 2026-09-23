@@ -1,0 +1,10 @@
+{
+  "name": "Element_CADD",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CADD"
+    }
+  ],
+  "nets": []
+}

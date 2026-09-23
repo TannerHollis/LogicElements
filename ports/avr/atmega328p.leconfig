@@ -9,17 +9,14 @@
     "digital_outputs": 6,
     "coils": 32,
     "floats": 16,
-    "timers": 4,
-    "counters": 4,
+    "workspace_bytes": 512,
     "config_slots": 2,
     "slot_size_bytes": 512
   },
   "features": {
     "protection": false,
-    "serial_bus": true,
-    "i2c_devices": 2,
-    "spi_devices": 1
-  },
+    "serial_bus": true
+},
   "pin_map": {
     "inputs": {
       "%I0": {"alias": "BTN_START", "pin": "D2", "desc": "Start Button"},

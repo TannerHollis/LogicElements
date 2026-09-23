@@ -95,8 +95,7 @@ static void cmd_caps(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "    \"analog_inputs\": %d,\r\n", LE_MAX_ANALOG_IN); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"bool_regs\": %d,\r\n", LE_MAX_BOOL_REGS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"floats\": %d,\r\n", LE_MAX_FLOATS); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"timers\": %d,\r\n", LE_MAX_TIMERS); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"counters\": %d,\r\n", LE_MAX_COUNTERS); cli_print(buf);
+    snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_STATE_WORKSPACE_BYTES); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"config_slots\": %d,\r\n", LE_MAX_CONFIG_SLOTS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"slot_size_bytes\": %d\r\n", LE_SLOT_SIZE_BYTES); cli_print(buf);
     cli_print("  },\r\n");
@@ -108,12 +107,8 @@ static void cmd_caps(le_cli_t* cli)
 #endif
 #if LE_ENABLE_SERIAL_BUS
     cli_print("    \"serial_bus\": true,\r\n");
-    snprintf(buf, sizeof(buf), "    \"i2c_devices\": %d,\r\n", LE_MAX_I2C_DEVICES); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"spi_devices\": %d\r\n", LE_MAX_SPI_DEVICES); cli_print(buf);
 #else
     cli_print("    \"serial_bus\": false,\r\n");
-    cli_print("    \"i2c_devices\": 0,\r\n");
-    cli_print("    \"spi_devices\": 0\r\n");
 #endif
     cli_print("  },\r\n");
     cli_print("  \"custom_nodes\": ");

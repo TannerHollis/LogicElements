@@ -1,0 +1,10 @@
+{
+  "name": "Element_RECT2COMPLEX",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "RECT2COMPLEX"
+    }
+  ],
+  "nets": []
+}

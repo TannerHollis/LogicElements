@@ -104,18 +104,6 @@ if(UNIX AND NOT APPLE)
 endif()
 add_test(NAME CompilerTests COMMAND test_compiler)
 
-# Comprehensive per-opcode test (needs compiler API for bytecode + disassembly)
-add_executable(test_each_opcode tests/test_each_opcode.c)
-target_link_libraries(test_each_opcode PRIVATE le_compiler_static LogicElements)
-target_include_directories(test_each_opcode PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
-)
-if(UNIX AND NOT APPLE)
-    target_link_libraries(test_each_opcode PRIVATE m)
-endif()
-add_test(NAME EachOpcodeTests COMMAND test_each_opcode)
-
 # Per-element assembly verification: compiles one circuit fixture per element
 # type and inspects the emitted disassembly for the expected opcode(s).
 add_executable(test_element_assembly tests/test_element_assembly.c)

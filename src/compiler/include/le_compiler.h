@@ -52,6 +52,7 @@ typedef struct {
     int ain_count;             /**< Total number of analog input channels mapped. */
     int bool_reg_count;        /**< Total number of boolean memory registers allocated (%M). */
     int float_count;           /**< Total number of 32-bit floating-point registers allocated (%R). */
+    int complex_count;         /**< Total number of complex registers allocated (%C, real+imag pairs). */
     int int_count;             /**< Total number of 32-bit integer registers allocated. */
     int timer_count;           /**< Total number of timer function blocks allocated. */
     int counter_count;         /**< Total number of counter function blocks allocated. */
@@ -62,6 +63,8 @@ typedef struct {
     int temp_bool_count;       /**< Number of transient intermediate boolean registers reused. */
     int user_float_count;      /**< Number of explicit named floating-point registers allocated. */
     int temp_float_count;      /**< Number of transient intermediate floating-point registers reused. */
+    int user_complex_count;    /**< Number of explicit named complex registers allocated. */
+    int temp_complex_count;    /**< Number of transient intermediate complex registers reused. */
     int user_int_count;        /**< Number of explicit named integer registers allocated. */
     int temp_int_count;        /**< Number of transient intermediate integer registers reused. */
 
@@ -108,6 +111,8 @@ LE_COMPILER_API int le_compile_json(
  * @param user_bool_count Number of named user boolean registers (`-1` if unknown).
  * @param user_float_count Number of named user float registers (`-1` if unknown).
  * @param user_int_count Number of named user integer registers (`-1` if unknown).
+ * @param board_profile_json Optional board profile JSON used to annotate custom
+ *        board nodes in the output. Pass NULL to omit custom-node info.
  * @param out_disassembly Output pointer receiving heap-allocated disassembly string. Free with @ref le_compiler_free_buffer.
  * @param out_error_msg Output pointer receiving heap-allocated error message on failure. Free with @ref le_compiler_free_buffer.
  * @return Returns `0` on success; otherwise, returns a non-zero error code.
@@ -118,6 +123,7 @@ LE_COMPILER_API int le_disassemble_bin(
     int user_bool_count,
     int user_float_count,
     int user_int_count,
+    const char* board_profile_json,
     char** out_disassembly,
     char** out_error_msg
 );

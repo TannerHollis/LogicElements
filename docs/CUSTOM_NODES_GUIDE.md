@@ -51,13 +51,13 @@ The lifecycle of a custom node spans hardware profile definition, interactive di
 â”‚             4. Compiler Translation (le_compile)       â”‚
 â”‚  - Validates node pins against board profile.          â”‚
 â”‚  - Preserves hardware side effects during optimization.â”‚
-â”‚  - Emits 8-byte LE_OP_EXT_CALL (0x80) instruction.     â”‚
+â”‚  - Emits a variable-arity LE_OP_BLOCK (0xA0) call (func id ≥ 0x80).     â”‚
 â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
                             â”‚
                             â–¼
 â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
 â”‚             5. Microcontroller Virtual Machine         â”‚
-â”‚  - VM encounters LE_OP_EXT_CALL during scan loop.      â”‚
+â”‚  - VM encounters LE_OP_BLOCK (custom func id) during scan loop.      â”‚
 â”‚  - Dispatches to adopter HAL callback: ext_call().     â”‚
 â”‚  - Executes native C peripheral code in real time.     â”‚
 â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
@@ -65,29 +65,34 @@ The lifecycle of a custom node spans hardware profile definition, interactive di
 
 ---
 
-## Binary instruction format (`LE_OP_EXT_CALL`)
+## Binary instruction format (`LE_OP_BLOCK`)
 
-Custom nodes execute through the `LE_OP_EXT_CALL` opcode (`0x80`). Each instruction is packed into the standard 8-byte fixed-width format defined in `src/runtime/include/le_types.h`:
+Custom nodes are emitted as **variable-arity `LE_OP_BLOCK` calls** (`0xA0`) so a
+node can have any number of inputs and outputs. The instruction carries the
+function id and a block-table index; the node's operand list lives in a
+`le_block_desc_t` (in the block table at the end of the payload):
 
 ```
 Byte:   0           1           2       3       4       5       6       7
-      â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-      â”‚   0x80    â”‚  func_id  â”‚     in_a      â”‚     in_b      â”‚      out      â”‚
-      â”‚  (opcode) â”‚  (1..255) â”‚   (16-bit)    â”‚   (16-bit)    â”‚   (16-bit)    â”‚
-      â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+      [  0xA0    ][  func_id  ][  block-desc index ][     unused      ]
+      (opcode)  ( >= 0x80 )   (in_a: index into    (in_b & out unused;
+      0xA0 =      custom-      the block-table      operands live in the
+      LE_OP_      node id)      descriptor)         descriptor args)
+      BLOCK
 ```
 
 ### Field breakdown
 
 | Field | Size | Description |
 | :--- | :--- | :--- |
-| `opcode` | 1 byte | Opcode value `0x80` (`LE_OP_EXT_CALL`). |
-| `modifier` / `func_id` | 1 byte | Adopter-defined function identifier (`1` to `255`). Function ID `0` is reserved. |
-| `in_a` | 2 bytes | 16-bit Process Image memory address for the first input operand. |
-| `in_b` | 2 bytes | 16-bit Process Image memory address for the second input operand. Set to `0xFFFF` (`LE_ADDR_UNUSED`) when unused. |
-| `out` | 2 bytes | 16-bit Process Image destination address for the operation result. Set to `0xFFFF` when unused. |
+| `opcode` | 1 byte | `0xA0` (`LE_OP_BLOCK`). |
+| `modifier` / `func_id` | 1 byte | Function identifier. Custom-node ids are `>= LE_FUNC_CUSTOM_BASE (0x80)`; the runtime dispatches those to the HAL `ext_call`. |
+| `in_a` | 2 bytes | Index into the **block-table** (`le_block_desc_t`). The descriptor lists `in_count` inputs then `out_count` outputs as 16-bit process-image addresses. |
+| `in_b` | 2 bytes | Unused for block calls (`LE_ADDR_UNUSED`). |
+| `out` | 2 bytes | Unused for block calls (`LE_ADDR_UNUSED`); outputs are written to the descriptor's output addresses. |
 
----
+The disassembler renders a custom node's call with its function id and arity,
+for example `[0000] BLOCK BLK[0] fn:0x81 -> 0->1 [ | T_BOOL[0]]`.
 
 ## Board profile specification (`.leconfig`)
 
@@ -468,7 +473,7 @@ py tools/compiler/le_compiler.py circuit.json -b my_board.leconfig -o circuit.le
 2. **Function ID assignment**: The compiler extracts `func_id` (`1`) and writes it to the instruction's `modifier` byte.
 3. **Port mapping**: The compiler maps schematic pin names (`duty`, `enable`, `active`) to the input and output operands `in_a`, `in_b`, and `out`.
 4. **Side effect preservation**: Custom nodes are registered in the intermediate representation as having hardware side effects. This prevents dead code elimination from pruning them, even if their outputs do not drive downstream logic gates.
-5. **Instruction generation**: The compiler emits an `LE_OP_EXT_CALL` (`0x80`) instruction.
+5. **Instruction generation**: The compiler emits an `LE_OP_BLOCK` (`0xA0`) call with a custom function id (>= `0x80`) and a block descriptor carrying the node's operands.
 
 ---
 
@@ -487,13 +492,13 @@ Example disassembly listing:
  LOGICELEMENTS BINARY DISASSEMBLY (.lebin)
 ============================================================
 Magic:               0x4C454231 ('LEB1')
-Version:             1
+Version:             5
 Flags:               0x0001 (Autostart: True)
 Instruction Count:   1
 ------------------------------------------------------------
 INDEX   OPCODE         IN_A         IN_B         OUT         
 ------------------------------------------------------------
-[0000]  EXT_CALL(1)    R[0]         DIN[0]       -> DOUT[0]     
+[0000]  BLOCK          BLK[0]       fn:0x81      -> 2->1 [R[0] DIN[0] | DOUT[0]]     
 ============================================================
 ```
 
