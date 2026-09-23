@@ -1,0 +1,11 @@
+{
+  "name": "Element_CTD",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CTD",
+      "preset": 10
+    }
+  ],
+  "nets": []
+}

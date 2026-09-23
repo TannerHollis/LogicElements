@@ -1,0 +1,10 @@
+{
+  "name": "Element_CMP_NE",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CMP_NE"
+    }
+  ],
+  "nets": []
+}

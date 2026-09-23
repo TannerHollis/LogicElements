@@ -1,0 +1,13 @@
+{
+  "name": "Element_DIFF_87",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "DIFF_87",
+      "slope1": 10.0,
+      "pickup": 0.2,
+      "tds": 0.05
+    }
+  ],
+  "nets": []
+}

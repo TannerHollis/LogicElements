@@ -1,0 +1,10 @@
+{
+  "name": "Element_AND",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "AND"
+    }
+  ],
+  "nets": []
+}

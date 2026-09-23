@@ -1,0 +1,29 @@
+{
+  "name": "Element_BOOLREGISTER",
+  "elements": [
+    {
+      "name": "IN1",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    },
+    {
+      "name": "M1",
+      "type": "BOOLREGISTER",
+      "address": "%M0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "IN1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "M1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

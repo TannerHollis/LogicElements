@@ -1,0 +1,18 @@
+{
+  "name": "Element_LUT_1D",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "LUT_1D",
+      "x": [
+        0.0,
+        1.0
+      ],
+      "y": [
+        0.0,
+        10.0
+      ]
+    }
+  ],
+  "nets": []
+}

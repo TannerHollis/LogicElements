@@ -1,0 +1,11 @@
+{
+  "name": "Element_CTU",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CTU",
+      "preset": 10
+    }
+  ],
+  "nets": []
+}

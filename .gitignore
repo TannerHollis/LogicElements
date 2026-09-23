@@ -1,8 +1,31 @@
-
-# Build directories
-out/
+# Build and output directories
 build/
+bin/
+out/
 .vs/
+.vscode/
+
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Compiled binaries and object files
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+*.exp
+*.ilk
+*.idb
+
+# Generated LogicElements bytecode
+*.lebin
 
 # CMake generated files
 CMakeCache.txt
@@ -10,31 +33,5 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
-
-# Generated configuration files
-src/LogicElements/include/le_Config.hpp
-src/LogicElements/include/le_Version.hpp
-src/LogicElements/src/le_Version.cpp
-
-# Generated manifest
-LogicElements_manifest.json
-
-# IDE files
-.vscode/
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-
-# Compiled files
-*.obj
-*.exe
-*.dll
-*.so
-*.dylib
-*.a
-*.lib
-
-# Test executables
-tests/Logic_Elements_Tests
-tests/Logic_Elements_Tests.exe
+CTestTestfile.cmake
+Testing/

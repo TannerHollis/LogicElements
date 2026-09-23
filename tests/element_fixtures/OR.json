@@ -1,0 +1,10 @@
+{
+  "name": "Element_OR",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "OR"
+    }
+  ],
+  "nets": []
+}

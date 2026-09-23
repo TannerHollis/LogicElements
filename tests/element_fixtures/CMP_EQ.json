@@ -1,0 +1,10 @@
+{
+  "name": "Element_CMP_EQ",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CMP_EQ"
+    }
+  ],
+  "nets": []
+}

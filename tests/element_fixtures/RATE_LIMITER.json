@@ -1,0 +1,12 @@
+{
+  "name": "Element_RATE_LIMITER",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "RATE_LIMITER",
+      "rising_rate": 10.0,
+      "falling_rate": 10.0
+    }
+  ],
+  "nets": []
+}

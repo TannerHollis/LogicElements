@@ -1,0 +1,11 @@
+{
+  "name": "Element_MEDIAN",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MEDIAN",
+      "window_size": 5
+    }
+  ],
+  "nets": []
+}

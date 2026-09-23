@@ -1,0 +1,11 @@
+{
+  "name": "Element_MIN_MAX_HOLD",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MIN_MAX_HOLD",
+      "mode": 0
+    }
+  ],
+  "nets": []
+}

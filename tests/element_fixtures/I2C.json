@@ -1,0 +1,12 @@
+{
+  "name": "Element_I2C",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "I2C",
+      "addr": 64,
+      "poll_rate_ms": 100
+    }
+  ],
+  "nets": []
+}

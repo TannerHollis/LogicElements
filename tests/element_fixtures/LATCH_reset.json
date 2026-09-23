@@ -1,0 +1,11 @@
+{
+  "name": "Element_LATCH_reset",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "LATCH",
+      "dominant": "Reset Dominant"
+    }
+  ],
+  "nets": []
+}

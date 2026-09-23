@@ -1,0 +1,11 @@
+{
+  "name": "Element_TP",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "TP",
+      "preset_ms": 1000
+    }
+  ],
+  "nets": []
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Element_LE_CUSTOM",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "LE_CUSTOM",
+      "function_id": 129,
+      "output_type": "bool"
+    }
+  ],
+  "nets": []
+}

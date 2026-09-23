@@ -1,0 +1,11 @@
+{
+  "name": "Element_WASHOUT",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "WASHOUT",
+      "alpha": 0.95
+    }
+  ],
+  "nets": []
+}

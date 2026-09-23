@@ -1,0 +1,65 @@
+{
+  "device": {
+    "name": "Raspberry Pi Pico RP2040",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
+  "limits": {
+    "digital_inputs": 16,
+    "digital_outputs": 16,
+    "coils": 128,
+    "floats": 64,
+    "timers": 16,
+    "counters": 8,
+    "config_slots": 4,
+    "slot_size_bytes": 4096
+  },
+  "features": {
+    "protection": true,
+    "serial_bus": true,
+    "i2c_devices": 4,
+    "spi_devices": 4
+  },
+  "pin_map": {
+    "inputs": {
+      "%I0": {"alias": "BTN_A", "pin": "GP14", "desc": "Pushbutton A (Pull-up)"},
+      "%I1": {"alias": "BTN_B", "pin": "GP15", "desc": "Pushbutton B (Pull-up)"},
+      "%I2": {"alias": "SENSOR_TRIG", "pin": "GP16", "desc": "Digital Proximity Sensor"}
+    },
+    "outputs": {
+      "%Q0": {"alias": "PICO_LED", "pin": "GP25", "desc": "Onboard Green LED"},
+      "%Q1": {"alias": "RELAY_1", "pin": "GP18", "desc": "External Relay Channel 1"},
+      "%Q2": {"alias": "RELAY_2", "pin": "GP19", "desc": "External Relay Channel 2"}
+    },
+    "i2c": {
+      "sda": "GP4",
+      "scl": "GP5"
+    },
+    "spi": {
+      "sck": "GP18",
+      "mosi": "GP19",
+      "miso": "GP16",
+      "cs": ["GP17"]
+    }
+  },
+  "custom_nodes": [
+    {
+      "type_id": "RP2040_PIO_Stepper",
+      "display_name": "PIO Stepper Driver",
+      "category": "RP2040 Peripherals",
+      "description": "Deterministic PIO state machine step/dir generator",
+      "function_id": 1,
+      "color": "#E91E63",
+      "inputs": [
+        {"name": "StepEnable", "type": "bool", "default": false},
+        {"name": "Direction", "type": "bool", "default": true}
+      ],
+      "outputs": [
+        {"name": "StepActive", "type": "bool"}
+      ],
+      "properties": [
+        {"key": "step_rate_hz", "label": "Step Rate (Hz)", "type": "int", "default": 5000, "min": 100, "max": 100000}
+      ]
+    }
+  ]
+}

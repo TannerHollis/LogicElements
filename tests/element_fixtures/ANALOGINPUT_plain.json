@@ -1,0 +1,12 @@
+{
+  "name": "Element_ANALOGINPUT_plain",
+  "elements": [
+    {
+      "name": "AI1",
+      "type": "ANALOGINPUT",
+      "channel": 0,
+      "mode": "raw"
+    }
+  ],
+  "nets": []
+}

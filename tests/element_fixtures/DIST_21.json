@@ -1,0 +1,11 @@
+{
+  "name": "Element_DIST_21",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "DIST_21",
+      "z1_reach": 0.8
+    }
+  ],
+  "nets": []
+}

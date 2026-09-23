@@ -1,0 +1,80 @@
+{
+  "device": {
+    "name": "Industrial-Motor-PLC",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
+  "limits": {
+    "digital_inputs": 16,
+    "digital_outputs": 16,
+    "coils": 128,
+    "floats": 64,
+    "timers": 16,
+    "counters": 8,
+    "config_slots": 3,
+    "slot_size_bytes": 2048
+  },
+  "features": {
+    "protection": false,
+    "serial_bus": true,
+    "i2c_devices": 2,
+    "spi_devices": 2
+  },
+  "custom_nodes": [
+    {
+      "type_id": "BOARD_PWM",
+      "display_name": "Hardware PWM Channel",
+      "category": "Motion",
+      "description": "Sets timer TIM1 PWM duty cycle (0.0 to 100.0%) and returns active state.",
+      "function_id": 129,
+      "c_header": "custom_nodes.h",
+      "inputs": [
+        { "name": "duty", "type": "float" },
+        { "name": "enable", "type": "bool" }
+      ],
+      "outputs": [
+        { "name": "active", "type": "bool" }
+      ]
+    },
+    {
+      "type_id": "BOARD_ENCODER",
+      "display_name": "Quadrature Encoder Counter",
+      "category": "Motion",
+      "description": "Reads hardware quadrature encoder counter with zero index reset input.",
+      "function_id": 130,
+      "c_header": "custom_nodes.h",
+      "inputs": [
+        { "name": "reset", "type": "bool" }
+      ],
+      "outputs": [
+        { "name": "position", "type": "float" }
+      ]
+    },
+    {
+      "type_id": "BOARD_FILTER",
+      "display_name": "DSP Low-Pass Filter",
+      "category": "DSP",
+      "description": "Applies hardware-accelerated single-pole low-pass filtering.",
+      "function_id": 131,
+      "c_header": "custom_nodes.h",
+      "inputs": [
+        { "name": "raw", "type": "float" }
+      ],
+      "outputs": [
+        { "name": "filtered", "type": "float" }
+      ]
+    }
+  ],
+  "pin_map": {
+    "inputs": {
+      "%I0": { "pin": "PA0", "alias": "START_PB", "desc": "Start Pushbutton (NO)" },
+      "%I1": { "pin": "PA1", "alias": "STOP_PB", "desc": "Stop Pushbutton (NC)" },
+      "%I2": { "pin": "PA2", "alias": "ENC_RESET", "desc": "Encoder Zero Position Sensor" }
+    },
+    "outputs": {
+      "%Q0": { "pin": "PB0", "alias": "MOTOR_RUN", "desc": "Main Motor Contactor" },
+      "%Q1": { "pin": "PB1", "alias": "SPEED_OK", "desc": "Speed Ready Indicator LED" }
+    }
+  }
+}
+

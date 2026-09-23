@@ -1,0 +1,11 @@
+{
+  "name": "Element_SPI",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "SPI",
+      "cs_pin": 0
+    }
+  ],
+  "nets": []
+}

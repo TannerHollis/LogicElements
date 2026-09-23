@@ -1,0 +1,16 @@
+{
+  "name": "Element_BIQUAD",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "BIQUAD",
+      "filter_type": "Lowpass",
+      "b0": 0.067455,
+      "b1": 0.134911,
+      "b2": 0.067455,
+      "a1": -1.142981,
+      "a2": 0.412802
+    }
+  ],
+  "nets": []
+}

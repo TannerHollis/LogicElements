@@ -1,0 +1,12 @@
+{
+  "name": "Element_OVERCURRENT",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "OVERCURRENT",
+      "pickup": 1.0,
+      "time_dial": 1.0
+    }
+  ],
+  "nets": []
+}

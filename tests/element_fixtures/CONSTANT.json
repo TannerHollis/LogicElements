@@ -1,0 +1,12 @@
+{
+  "name": "Element_CONSTANT",
+  "elements": [
+    {
+      "name": "C1",
+      "type": "CONSTANT",
+      "dataType": "Boolean",
+      "value": true
+    }
+  ],
+  "nets": []
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Element_TOTALIZER",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "TOTALIZER",
+      "time_base_sec": 1.0,
+      "scale_factor": 1.0,
+      "sample_time_sec": 0.01
+    }
+  ],
+  "nets": []
+}

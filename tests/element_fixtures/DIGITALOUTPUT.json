@@ -1,0 +1,29 @@
+{
+  "name": "Element_DIGITALOUTPUT",
+  "elements": [
+    {
+      "name": "IN1",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    },
+    {
+      "name": "OUT1",
+      "type": "DIGITALOUTPUT",
+      "address": "%Q0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "IN1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "OUT1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

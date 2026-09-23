@@ -1,0 +1,10 @@
+{
+  "name": "Element_NEG",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "NEG"
+    }
+  ],
+  "nets": []
+}

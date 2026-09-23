@@ -1,0 +1,12 @@
+{
+  "name": "Element_DERIVATIVE",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "DERIVATIVE",
+      "alpha": 0.5,
+      "gain": 1.0
+    }
+  ],
+  "nets": []
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Element_LATCH_set",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "LATCH",
+      "dominant": "Set Dominant"
+    }
+  ],
+  "nets": []
+}

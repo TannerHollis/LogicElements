@@ -1,0 +1,10 @@
+{
+  "name": "Element_FTRIG",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "FTRIG"
+    }
+  ],
+  "nets": []
+}

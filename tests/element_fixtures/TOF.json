@@ -1,0 +1,11 @@
+{
+  "name": "Element_TOF",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "TOF",
+      "preset_ms": 1000
+    }
+  ],
+  "nets": []
+}

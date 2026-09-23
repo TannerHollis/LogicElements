@@ -1,0 +1,82 @@
+{
+  "device": {
+    "name": "STM32F401RE-Nucleo",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
+  "limits": {
+    "digital_inputs": 16,
+    "digital_outputs": 16,
+    "coils": 128,
+    "floats": 64,
+    "timers": 16,
+    "counters": 8,
+    "config_slots": 3,
+    "slot_size_bytes": 2048
+  },
+  "features": {
+    "protection": true,
+    "serial_bus": true,
+    "i2c_devices": 4,
+    "spi_devices": 4
+  },
+  "pin_map": {
+    "inputs": {
+      "%I0": {"alias": "USER_BUTTON", "pin": "PC13", "desc": "Onboard User Pushbutton (active-low)"},
+      "%I1": {"alias": "LIMIT_SW_FWD", "pin": "PA0", "desc": "Forward Limit Switch"},
+      "%I2": {"alias": "LIMIT_SW_REV", "pin": "PA1", "desc": "Reverse Limit Switch"},
+      "%I3": {"alias": "ESTOP", "pin": "PA4", "desc": "Emergency Stop Contact"}
+    },
+    "outputs": {
+      "%Q0": {"alias": "USER_LED", "pin": "PA5", "desc": "Green Onboard LED (LD2)"},
+      "%Q1": {"alias": "MOTOR_FWD", "pin": "PB0", "desc": "Motor Forward Relay"},
+      "%Q2": {"alias": "MOTOR_REV", "pin": "PB7", "desc": "Motor Reverse Relay"},
+      "%Q3": {"alias": "ALARM_BUZZER", "pin": "PB6", "desc": "Fault Alarm Buzzer"}
+    },
+    "i2c": {
+      "scl": "PB8",
+      "sda": "PB9"
+    },
+    "spi": {
+      "sck": "PA5",
+      "miso": "PA6",
+      "mosi": "PA7",
+      "cs": ["PB0", "PB1", "PB2", "PB10"]
+    }
+  },
+  "custom_nodes": [
+    {
+      "type_id": "STM32_PWM_Gen",
+      "display_name": "PWM Generator",
+      "category": "STM32 Peripherals",
+      "description": "Hardware PWM signal generator using TIM2",
+      "function_id": 1,
+      "color": "#1565C0",
+      "inputs": [
+        {"name": "Enable", "type": "bool", "default": false},
+        {"name": "DutyCycle", "type": "float", "default": 50.0}
+      ],
+      "outputs": [
+        {"name": "Fault", "type": "bool"}
+      ],
+      "properties": [
+        {"key": "frequency_hz", "label": "Frequency (Hz)", "type": "int", "default": 1000, "min": 1, "max": 100000}
+      ]
+    },
+    {
+      "type_id": "STM32_Quad_Encoder",
+      "display_name": "Quadrature Encoder",
+      "category": "STM32 Peripherals",
+      "description": "Hardware TIM3 quadrature encoder interface",
+      "function_id": 2,
+      "color": "#00838F",
+      "inputs": [
+        {"name": "Reset", "type": "bool", "default": false}
+      ],
+      "outputs": [
+        {"name": "Count", "type": "int"},
+        {"name": "Direction", "type": "bool"}
+      ]
+    }
+  ]
+}

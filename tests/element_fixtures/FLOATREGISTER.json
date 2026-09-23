@@ -1,0 +1,30 @@
+{
+  "name": "Element_FLOATREGISTER",
+  "elements": [
+    {
+      "name": "C1",
+      "type": "CONSTANT",
+      "dataType": "Float",
+      "value": 1.0
+    },
+    {
+      "name": "R1",
+      "type": "FLOATREGISTER",
+      "address": "%R0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "C1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "R1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

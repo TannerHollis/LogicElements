@@ -1,0 +1,53 @@
+{
+  "name": "Element_TAG",
+  "elements": [
+    {
+      "name": "IN1",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    },
+    {
+      "name": "TS1",
+      "type": "TAG_SEND",
+      "direction": "send",
+      "tag_name": "T1"
+    },
+    {
+      "name": "TR1",
+      "type": "TAG_RECEIVE",
+      "direction": "receive",
+      "tag_name": "T1"
+    },
+    {
+      "name": "OUT1",
+      "type": "DIGITALOUTPUT",
+      "address": "%Q0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "IN1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "TS1",
+          "port": "in"
+        }
+      ]
+    },
+    {
+      "output": {
+        "name": "TR1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "OUT1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Element_RMS",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "RMS",
+      "window_size": 16
+    }
+  ],
+  "nets": []
+}

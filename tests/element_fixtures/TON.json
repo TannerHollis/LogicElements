@@ -1,0 +1,11 @@
+{
+  "name": "Element_TON",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "TON",
+      "preset_ms": 1000
+    }
+  ],
+  "nets": []
+}

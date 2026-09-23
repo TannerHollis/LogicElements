@@ -1,0 +1,11 @@
+{
+  "name": "Element_DIGITALINPUT",
+  "elements": [
+    {
+      "name": "IN1",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    }
+  ],
+  "nets": []
+}

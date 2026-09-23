@@ -1,0 +1,10 @@
+{
+  "name": "Element_MAX",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MAX"
+    }
+  ],
+  "nets": []
+}

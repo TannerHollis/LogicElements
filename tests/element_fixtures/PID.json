@@ -1,0 +1,15 @@
+{
+  "name": "Element_PID",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "PID",
+      "kp": 1.0,
+      "ki": 0.1,
+      "kd": 0.0,
+      "out_min": -100.0,
+      "out_max": 100.0
+    }
+  ],
+  "nets": []
+}

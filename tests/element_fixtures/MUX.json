@@ -1,0 +1,10 @@
+{
+  "name": "Element_MUX",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MUX"
+    }
+  ],
+  "nets": []
+}

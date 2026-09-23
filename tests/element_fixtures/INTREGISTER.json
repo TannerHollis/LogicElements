@@ -1,0 +1,29 @@
+{
+  "name": "Element_INTREGISTER",
+  "elements": [
+    {
+      "name": "IN1",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    },
+    {
+      "name": "I1",
+      "type": "INTREGISTER",
+      "address": "%N0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "IN1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "I1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

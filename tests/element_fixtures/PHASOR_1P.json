@@ -1,0 +1,11 @@
+{
+  "name": "Element_PHASOR_1P",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "PHASOR_1P",
+      "samples_per_cycle": 16
+    }
+  ],
+  "nets": []
+}

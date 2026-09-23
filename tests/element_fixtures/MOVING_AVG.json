@@ -1,0 +1,11 @@
+{
+  "name": "Element_MOVING_AVG",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MOVING_AVG",
+      "window_size": 8
+    }
+  ],
+  "nets": []
+}

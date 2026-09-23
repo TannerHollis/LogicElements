@@ -1,0 +1,10 @@
+{
+  "name": "Element_POLAR2RECT",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "POLAR2RECT"
+    }
+  ],
+  "nets": []
+}

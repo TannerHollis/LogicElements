@@ -1,0 +1,10 @@
+{
+  "name": "Element_MIN",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MIN"
+    }
+  ],
+  "nets": []
+}

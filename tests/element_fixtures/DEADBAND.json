@@ -1,0 +1,12 @@
+{
+  "name": "Element_DEADBAND",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "DEADBAND",
+      "threshold": 0.5,
+      "center": 0.0
+    }
+  ],
+  "nets": []
+}

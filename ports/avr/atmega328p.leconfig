@@ -1,0 +1,64 @@
+{
+  "device": {
+    "name": "Arduino Uno (ATmega328P)",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
+  "limits": {
+    "digital_inputs": 6,
+    "digital_outputs": 6,
+    "coils": 32,
+    "floats": 16,
+    "timers": 4,
+    "counters": 4,
+    "config_slots": 2,
+    "slot_size_bytes": 512
+  },
+  "features": {
+    "protection": false,
+    "serial_bus": true,
+    "i2c_devices": 2,
+    "spi_devices": 1
+  },
+  "pin_map": {
+    "inputs": {
+      "%I0": {"alias": "BTN_START", "pin": "D2", "desc": "Start Button"},
+      "%I1": {"alias": "BTN_STOP", "pin": "D3", "desc": "Stop Button"},
+      "%I2": {"alias": "LIMIT_SW", "pin": "D4", "desc": "Limit Switch"}
+    },
+    "outputs": {
+      "%Q0": {"alias": "LED_BUILTIN", "pin": "D13", "desc": "Onboard LED"},
+      "%Q1": {"alias": "PUMP_RELAY", "pin": "D8", "desc": "Sump Pump Relay"},
+      "%Q2": {"alias": "VALVE_SOLENOID", "pin": "D9", "desc": "Inlet Solenoid Valve"}
+    },
+    "i2c": {
+      "sda": "A4",
+      "scl": "A5"
+    },
+    "spi": {
+      "sck": "D13",
+      "miso": "D12",
+      "mosi": "D11",
+      "cs": ["D10"]
+    }
+  },
+  "custom_nodes": [
+    {
+      "type_id": "AVR_Fast_PWM",
+      "display_name": "Fast PWM Out",
+      "category": "AVR Peripherals",
+      "description": "Direct 8-bit Timer0 hardware PWM generator",
+      "function_id": 1,
+      "color": "#D84315",
+      "inputs": [
+        {"name": "Duty", "type": "float", "default": 128.0}
+      ],
+      "outputs": [
+        {"name": "Active", "type": "bool"}
+      ],
+      "properties": [
+        {"key": "prescaler", "label": "Prescaler", "type": "enum", "default": "64", "options": ["1", "8", "64", "256", "1024"]}
+      ]
+    }
+  ]
+}

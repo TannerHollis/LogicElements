@@ -1,0 +1,11 @@
+{
+  "name": "Element_LPF",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "LPF",
+      "alpha": 0.5
+    }
+  ],
+  "nets": []
+}

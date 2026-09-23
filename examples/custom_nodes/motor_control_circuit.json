@@ -1,0 +1,92 @@
+{
+  "name": "CustomNodeMotorControl",
+  "elements": [
+    {
+      "name": "START_BTN",
+      "type": "DIGITALINPUT",
+      "address": "%I0"
+    },
+    {
+      "name": "STOP_BTN",
+      "type": "DIGITALINPUT",
+      "address": "%I1"
+    },
+    {
+      "name": "RESET_INDEX",
+      "type": "DIGITALINPUT",
+      "address": "%I2"
+    },
+    {
+      "name": "SPEED_POT",
+      "type": "FLOAT_REGISTER",
+      "address": "%R0"
+    },
+    {
+      "name": "MOTOR_LATCH",
+      "type": "RS"
+    },
+    {
+      "name": "PWM_CTRL",
+      "type": "BOARD_PWM"
+    },
+    {
+      "name": "ENCODER_READER",
+      "type": "BOARD_ENCODER"
+    },
+    {
+      "name": "SPEED_FILTER",
+      "type": "BOARD_FILTER"
+    },
+    {
+      "name": "RUN_CONTACTOR",
+      "type": "DIGITALOUTPUT",
+      "address": "%Q0"
+    },
+    {
+      "name": "STATUS_LED",
+      "type": "DIGITALOUTPUT",
+      "address": "%Q1"
+    }
+  ],
+  "nets": [
+    {
+      "output": { "name": "START_BTN", "port": "out" },
+      "inputs": [ { "name": "MOTOR_LATCH", "port": "set" } ]
+    },
+    {
+      "output": { "name": "STOP_BTN", "port": "out" },
+      "inputs": [ { "name": "MOTOR_LATCH", "port": "reset" } ]
+    },
+    {
+      "output": { "name": "MOTOR_LATCH", "port": "out" },
+      "inputs": [
+        { "name": "PWM_CTRL", "port": "enable" },
+        { "name": "RUN_CONTACTOR", "port": "in" }
+      ]
+    },
+    {
+      "output": { "name": "SPEED_POT", "port": "out" },
+      "inputs": [
+        { "name": "SPEED_FILTER", "port": "raw" }
+      ]
+    },
+    {
+      "output": { "name": "SPEED_FILTER", "port": "filtered" },
+      "inputs": [
+        { "name": "PWM_CTRL", "port": "duty" }
+      ]
+    },
+    {
+      "output": { "name": "RESET_INDEX", "port": "out" },
+      "inputs": [
+        { "name": "ENCODER_READER", "port": "reset" }
+      ]
+    },
+    {
+      "output": { "name": "PWM_CTRL", "port": "active" },
+      "inputs": [
+        { "name": "STATUS_LED", "port": "in" }
+      ]
+    }
+  ]
+}

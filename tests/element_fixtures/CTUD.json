@@ -1,0 +1,11 @@
+{
+  "name": "Element_CTUD",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CTUD",
+      "preset": 10
+    }
+  ],
+  "nets": []
+}

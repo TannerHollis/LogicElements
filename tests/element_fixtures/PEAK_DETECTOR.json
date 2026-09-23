@@ -1,0 +1,11 @@
+{
+  "name": "Element_PEAK_DETECTOR",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "PEAK_DETECTOR",
+      "decay_rate": 0.995
+    }
+  ],
+  "nets": []
+}

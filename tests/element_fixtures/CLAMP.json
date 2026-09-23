@@ -1,0 +1,10 @@
+{
+  "name": "Element_CLAMP",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "CLAMP"
+    }
+  ],
+  "nets": []
+}

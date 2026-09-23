@@ -1,0 +1,10 @@
+{
+  "name": "Element_NOR",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "NOR"
+    }
+  ],
+  "nets": []
+}

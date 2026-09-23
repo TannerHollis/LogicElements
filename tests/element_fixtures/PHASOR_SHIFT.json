@@ -1,0 +1,11 @@
+{
+  "name": "Element_PHASOR_SHIFT",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "PHASOR_SHIFT",
+      "delta_deg": 45.0
+    }
+  ],
+  "nets": []
+}

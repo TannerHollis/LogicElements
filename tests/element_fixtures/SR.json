@@ -1,0 +1,10 @@
+{
+  "name": "Element_SR",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "SR"
+    }
+  ],
+  "nets": []
+}

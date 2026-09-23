@@ -1,0 +1,12 @@
+{
+  "name": "Element_ZERO_CROSSING",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "ZERO_CROSSING",
+      "hysteresis": 0.01,
+      "sample_rate_hz": 1000.0
+    }
+  ],
+  "nets": []
+}

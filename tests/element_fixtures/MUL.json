@@ -1,0 +1,10 @@
+{
+  "name": "Element_MUL",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "MUL"
+    }
+  ],
+  "nets": []
+}
