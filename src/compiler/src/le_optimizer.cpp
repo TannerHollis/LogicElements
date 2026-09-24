@@ -59,6 +59,8 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         } else if (type == "PID" || type == "LE_PID" ||
                    type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT" ||
                    type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING" ||
+                   type == "PHASOR_3P" || type == "LE_PHASOR_3P" ||
+                   type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || type == "ANSI_81" ||
                    type == "SYM_COMP" || type == "LE_SYM_COMP" ||
                    type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF" ||
                    type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" ||

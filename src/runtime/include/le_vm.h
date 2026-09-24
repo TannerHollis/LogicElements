@@ -40,6 +40,22 @@ typedef struct {
     uint8_t                   pulse_count;       /**< Number of active pulse slots. */
     bool                      running;           /**< True if the execution loop is actively stepping. */
     uint32_t                  cycle_count;       /**< Monotonically increasing execution scan count. */
+
+    /* Fixed-rate scan clock (deterministic execution). Set with
+     * le_vm_set_scan_period_us(); when le_vm_step_us is called and
+     * enforce_fixed_rate is set, now_us must advance by exactly scan_period_us
+     * each scan or LE_ERR_SCAN_JITTER is returned. */
+    uint32_t                  scan_period_us;    /**< Fixed scan period in microseconds (0 = host-driven). */
+    uint32_t                  last_scan_us;      /**< Timestamp of the previous scan (0 = never stepped). */
+    uint8_t                   enforce_fixed_rate;/**< 1 = reject off-cadence scans. */
+    uint32_t                  observed_worst_us; /**< Largest measured scan duration (needs HAL time). */
+    uint32_t                  scan_overruns;     /**< Scans whose measured duration exceeded the period. */
+
+    /* Program timing budget (from the .lebin timing descriptor + board cost). */
+    uint32_t                  timing_abstract_cycles; /**< Compiler cost units (0 = none). */
+    uint16_t                  timing_margin_pct;  /**< Compiler safety multiplier (150 = 1.5x). */
+    uint32_t                  timed_worst_us;    /**< Estimated worst-case scan duration (board cost). */
+    uint8_t                   timing_feasible;   /**< 1 when timed_worst_us <= scan_period_us. */
 } le_vm_t;
 
 /**
@@ -195,6 +211,57 @@ le_status_t le_alias_pulse_for(le_vm_t* vm, const char* name, float seconds);
  * VM's `now_ms` crosses the expiry (checked inside @ref le_vm_step).
  */
 le_status_t le_vm_pulse(le_vm_t* vm, uint16_t addr, uint32_t duration_ms);
+
+/**
+ * @brief Configures the fixed scan period for deterministic execution.
+ *
+ * Sets scan_period_us, resets the scan anchor, and applies the period (in
+ * seconds) to the runtime dt used by time-dependent opcodes (PID, overcurrent).
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param period_us Fixed scan period in microseconds (e.g. 1042 for 960 Hz).
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_set_scan_period_us(le_vm_t* vm, uint32_t period_us);
+
+/**
+ * @brief Enables or disables strict fixed-rate cadence enforcement.
+ *
+ * When enabled, @ref le_vm_step_us rejects timestamps that do not advance by
+ * exactly scan_period_us with @ref LE_ERR_SCAN_JITTER.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param enable True to enforce, false for host-driven (legacy) stepping.
+ */
+void le_vm_set_enforce_fixed_rate(le_vm_t* vm, bool enable);
+
+/**
+ * @brief Executes one scan at the given microsecond timestamp.
+ *
+ * The deterministic entry point for fixed-rate operation: when enforcement is
+ * enabled, @p now_us must equal last_scan_us + scan_period_us. Also measures
+ * the actual scan duration (when the HAL provides a microsecond clock) and
+ * accrues observed_worst_us / scan_overruns.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param now_us Monotonic microsecond timestamp of this scan.
+ * @return Returns @ref LE_OK on success, @ref LE_ERR_SCAN_JITTER on an
+ *         off-cadence timestamp, or the underlying execution error.
+ */
+le_status_t le_vm_step_us(le_vm_t* vm, uint32_t now_us);
+
+/**
+ * @brief Blocks until the next fixed-rate boundary, then executes one scan.
+ *
+ * Scheduler entry point for firmware main loops: waits (via the HAL microsecond
+ * clock) until last_scan_us + scan_period_us, then calls @ref le_vm_step_us with
+ * the canonical boundary timestamp.
+ *
+ * @param vm Pointer to the virtual machine instance (scan period must be set).
+ * @return Returns @ref LE_OK on success, @ref LE_ERR_TIMING_BUDGET if no period
+ *         is configured, or an execution error.
+ */
+le_status_t le_vm_run_scan(le_vm_t* vm);
 
 #ifdef __cplusplus
 }

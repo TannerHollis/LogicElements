@@ -119,6 +119,8 @@ function ids `>= 0x80` are dispatched to the board HAL `ext_call`:
 | `0x03` | `LE_FUNC_POLAR2RECT` | `[mag, angle] -> [real, imag]` |
 | `0x04` | `LE_FUNC_PHASOR_SHIFT` | `[real, imag, delta] -> [real', imag']` |
 | `0x05` | `LE_FUNC_PHASOR_1P` | `[sample, sync_cplx] -> [cplx]` |
+| `0x10` | `LE_FUNC_PHASOR_3P` | `[a, b, c, sync_cplx, freq_hz] -> [pa, pb, pc]` |
+| `0x11` | `LE_FUNC_FREQ_EST` | `[sample] -> [freq_hz, valid]` |
 | `0x06` | `LE_FUNC_COMPLEX2POLAR` | `[cplx] -> [mag, angle]` |
 | `0x07` | `LE_FUNC_COMPLEX2RECT` | `[cplx] -> [real, imag]` |
 | `0x0B` | `LE_FUNC_RECT2COMPLEX` | `[real, imag] -> [cplx]` |

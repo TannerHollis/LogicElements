@@ -115,8 +115,10 @@ class _LeCompileResult(Structure):
         ("temp_complex_count", c_int),
         ("user_int_count", c_int),
         ("temp_int_count", c_int),
-        ("eliminated_instructions", c_int),
+        (\"eliminated_instructions\", c_int),
         ("eliminated_registers", c_int),
+        ("abstract_cycles", c_uint32),
+        ("estimated_exec_us", c_double),
     ]
 
 _cached_lib = None

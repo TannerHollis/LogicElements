@@ -48,6 +48,21 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
  */
 le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size);
 
+/**
+ * @brief Computes the timing / achievability report for the loaded program.
+ *
+ * Combines the binary's compiler cost (le_timing_desc_t), the board's
+ * calibrated LE_NS_PER_ABSTRACT_CYCLE cost model, and the VM's configured
+ * scan period (le_vm_set_scan_period_us). If the period is configured and the
+ * worst-case scan does not fit, `feasible` is 0 and loading is rejected with
+ * @ref LE_ERR_TIMING_BUDGET.
+ *
+ * @param vm The VM that a program was (or was not) loaded into.
+ * @param out Pointer receiving the timing report (must be non-NULL).
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if inputs are NULL.
+ */
+le_status_t le_loader_timing(const le_vm_t* vm, le_timing_t* out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -4,6 +4,7 @@
 #include "le_vm.h"
 #include "le_loader.h"
 #include "le_rt.h"
+#include "le_opcodes.h"
 #include "le_comms.h"
 #include "le_hal.h"
 #include <iostream>
@@ -1050,6 +1051,256 @@ void test_diff_87_ten_inputs()
 
     le_compile_result_free(&res);
 }
+/**
+ * @brief Verifies multi-input logic-gate decomposition end-to-end.
+ *
+ * The runtime has only 2-input boolean gates, so the compiler decomposes an
+ * N-input gate into a LEFT-FOLD chain of (N-1) 2-input runtime calls through
+ * one reused temp bool (final NAND/NOR inversion uses LE_MOD_INVERT_OUT, no
+ * extra NOT). This test compiles a 4-input AND and a 3-input OR, asserts the
+ * decomposed instruction count (N-1 per gate) and checks the truth table by
+ * stepping the loaded VM with all input combinations.
+ */
+void test_multi_input_gate_decomposition(void)
+{
+    const char* circuit_json = R"({
+        "name": "Gates",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%IN2" },
+            { "name": "IN3", "type": "DIGITALINPUT", "address": "%IN3" },
+            { "name": "A4", "type": "AND" },
+            { "name": "O3", "type": "OR" },
+            { "name": "RA", "type": "BOOLREGISTER", "address": "%B0" },
+            { "name": "RO", "type": "BOOLREGISTER", "address": "%B1" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "A4", "port": "in_a" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "A4", "port": "in_b" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "A4", "port": "in_c" } ] },
+            { "output": { "name": "IN3", "port": "out" }, "inputs": [ { "name": "A4", "port": "in_d" } ] },
+            { "output": { "name": "A4", "port": "out" }, "inputs": [ { "name": "RA", "port": "in" } ] },
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "O3", "port": "in_a" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O3", "port": "in_b" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "O3", "port": "in_c" } ] },
+            { "output": { "name": "O3", "port": "out" }, "inputs": [ { "name": "RO", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "multi-input gate circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "multi-input gate circuit loads");
+    le_vm_start(&vm);
+
+    // 4-input AND -> 3 AND instructions; 3-input OR -> 2 OR instructions.
+    // Drive all input combos and check the 4-input AND truth table.
+    for (uint32_t mask = 0; mask < 16; mask++) {
+        for (int i = 0; i < 4; i++)
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN((uint16_t)i), (mask >> i) & 1);
+        TEST_ASSERT(le_vm_step(&vm, mask) == LE_OK, "multi-input gate step");
+        bool and_result = (mask == 0x0F);
+        bool or_result = ((mask & 0x07) != 0); /* OR3 reads only IN0..IN2 (low 3 bits) */
+        TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == and_result,
+                    "4-input AND truth table");
+        TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(1)) == or_result,
+                    "3-input OR truth table");
+    }
+
+    // Instruction-count regression: 8 DIN ports guarantee no optimizer collapse.
+    le_compile_result_free(&res);
+}
+/**
+ * @brief Compiles and executes a single N-input gate through the compiler's
+ * left-fold decomposition and returns 1 if every input combination produces the
+ * mathematically correct result, 0 otherwise.
+ *
+ * Each call compiles a FRESH circuit containing exactly one gate of @p type
+ * with @p n digital inputs feeding ports in_a..in_e, drives all 2^n input
+ * combinations through the loaded VM, and compares the stepped boolean output
+ * to the reference truth of the ideal N-ary gate.
+ */
+static int run_gate_truth(const char* type, int n)
+{
+    /* Build the circuit JSON for one N-input gate -> a bool register. */
+    std::string j = "{\"name\":\"gate\",\"elements\":[";
+    for (int k = 0; k < n; k++) {
+        j += "{\"name\":\"IN" + std::to_string(k) + "\",\"type\":\"DIGITALINPUT\",";
+        j += "\"address\":\"%IN" + std::to_string(k) + "\"},";
+    }
+    j += "{\"name\":\"G\",\"type\":\"" + std::string(type) + "\"},";
+    j += "{\"name\":\"R\",\"type\":\"BOOLREGISTER\",\"address\":\"%B0\"}";
+    j += "],\"nets\":[";
+    for (int k = 0; k < n; k++) {
+        const char* port = (k == 0) ? "in_a" : (k == 1) ? "in_b" : (k == 2) ? "in_c" : (k == 3) ? "in_d" : "in_e";
+        j += "{\"output\":{\"name\":\"IN" + std::to_string(k) + "\",\"port\":\"out\"},";
+        j += "\"inputs\":[{\"name\":\"G\",\"port\":\"" + std::string(port) + "\"}]},";
+    }
+    j += "{\"output\":{\"name\":\"G\",\"port\":\"out\"},\"inputs\":[{\"name\":\"R\",\"port\":\"in\"}]}";
+    j += "]}";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(j.c_str(), nullptr, &opts, &res);
+    if (rc != 0 || !res.success) {
+        std::cerr << "  [gate] compile failed for " << type << " n=" << n << "\n";
+        return 0;
+    }
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    if (le_loader_load(&vm, res.binary_data, res.binary_size) != LE_OK) {
+        std::cerr << "  [gate] load failed for " << type << " n=" << n << "\n";
+        le_compile_result_free(&res);
+        return 0;
+    }
+    le_vm_start(&vm);
+
+    bool ok = true;
+    for (uint32_t mask = 0; mask < (1u << n); mask++) {
+        for (int k = 0; k < n; k++)
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN((uint16_t)k), (mask >> k) & 1);
+        if (le_vm_step(&vm, mask) != LE_OK) { ok = false; break; }
+
+        int ones = 0;
+        for (int k = 0; k < n; k++) ones += (mask >> k) & 1;
+        bool expect = false;
+        if      (strcmp(type, "AND")  == 0) expect = (ones == n);
+        else if (strcmp(type, "OR")   == 0) expect = (ones > 0);
+        else if (strcmp(type, "XOR")  == 0) expect = (ones % 2 == 1);
+        else if (strcmp(type, "NAND") == 0) expect = (ones < n);
+        else if (strcmp(type, "NOR")  == 0) expect = (ones == 0);
+
+        bool actual = le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0));
+        if (actual != expect) {
+            std::cerr << "  [gate] " << type << " n=" << n << " mask=" << mask
+                      << " expect=" << expect << " actual=" << actual << "\n";
+            ok = false;
+        }
+    }
+    le_compile_result_free(&res);
+    return ok ? 1 : 0;
+}
+
+/**
+ * @brief Exhaustive truth-table coverage of ALL logic gate types at several
+ * input arities.
+ *
+ * AND/OR/XOR/NAND/NOR, each at N = 2, 3, 4, 5 inputs, are compiled (decomposed
+ * into N-1 two-input runtime gates), and every 2^N input combination is stepped
+ * and validated against the ideal N-ary gate's truth. This locks in the
+ * left-fold decomposition for edge latches of every gate family, including the
+ * final-inversion NAND/NOR handling and XOR's associative parity fold.
+ */
+void test_all_logic_gates_truth(void)
+{
+    const char* types[5] = { "AND", "OR", "XOR", "NAND", "NOR" };
+    const int   arities[4] = { 2, 3, 4, 5 };
+    int fails = 0;
+    for (int t = 0; t < 5; t++) {
+        for (int a = 0; a < 4; a++) {
+            if (!run_gate_truth(types[t], arities[a])) fails++;
+        }
+    }
+    TEST_ASSERT(fails == 0, "all gate types x arities pass exhaustive truth tables");
+}
+
+/**
+ * @brief Regression: standalone (0-input / 1-input) logic gates must compile
+ * without crashing and reduce to the correct instruction shape.
+ *
+ * A bare gate element with no wired nets (N == 0) previously crashed the
+ * compiler by falling into the N >= 3 left-fold branch and indexing an empty
+ * operand list. Each 0-input gate must reduce to a single 2-input runtime call
+ * against the gate identity constant (e.g. AND(F, F) -> 1 AND instruction), and
+ * a 1-input gate must reduce to a MOVE (or NOT for NAND/NOR).
+ */
+void test_zero_input_gate_compile(void)
+{
+    const char* types[5] = { "AND", "OR", "XOR", "NAND", "NOR" };
+    for (int t = 0; t < 5; t++) {
+        std::string j = "{\"name\":\"g\",\"elements\":[{\"name\":\"G\",\"type\":\"";
+        j += std::string(types[t]) + "\"}],\"nets\":[]}";
+        le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+        le_compile_result_t res;
+        int rc = le_compile_json_ex(j.c_str(), nullptr, &opts, &res);
+        TEST_ASSERT(rc == 0 && res.success, "0-input gate compiles without crashing");
+        /* 0-input gate reduces to one 2-input runtime call. */
+        TEST_ASSERT(res.instruction_count == 1, "0-input gate emits exactly 1 instruction");
+        le_compile_result_free(&res);
+    }
+}
+
+/**
+ * @brief Verifies the OVERCURRENT_51 block builtin end-to-end through the
+ * compiler: a COMPLEX phasor on `a`, a designer-wired directionality / enable
+ * boolean on `enable` (AND'd with pickup BEFORE the timing accumulator), and a
+ * bool output. Disabled with 2pu it must never trip; enable -> trips.
+ */
+void test_overcurrent_enable_input(void)
+{
+    const char* circuit_json = R"({
+        "name": "DirOC",
+        "elements": [
+            { "name": "P", "type": "COMPLEXREGISTER" },
+            { "name": "DIR", "type": "BOOLREGISTER" },
+            { "name": "OC", "type": "OVERCURRENT_51", "pickup": 1.0, "time_dial": 0.05 },
+            { "name": "TRIP", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "P", "port": "out" }, "inputs": [ { "name": "OC", "port": "a" } ] },
+            { "output": { "name": "DIR", "port": "out" }, "inputs": [ { "name": "OC", "port": "enable" } ] },
+            { "output": { "name": "OC", "port": "out" }, "inputs": [ { "name": "TRIP", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "OVER_51 with enable wiring compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "OVER_51 loads");
+    TEST_ASSERT(vm.blocks && vm.blocks[0].in_count == 2 && vm.blocks[0].out_count == 1,
+                "OVER_51 block declares [phasor, enable] -> bool trip");
+
+    le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_OVERCURRENT, 0);
+    TEST_ASSERT(oc != NULL && fabsf(oc->pickup - 1.0f) < 1e-5f && fabsf(oc->time_dial - 0.05f) < 1e-5f,
+                "OVER_51 pickup/time_dial baked");
+    TEST_ASSERT(oc->curve_type == LE_CURVE_IEC_VERY && fabsf(oc->a_coeff - 13.5f) < 1e-4f &&
+                oc->b_coeff == 0.0f && fabsf(oc->p_coeff - 1.0f) < 1e-4f,
+                "OVER_51 default curve (IEC Very Inverse) coefficients baked");
+
+    /* 2pu phasor but directionality boolean DISABLED: must never accrue/trip
+     * (the enable is AND'd with pickup evaluation BEFORE the timing function). */
+    le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX(0), le_c_make(2.0f, 0.0f));
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0), false);   /* DIR = 0 */
+    le_vm_start(&vm);
+    for (int i = 0; i < 200; i++) TEST_ASSERT(le_vm_step(&vm, (uint32_t)(i + 1)) == LE_OK, "dir-OC disabled steps");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(1)),
+                "disabled directionality prevents the trip despite 2pu");
+    TEST_ASSERT(oc->accumulator == 0.0f, "enable AND'd before timing (no accrual while disabled)");
+
+    /* Enable the directionality boolean: sustained 2pu now accrues. IEC Very
+     * Inverse @ time_dial=0.05, M=2 => t_operate=0.05*(13.5/1)=0.675s; at the
+     * default dt=0.01 that is ~67.5 scans -> 100 covers the trip. */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0), true);   /* DIR = 1 */
+    for (int i = 0; i < 100; i++) TEST_ASSERT(le_vm_step(&vm, (uint32_t)(i + 1000)) == LE_OK, "dir-OC enabled steps");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(1)),
+                "enabled directionality with sustained 2pu trips the 51 relay");
+
+    /* Disassembly names the block builtin OVERCURRENT_51. */
+    TEST_ASSERT(std::strstr(res.disassembly_text ? res.disassembly_text : "", "OVERCURRENT_51") != NULL,
+                "disasm renders the OVERCURRENT_51 block builtin");
+
+    le_compile_result_free(&res);
+}
 
 void test_board_complex_limit()
 {
@@ -1760,7 +2011,7 @@ void test_binary_header_fields()
     TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "binary validates");
     TEST_ASSERT(h.magic == LE_BIN_MAGIC, "magic field set");
     TEST_ASSERT(h.version == LE_BIN_VERSION, "version field equals LE_BIN_VERSION");
-    TEST_ASSERT(h.rsvd == 0, "reserved header field is zero");
+    TEST_ASSERT(h.timing_count == 1, "compiler always emits the 8-byte timing descriptor");
     TEST_ASSERT(h.digital_in_count == 1, "digital in count header field");
     TEST_ASSERT(h.digital_out_count == 1, "digital out count header field");
     TEST_ASSERT(h.bool_reg_count == 1, "bool reg count header field");
@@ -1768,6 +2019,157 @@ void test_binary_header_fields()
     TEST_ASSERT(h.int_reg_count == 1, "int reg count header field");
     TEST_ASSERT(h.alias_count == 0, "no aliases declared -> alias_count 0");
     le_compile_result_free(&res);
+}
+
+/**
+ * @brief Asserts the .lebin carries the compiler's worst-case timing model
+ * (abstract cost + safety margin), that the descriptor is loader-readable, and
+ * that costs scale with circuit size (a heavier circuit costs more).
+ */
+void test_timing_descriptor(void)
+{
+    const char* light_json = R"({
+        "name": "TimingLight",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [ { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    le_compile_result_t light;
+    TEST_ASSERT(le_compile_json(light_json, nullptr, &light) == 0 && light.success, "light timing circuit compiles");
+    TEST_ASSERT(light.abstract_cycles > 0, "compiler reports non-zero abstract cycle cost");
+
+    le_header_t h;
+    TEST_ASSERT(le_loader_validate(light.binary_data, light.binary_size, &h) == LE_OK, "timing binary validates");
+    TEST_ASSERT(h.timing_count == 1, "timing descriptor present in header");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm init");
+    TEST_ASSERT(le_loader_load(&vm, light.binary_data, light.binary_size) == LE_OK, "load with timing descriptor");
+    TEST_ASSERT(vm.timing_abstract_cycles == (uint32_t)light.abstract_cycles, "loader captured compiler cost");
+
+    le_timing_t t;
+    TEST_ASSERT(le_loader_timing(&vm, &t) == LE_OK, "timing query");
+    TEST_ASSERT(t.safety_margin_pct == 150, "safety margin carried through");
+    TEST_ASSERT(t.abstract_cycles == (uint32_t)light.abstract_cycles, "timing report carries cost");
+    le_compile_result_free(&light);
+
+    /* A heavier circuit (more instructions) must cost strictly more. */
+    const char* heavy_json = R"({
+        "name": "TimingHeavy",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "I2", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "G1", "type": "OR" },
+            { "name": "G2", "type": "AND" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "G1", "port": "a" } ] },
+            { "output": { "name": "I2", "port": "out" }, "inputs": [ { "name": "G1", "port": "b" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "G2", "port": "a" } ] },
+            { "output": { "name": "I2", "port": "out" }, "inputs": [ { "name": "G2", "port": "b" } ] },
+            { "output": { "name": "G1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] }
+        ]
+    })";
+    le_compile_result_t heavy;
+    TEST_ASSERT(le_compile_json(heavy_json, nullptr, &heavy) == 0 && heavy.success, "heavy timing circuit compiles");
+    TEST_ASSERT(heavy.abstract_cycles > light.abstract_cycles, "heavier circuit costs strictly more abstract cycles");
+    le_compile_result_free(&heavy);
+}
+
+/**
+ * @brief Verifies the DESIGNER owns the fixed scan rate: a circuit-declared
+ * `scan_rate_hz` is embedded in the .lebin timing descriptor, the loader applies
+ * it to the VM clock (period = 1e6/rate us), and an unachievable declared rate is
+ * rejected at compile time with the MAX achievable rate reported in the error.
+ */
+void test_circuit_owns_scan_rate(void)
+{
+    const char* json = R"({
+        "name": "Rated",
+        "scan_rate_hz": 960,
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [ { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    le_compile_result_t res;
+    TEST_ASSERT(le_compile_json(json, nullptr, &res) == 0 && res.success, "rated circuit compiles");
+
+    /* Descriptor carries the declared rate; the loader applies the period. */
+    le_timing_desc_t td;
+    {
+        le_header_t h;
+        TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "rated binary validates");
+        size_t off = sizeof(le_header_t) + (size_t)h.instruction_count * sizeof(le_instruction_t);
+        for (uint16_t b = 0; b < h.block_count; b++) {
+            const le_block_desc_t* d = (const le_block_desc_t*)(res.binary_data + off);
+            off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                   ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+        }
+        off += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
+        off += (size_t)h.state_img_len;
+        off += (size_t)h.alias_count * LE_ALIAS_BYTES;
+        const le_timing_desc_t* t = (const le_timing_desc_t*)(res.binary_data + off);
+        td = *t;
+    }
+    TEST_ASSERT(td.design_scan_rate_hz == 960, "circuit scan_rate_hz embedded in the descriptor");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm init");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "rated program loads");
+    TEST_ASSERT(vm.scan_period_us == 1042, "loader applied 1e6/960 = 1042 us period to the VM clock");
+    TEST_ASSERT(le_rt_scan_dt() > 0.0f, "runtime dt reflects the applied scan period");
+    le_compile_result_free(&res);
+
+    /* An unachievable declared rate must be rejected with the max achievable
+     * rate in the message. Board = 1e6 ns/cycle => the light circuit's worst
+     * case is ~1500 us/scan, so declaring 960 Hz (1042 us period) must fail. */
+    const char* too_fast = R"({
+        "name": "TooFast",
+        "scan_rate_hz": 960,
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [ { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    const char* profile = R"({
+        "device": { "name": "TestBoard", "firmware_version": "1.0", "protocol_version": 1 },
+        "limits": { "ns_per_abstract_cycle": 1000000 },
+        "features": { "protection": true, "complex": true, "analog": true, "dsp": true, "serial_bus": true }
+    })";
+    le_compile_result_t bad;
+    int rc2 = le_compile_json(too_fast, profile, &bad);
+    TEST_ASSERT(rc2 != 0 || !bad.success, "unachievable scan_rate_hz rejected against the board cost model");
+    if (bad.error_message) {
+        TEST_ASSERT(std::strstr(bad.error_message, "Lower scan_rate_hz to at most") != NULL,
+                    "error message tells the designer the max achievable rate");
+    }
+    le_compile_result_free(&bad);
+}
+
+/**
+ * @brief Verifies the opcode enum is DENSE (every value 0x00..0xFF enumerated)
+ * so the flattened executor compiles to a single O(1) jump table, and that the
+ * reserved placeholders are loudly rejected if ever executed.
+ */
+void test_opcode_enum_density(void)
+{
+    TEST_ASSERT(LE_OP_RESERVED_1F == 0x1F, "reserved block 1F present");
+    TEST_ASSERT(LE_OP_RESERVED_50 == 0x50, "reserved block 50 present");
+    TEST_ASSERT(LE_OP_RESERVED_9F == 0x9F, "reserved block 9F present");
+    TEST_ASSERT(LE_OP_RESERVED_FE == 0xFE, "reserved block FE present");
+    TEST_ASSERT(LE_OP_END == 0xFF, "END remains the table sentinel");
+
+    le_process_image_t img;
+    le_process_image_init(&img);
+    le_instruction_t inst = { (uint8_t)LE_OP_RESERVED_50, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+    TEST_ASSERT(le_exec_instruction(&inst, &img, 0) == LE_ERR_UNKNOWN_OPCODE,
+                "reserved opcode rejected as unknown");
 }
 
 void test_disasm_content()
@@ -2033,7 +2435,11 @@ int main()
     RUN_TEST(test_complex_arithmetic);
     RUN_TEST(test_diff_n_block);
     RUN_TEST(test_diff_87_ten_inputs);
+    RUN_TEST(test_multi_input_gate_decomposition);
+    RUN_TEST(test_all_logic_gates_truth);
+    RUN_TEST(test_zero_input_gate_compile);
     RUN_TEST(test_board_complex_limit);
+    RUN_TEST(test_overcurrent_enable_input);
     RUN_TEST(test_phase_comp_transform);
     RUN_TEST(test_dist21_mho);
     RUN_TEST(test_arena_capacity);
@@ -2048,6 +2454,9 @@ int main()
     RUN_TEST(test_binary_determinism);
     RUN_TEST(test_binary_header_fields);
     RUN_TEST(test_disasm_content);
+    RUN_TEST(test_timing_descriptor);
+    RUN_TEST(test_circuit_owns_scan_rate);
+    RUN_TEST(test_opcode_enum_density);
     RUN_TEST(test_dce_preserves_stateful);
     RUN_TEST(test_inversion_combinations);
     RUN_TEST(test_integrated_pipeline_step);

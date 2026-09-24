@@ -68,11 +68,12 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
     size_t state_table_off = sizeof(le_header_t) + expected_payload_size + block_table_size;
     size_t state_table_size = (size_t)header->state_desc_count * LE_STATE_DESC_BYTES;
     size_t alias_bytes = (size_t)header->alias_count * LE_ALIAS_BYTES;
-    if (state_table_off + state_table_size + (size_t)header->state_img_len + alias_bytes > size) {
+    size_t timing_bytes = ((size_t)header->timing_count != 0) ? (size_t)LE_TIMING_DESC_BYTES : 0;
+    if (state_table_off + state_table_size + (size_t)header->state_img_len + alias_bytes + timing_bytes > size) {
         return LE_ERR_OUT_OF_BOUNDS;
     }
     size_t total_payload = expected_payload_size + block_table_size + state_table_size +
-                           (size_t)header->state_img_len + alias_bytes;
+                           (size_t)header->state_img_len + alias_bytes + timing_bytes;
 
     if (size < sizeof(le_header_t) + total_payload) {
         return LE_ERR_OUT_OF_BOUNDS;
@@ -197,9 +198,66 @@ le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size)
         le_vm_load_aliases(vm, al, header.alias_count);
     }
 
+    /* Timing descriptor (appended after the alias table): compiler cost budget
+     * and the circuit-declared fixed scan rate. The DESIGNER owns the rate: the
+     * loader applies it to the VM clock (1e6/rate us period) then verifies the
+     * estimated worst-case scan fits it, so an unachievable program is rejected
+     * at LOAD (and the designer simply lowers the declared rate). */
+    vm->timing_abstract_cycles = 0;
+    vm->timing_margin_pct = 100;
+    vm->timed_worst_us = 0;
+    vm->timing_feasible = 0;
+    if (header.timing_count != 0) {
+        const uint8_t* td = img + header.state_img_len +
+                            (size_t)header.alias_count * LE_ALIAS_BYTES;
+        const le_timing_desc_t* t = (const le_timing_desc_t*)td;
+        vm->timing_abstract_cycles = t->abstract_cycles;
+        vm->timing_margin_pct = t->safety_margin_pct;
+
+        /* Designer-declared scan rate -> VM period (unless a host previously
+         * applied an override with le_vm_set_scan_period_us). */
+        if (t->design_scan_rate_hz > 0 && vm->scan_period_us == 0) {
+            uint32_t rate = (uint32_t)t->design_scan_rate_hz;
+            uint32_t period_us = (1000000u + rate / 2u) / rate; /* rounded */
+            le_vm_set_scan_period_us(vm, period_us);
+        }
+
+        /* Achievability gate: scale the compiler cost by the board's calibrated
+         * nanoseconds-per-cycle and compare against the (now applied) period.
+         * LE_NS_PER_ABSTRACT_CYCLE == 0 (or no period) disables the gate. */
+        if (vm->scan_period_us > 0 && LE_NS_PER_ABSTRACT_CYCLE > 0) {
+            uint64_t worst_ns = (uint64_t)t->abstract_cycles * (uint64_t)LE_NS_PER_ABSTRACT_CYCLE;
+            uint32_t worst_us = (uint32_t)((worst_ns + 999u) / 1000u);
+            vm->timed_worst_us = worst_us;
+            if (worst_us > vm->scan_period_us) {
+                return LE_ERR_TIMING_BUDGET;
+            }
+            vm->timing_feasible = 1;
+        }
+    }
+
     if (header.flags & LE_FLAG_AUTOSTART) {
         le_vm_start(vm);
     }
 
+    return LE_OK;
+}
+
+le_status_t le_loader_timing(const le_vm_t* vm, le_timing_t* out)
+{
+    if (!vm || !out) return LE_ERR_NULL_PTR;
+
+    out->scan_period_us = vm->scan_period_us;
+    out->abstract_cycles = vm->timing_abstract_cycles;
+    out->safety_margin_pct = vm->timing_margin_pct;
+    out->worst_case_us = vm->timed_worst_us;
+    out->margin_us = 0;
+    out->margin_pct = 0;
+    out->feasible = vm->timing_feasible;
+
+    if (vm->scan_period_us > 0 && vm->timing_feasible && vm->timed_worst_us <= vm->scan_period_us) {
+        out->margin_us = vm->scan_period_us - vm->timed_worst_us;
+        out->margin_pct = (uint16_t)(((uint64_t)out->margin_us * 100u) / vm->scan_period_us);
+    }
     return LE_OK;
 }

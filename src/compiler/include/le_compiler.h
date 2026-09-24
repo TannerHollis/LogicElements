@@ -72,6 +72,10 @@ int alias_count;           /**< Total number of user-declared register aliases p
     /* Optimization statistics */
     int eliminated_instructions; /**< Number of instructions removed by optimization passes. */
     int eliminated_registers;    /**< Number of intermediate registers eliminated by optimization passes. */
+
+    /* Timing analysis (deterministic fixed-rate execution) */
+    uint32_t abstract_cycles;    /**< Worst-case abstract cost of the emitted program (timing descriptor). */
+    double   estimated_exec_us;  /**< Estimated worst-case scan time on the target board (with compiler safety margin), or 0 when the board profile provides no cost model. */
 } le_compile_result_t;
 
 /**

@@ -182,7 +182,7 @@ Performs reverse reachability analysis rooted at all hardware side-effect nodes:
 - State registers (`BOOLREGISTER`, `FLOATREGISTER`, `INTREGISTER`)
 - Stateful elements (`TON`, `TOF`, `TP`, `CTU`, `CTD`, `CTUD`, `LATCH`, `SR`, `RS`)
 - Custom peripheral drivers (`LE_CUSTOM`) — emitted as an `LE_OP_BLOCK` with a custom function id
-- Protection relays and serial bus elements (`PID`, `DIFF_87`, `I2C`, `SPI`)
+- Protection relays and serial bus elements (`OVERCURRENT`, `DIFF_87`, `I2C`, `SPI`)
 
 Any pure logic gate whose output is never consumed and cannot affect circuit state is pruned from the emitted bytecode.
 
@@ -486,7 +486,7 @@ execution).
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `8`). |
+| `0x04` | `version` | `uint16_t` | Format version (Current: `10`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
 | `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%IN). |
@@ -500,8 +500,8 @@ execution).
 | `0x1A` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
 | `0x1C` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
 | `0x20` | `alias_count` | `uint16_t` | Number of user-declared register aliases in the trailing alias table. |
-| `0x22` | `rsvd` | `uint16_t` | Reserved (0). Pads the header to 40 bytes so instructions are 4-byte aligned. |
-| `0x24` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table). |
+| `0x22` | `timing_count` | `uint16_t` | `1` when a 10-byte timing descriptor follows the alias table (always emitted; `0` = none). Pads the header to 40 bytes so instructions are 4-byte aligned. |
+| `0x24` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table + timing descriptor). |
 
 > State element instances are **not** enumerated per type in the header. The
 > compiler bakes each block's state (defaults + properties) as concrete bytes
@@ -545,7 +545,70 @@ families use the canonical user-facing names (`%IN`, `%OUT`, `%AIN`, `%B`, `%I`,
 > `DIN[i]` / `DOUT[i]` / `BOOL[i]` / `FLOAT[i]` / `INT[i]` / `AIN[i]` remain
 > valid synonyms in alias targets.
 
+### Timing descriptor (10 bytes, `timing_count == 1`)
+
+Appended after the alias table, the timing descriptor carries the compiler's
+**worst-case abstract cost** of the emitted program (target-independent) plus the
+circuit's **declared fixed scan rate** (designer-owned):
+
+| Offset | Field | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | `abstract_cycles` | `uint32_t` | Worst-case abstract cost (sum of per-instruction costs; variable-arity blocks scale with operand count). |
+| `0x04` | `safety_margin_pct` | `uint16_t` | Compiler safety multiplier (e.g. `150` = 1.5× worst case). |
+| `0x06` | `design_scan_rate_hz` | `uint16_t` | Circuit-declared fixed scan rate (e.g. `960`); `0` = unspecified (host-driven). |
+| `0x08` | `rsvd` | `uint16_t` | Reserved (0). |
+
+Any target board scales `abstract_cycles` by its own calibrated
+`ns_per_abstract_cycle` (from the `.leconfig`) to derive an estimated
+`worst_case_us`:
+
+```
+est_us = abstract_cycles * ns_per_abstract_cycle * safety_margin_pct / 100 / 1000
+```
+
+The compiler performs this estimate at `-b` time and **rejects** the circuit when
+`est_us > 1e6 / design_scan_rate_hz` — the message reports the **maximum
+achievable rate** so the designer can simply lower `scan_rate_hz`. The loader
+independently applies the same gate (returning `LE_ERR_TIMING_BUDGET`), and hosts
+query the margin with `le_loader_timing()`.
+
+### Fixed-rate scan contract
+
+Several runtime features (DSP filters, phasor extraction, timers, PID,
+overcurrent, totalizers) assume **uniform scan cadence** — their `dt` is derived
+from the enforced scan period, not the wall clock. To run deterministically:
+
+1. The DESIGNER declares the fixed rate in the circuit JSON (top-level
+   `"scan_rate_hz": 960`). The compiler embeds it in the timing descriptor; the
+   loader applies the period (`1e6/rate` µs) to the VM clock at load.
+2. The board only calibrates the **cost model** (`ns_per_abstract_cycle` in its
+   `.leconfig` + `LE_NS_PER_ABSTRACT_CYCLE` define) used to verify achievability.
+   A program whose estimated worst-case scan exceeds its declared period is
+   rejected at load with `LE_ERR_TIMING_BUDGET` — the designer lowers the rate.
+3. The VM then steps with `le_vm_set_enforce_fixed_rate(vm, true)` and
+   `le_vm_step_us(vm, now_us)` with timestamps advancing by exactly `period_us`
+   (or `le_vm_run_scan(vm)` waits to the next boundary via the HAL microsecond
+   clock). `le_vm_step(ms)` remains as the millisecond wrapper.
+4. Any off-cadence step returns `LE_ERR_SCAN_JITTER` (host bug surfaced loudly,
+   never silent drift).
+
+**PID** is a DSP / control element (`LE_ENABLE_DSP`), not a protection relay:
+boards that strip DSP also drop PID, independently of `LE_ENABLE_PROTECTION`.
+
+The runtime measures observed worst-case scan duration (when the HAL provides
+`get_time_us`) into `vm.observed_worst_us` / `vm.scan_overruns`.
+
 ---
+
+## Deterministic timing analysis
+
+The compiler emits a fixed per-instruction abstract cost and scales variable-arity
+blocks (`PHASOR_1P` by its DFT window, `DIFF_87` by input count). The total is
+baked into the `.lebin` timing descriptor **and** reported via
+`le_compile_result_t.abstract_cycles` / `estimated_exec_us`. This lets a designer
+confirm a circuit's worst-case scan (with a built-in 1.5× safety margin) fits the
+target board's fixed scan period **before uploading** — the same check the loader
+enforces at load and the firmware measures at run time.
 
 ---
 

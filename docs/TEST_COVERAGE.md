@@ -11,9 +11,9 @@ circuit compiles into expected bytecode/state.
 
 | Suite | Binary | Assertions (current) | Focus |
 | :--- | :--- | :--- | :--- |
-| Runtime | `test_c_runtime.c` | 410 | opcode behavior, loader/CRC, comms, storage, CLI, pulses |
-| Compiler | `test_compiler.cpp` | 40 tests | JSON -> bytecode pipeline, optimizer, aliases, error paths |
-| Assembly | `test_element_assembly.c` | 89 oracle rows | element -> opcode emission parity |
+| Runtime | `test_c_runtime.c` | 450 | opcode behavior, loader/CRC, comms, storage, CLI, pulses |
+| Compiler | `test_compiler.cpp` | 47 tests | JSON -> bytecode pipeline, optimizer, aliases, gate decomposition, error paths |
+| Assembly | `test_element_assembly.c` | 80 oracle rows | element -> opcode emission parity |
 
 ## Opcode coverage
 
@@ -21,6 +21,7 @@ circuit compiles into expected bytecode/state.
 | :--- | :--- | :--- | :--- | :--- |
 | MOVE / NOT / AND / OR | Y | Y | Y | truth tables + invert modifiers |
 | XOR / NAND / NOR | Y | Y | Y | full truth tables |
+| Multi-input gates (AND/OR/XOR/NAND/NOR) | Y | Y | Y | N=2..5 exhaustive truth + 0/1-input identity; left-fold -> N-1 instr |
 | MUX | Y | Y | Y | scalar out=in_a; N-arity via test_mux_block |
 | RTRIG / FTRIG | Y | Y | Y | rising/falling edge incl. re-arm |
 | SR / RS | Y | Y | Y | set/reset dominance |
@@ -35,6 +36,8 @@ circuit compiles into expected bytecode/state.
 | OVERCURRENT | Y | Y | Y | ANSI-51 curve + clear |
 | Rect/Polar conversions (6) | Y | Y | Y | |
 | PHASOR_1P | Y | Y | Y | DFT golden |
+| PHASOR_3P | Y | Y | Y | 3x DFT golden (shared sync/freq) |
+| FREQ_EST | Y | Y | Y | 81U/81O tracking + fallback + cadence |
 | SYM_COMP | Y | Y | Y | seq 0/1/2 |
 | DIST_21 | Y | Y | Y | Mho zone trip + baked reach |
 | DIFF_87 | Y | Y | Y | N-input dual-slope |

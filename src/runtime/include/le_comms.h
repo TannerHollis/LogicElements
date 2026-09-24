@@ -54,6 +54,9 @@ extern "C" {
 /** @brief Pulse a register (by process-image address) for a duration.
  *  Payload: [addr: uint16_t] [duration_ms: uint32_t]. */
 #define LE_CMD_PULSE            0x41
+/** @brief Query the timing / achievability report (le_timing_t bytes).
+ *  Response: LE_CMD_IMAGE_DATA-style payload of sizeof(le_timing_t). */
+#define LE_CMD_GET_TIMING       0x42
 
 /* ========================================================================== */
 /* Hardware feature flags                                                     */

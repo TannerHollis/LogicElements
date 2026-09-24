@@ -656,4 +656,33 @@ void le_process_image_set_min_max_hold(le_process_image_t* img, uint8_t idx, uin
     st->max_val = 0.0f;
     st->initialized = false;
 }
+
+void le_process_image_set_freq_est(le_process_image_t* img, uint8_t idx,
+                                   float nominal_freq_hz, float hysteresis,
+                                   float min_freq_hz, float max_freq_hz,
+                                   float filter_alpha)
+{
+    if (!img) return;
+    le_freq_est_state_t* st = (le_freq_est_state_t*)le_process_image_kind_state(img, LE_BLK_FREQ_EST, idx);
+    if (!st) return;
+
+    if (nominal_freq_hz <= 0.0f) nominal_freq_hz = 60.0f;
+    if (hysteresis < 0.0f) hysteresis = -hysteresis;
+    if (min_freq_hz <= 0.0f) min_freq_hz = 45.0f;
+    if (max_freq_hz <= min_freq_hz) max_freq_hz = 65.0f;
+    if (filter_alpha < 0.0f) filter_alpha = 0.0f;
+    if (filter_alpha > 1.0f) filter_alpha = 1.0f;
+    st->nominal_freq_hz = nominal_freq_hz;
+    st->hysteresis = hysteresis;
+    st->min_freq_hz = min_freq_hz;
+    st->max_freq_hz = max_freq_hz;
+    st->filter_alpha = filter_alpha;
+    st->tracked_freq_hz = nominal_freq_hz;   /* start output at nominal until first measurement */
+    st->prev_sample = 0.0f;
+    st->prev_cross_frac = 0.0f;
+    st->samples_since_cross = 0;
+    st->armed_state = 0;
+    st->valid = false;
+    st->initialized = false;
+}
 #endif

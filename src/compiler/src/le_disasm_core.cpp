@@ -15,6 +15,7 @@ std::string format_address(uint16_t addr, int user_bool_count, int user_float_co
     if (addr == LE_CONST_TRUE) return "TRUE";
     if (addr == LE_CONST_ZERO_F) return "0.0f";
     if (addr == LE_CONST_ONE_F) return "1.0f";
+    if (addr == LE_CONST_60_F) return "60.0f";
     if (addr == LE_CONST_ZERO_C) return "0+0j";
 
     uint16_t region = addr & LE_ADDR_REGION_MASK;
@@ -108,7 +109,6 @@ std::string format_opcode(uint8_t op, uint8_t mod)
 
         #if LE_ENABLE_PROTECTION
         case LE_OP_PID: return "PID";
-        case LE_OP_OVERCURRENT: return "OVERCURRENT_51";
         case LE_OP_SYM_COMP: return "SYM_COMP";
         case LE_OP_DIST_21: return "DIST_21";
 #endif
@@ -140,6 +140,8 @@ std::string format_opcode(uint8_t op, uint8_t mod)
                 case LE_FUNC_POLAR2RECT: return "POLAR2RECT";
                 case LE_FUNC_PHASOR_SHIFT: return "PHASOR_SHIFT";
                 case LE_FUNC_PHASOR_1P: return "PHASOR_1P";
+                case LE_FUNC_PHASOR_3P: return "PHASOR_3P";
+                case LE_FUNC_FREQ_EST: return "FREQ_EST";
                 case LE_FUNC_COMPLEX2POLAR: return "COMPLEX2POLAR";
                 case LE_FUNC_COMPLEX2RECT: return "COMPLEX2RECT";
                 case LE_FUNC_RECT2COMPLEX: return "RECT2COMPLEX";
@@ -148,6 +150,7 @@ std::string format_opcode(uint8_t op, uint8_t mod)
                 case LE_FUNC_PHASE_COMP: return "PHASE_COMP";
                 case LE_FUNC_DIFF_87: return "DIFF_87";
                 case LE_FUNC_DIST_21: return "DIST_21";
+                case LE_FUNC_OVERCURRENT_51: return "OVERCURRENT_51";
                 default: return "BLOCK";
             }
 
@@ -168,6 +171,8 @@ std::string block_kind_name(uint8_t kind)
         case LE_BLK_OVERCURRENT: return "OVERCURRENT";
         case LE_BLK_SCALER: return "SCALE_F";
         case LE_BLK_PHASOR: return "PHASOR_1P";
+        case LE_BLK_PHASOR3: return "PHASOR_3P";
+        case LE_BLK_FREQ_EST: return "FREQ_EST";
         case LE_BLK_SYMCOMP: return "SYM_COMP";
         case LE_BLK_21: return "DIST_21";
         case LE_BLK_DIFF_87: return "DIFF_87";
@@ -242,13 +247,35 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
             const le_overcurrent_state_t* s = (const le_overcurrent_state_t*)p;
             rows("pickup", s->pickup); rows("time_dial", s->time_dial);
             row("curve_type", std::to_string((int)s->curve_type));
+            rows("a_coeff", s->a_coeff); rows("b_coeff", s->b_coeff); rows("p_coeff", s->p_coeff);
             break;
         }
         case LE_BLK_PHASOR: {
             const le_phasor_state_t* s = (const le_phasor_state_t*)p;
             row("samples_per_cycle", std::to_string(s->samples_per_cycle));
+            row("sample_rate_hz", std::to_string(s->sample_rate_hz));
+            row("self_sync", s->self_sync ? "true" : "false");
             row("phasor", fmt_cx(s->phasor));
             rows("magnitude", s->magnitude); rows("angle_rad", s->angle_rad);
+            break;
+        }
+        case LE_BLK_PHASOR3: {
+            const le_phasor3_state_t* s = (const le_phasor3_state_t*)p;
+            row("samples_per_cycle", std::to_string(s->samples_per_cycle));
+            row("sample_rate_hz", std::to_string(s->sample_rate_hz));
+            row("self_sync", s->self_sync ? "true" : "false");
+            row("phasor_a", fmt_cx(s->phasor_a)); row("phasor_b", fmt_cx(s->phasor_b)); row("phasor_c", fmt_cx(s->phasor_c));
+            rows("magnitude_a", s->magnitude_a); rows("angle_rad_a", s->angle_rad_a);
+            rows("magnitude_b", s->magnitude_b); rows("angle_rad_b", s->angle_rad_b);
+            rows("magnitude_c", s->magnitude_c); rows("angle_rad_c", s->angle_rad_c);
+            break;
+        }
+        case LE_BLK_FREQ_EST: {
+            const le_freq_est_state_t* s = (const le_freq_est_state_t*)p;
+            rows("nominal_freq_hz", s->nominal_freq_hz); rows("hysteresis", s->hysteresis);
+            rows("min_freq_hz", s->min_freq_hz); rows("max_freq_hz", s->max_freq_hz);
+            rows("filter_alpha", s->filter_alpha); rows("tracked_freq_hz", s->tracked_freq_hz);
+            row("valid", s->valid ? "true" : "false");
             break;
         }
         case LE_BLK_SYMCOMP: {
@@ -552,6 +579,23 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
         << "  StateGroups:" << h.state_desc_count
         << "  StateImage:" << h.state_img_len << " bytes"
         << "  Aliases:" << h.alias_count << "\n";
+/* Timing descriptor (follows the alias table): compiler worst-case cost. */
+    if (h.timing_count != 0) {
+        size_t td_off = sizeof(le_header_t) + (size_t)h.instruction_count * sizeof(le_instruction_t);
+        for (uint16_t b = 0; b < h.block_count; b++) {
+            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + td_off);
+            td_off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                      ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+        }
+        td_off += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
+        td_off += (size_t)h.state_img_len;
+        td_off += (size_t)h.alias_count * LE_ALIAS_BYTES;
+        if (td_off + LE_TIMING_DESC_BYTES <= bin_len) {
+            const le_timing_desc_t* t = (const le_timing_desc_t*)(bin_data + td_off);
+            out << "Timing Model:        " << t->abstract_cycles << " abstract cycles x " << t->safety_margin_pct
+                << "% safety  " << (t->design_scan_rate_hz > 0 ? ("scan_rate_hz " + std::to_string(t->design_scan_rate_hz)) : "rate unspecified") << "\n";
+        }
+    }
 
     out << "Header CRC32:        0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << h.crc32 << "\n";
 

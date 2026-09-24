@@ -686,6 +686,15 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     const auto& elements = circuit_doc.get("elements").as_array();
     const auto& nets = circuit_doc.get("nets").as_array();
 
+    /* Circuit-declared fixed scan rate (designer-owned): the designer picks the
+     * cadence their circuit needs (DSP/phasing/timers run on this uniform
+     * sample grid). It is baked into the .lebin timing descriptor so the loader
+     * applies it to the VM clock and verifies achievability on the target; if a
+     * rate fails, the designer simply lowers it. 0 = unspecified (host-driven). */
+    double design_scan_hz = circuit_doc.get("scan_rate_hz").as_double(0.0);
+    if (design_scan_hz < 0.0) design_scan_hz = 0.0;
+    if (design_scan_hz > 65535.0) design_scan_hz = 65535.0;
+
     // Reset allocators
     m_user_bool_count = 0;
     m_user_int_count = 0;
@@ -1020,6 +1029,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     };
     std::vector<BlockCall> block_calls;
 
+    /* Worst-case DFS samples-per-cycle used by the PHASOR_1P cost estimate
+     * (captured from the baked phasor state during emission). */
+    uint16_t phasor_samples_est = 16;
+
     /* Per-kind count of stateful blocks (timers, counters, DSP filters, ...).
      * Emitted as a compact state-directive table so the loader can compute each
      * kind group's byte offset within the state image. */
@@ -1278,14 +1291,16 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "CMP_LE" || type == "LE_CMP_LE") opcode = LE_OP_CMP_LE;
         else if (type == "CMP_EQ" || type == "LE_CMP_EQ") opcode = LE_OP_CMP_EQ;
         else if (type == "CMP_NE" || type == "LE_CMP_NE") opcode = LE_OP_CMP_NE;
-        else if (type == "PID" || type == "LE_PID") { opcode = LE_OP_PID; uses_protection = true; is_float_op = true;
+        else if (type == "PID" || type == "LE_PID") { opcode = LE_OP_PID; uses_dsp = true; is_float_op = true;
             if (state_descs.find(LE_BLK_PID) == state_descs.end()) state_descs[LE_BLK_PID] = 1; }
-        else if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") { opcode = LE_OP_OVERCURRENT; uses_protection = true;
+        else if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") { opcode = LE_OP_BLOCK; uses_protection = true;
             if (state_descs.find(LE_BLK_OVERCURRENT) == state_descs.end()) state_descs[LE_BLK_OVERCURRENT] = 1; }
         else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") { opcode = LE_OP_BLOCK; is_float_op = true; }
         else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") { opcode = LE_OP_BLOCK; is_float_op = true; }
         else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") { opcode = LE_OP_BLOCK; is_float_op = true; }
         else if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") { opcode = LE_OP_BLOCK; uses_protection = true; }
+        else if (type == "PHASOR_3P" || type == "LE_PHASOR_3P") { opcode = LE_OP_BLOCK; uses_protection = true; }
+        else if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || type == "LE_FREQ_TRACKER" || type == "ANSI_81" || type == "LE_ANSI_81") { opcode = LE_OP_BLOCK; uses_protection = true; }
         else if (type == "SYM_COMP" || type == "LE_SYM_COMP") { opcode = LE_OP_SYM_COMP; uses_protection = true;
             if (state_descs.find(LE_BLK_SYMCOMP) == state_descs.end()) state_descs[LE_BLK_SYMCOMP] = 1; }
         else if (type == "DIST_21" || type == "LE_DIST_21") { opcode = LE_OP_DIST_21; uses_protection = true;
@@ -1394,12 +1409,11 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             case LE_OP_MEDIAN: { le_median_state_t st{}; st.window_size = (uint16_t)prop(el, "window_size", 5.0f); append_state(LE_BLK_MEDIAN, &st, sizeof(st)); break; }
             case LE_OP_DEADBAND: { le_deadband_state_t st{}; st.threshold = prop(el, "threshold", 0.0f); st.center = prop(el, "center", 0.0f); append_state(LE_BLK_DEADBAND, &st, sizeof(st)); break; }
             case LE_OP_WASHOUT: { le_washout_state_t st{}; st.alpha = prop(el, "alpha", 0.95f); append_state(LE_BLK_WASHOUT, &st, sizeof(st)); break; }
-            case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = prop(el, "alpha", 0.8f); st.gain = prop(el, "gain", 1000.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
-            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = prop(el, "hysteresis", 0.05f); st.sample_rate_hz = prop(el, "sample_rate_hz", 1000.0f); append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
+            case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = prop(el, "alpha", 0.8f); st.gain = prop(el, "gain", 1.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
+            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = prop(el, "hysteresis", 0.05f); /* sample_rate_hz deprecated: cadence derives from le_rt_scan_dt() */ append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
             case LE_OP_LUT_1D: { le_lut_1d_state_t st{}; st.num_points = (uint16_t)prop(el, "num_points", 2.0f); const auto& xarr = el.get("x").arr_val; const auto& yarr = el.get("y").arr_val; for (size_t k = 0; k < xarr.size() && k < LE_MAX_LUT_POINTS; k++) st.x[k] = (float)xarr[k].as_float(0.0f); for (size_t k = 0; k < yarr.size() && k < LE_MAX_LUT_POINTS; k++) st.y[k] = (float)yarr[k].as_float(0.0f); if (st.num_points < 2) st.num_points = 2; if (st.num_points > LE_MAX_LUT_POINTS) st.num_points = LE_MAX_LUT_POINTS; append_state(LE_BLK_LUT_1D, &st, sizeof(st)); break; }
-            case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = prop(el, "time_base_sec", 60.0f); st.scale_factor = prop(el, "scale_factor", 1.0f); st.sample_time_sec = prop(el, "sample_time_sec", 0.001f); st.max_limit = prop(el, "max_limit", 0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
+            case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = prop(el, "time_base_sec", 60.0f); st.scale_factor = prop(el, "scale_factor", 1.0f); st.max_limit = prop(el, "max_limit", 0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
             case LE_OP_MIN_MAX_HOLD: { le_min_max_hold_state_t st{}; st.mode = (uint8_t)prop(el, "mode", 0.0f); append_state(LE_BLK_MIN_MAX_HOLD, &st, sizeof(st)); break; }
-            case LE_OP_OVERCURRENT: { le_overcurrent_state_t st{}; st.pickup = prop(el, "pickup", 1.0f); st.time_dial = prop(el, "time_dial", 1.0f); st.curve_type = (uint8_t)prop(el, "curve_type", 0.0f); append_state(LE_BLK_OVERCURRENT, &st, sizeof(st)); break; }
             case LE_OP_DIST_21: { le_dist21_state_t st{}; st.reach_ohms = (float)prop(el, "reach", prop(el, "reach_ohms", 10.0)); st.line_angle_deg = (float)prop(el, "line_angle", prop(el, "line_angle_deg", 75.0)); st.offset_mag = (float)prop(el, "offset", prop(el, "offset_ohms", 0.0)); st.offset_angle_deg = (float)prop(el, "offset_angle", prop(el, "offset_angle_deg", 75.0)); st.prefault_v_threshold = (float)prop(el, "prefault_v_threshold", 0.5); st.prefault_duration_ms = (uint32_t)prop(el, "prefault_v_duration", prop(el, "prefault_duration_ms", 80.0)); append_state(LE_BLK_21, &st, sizeof(st)); break; }
             case LE_OP_PID: { le_pid_state_t st{}; st.kp = prop(el, "kp", 1.0f); st.ki = prop(el, "ki", 0.0f); st.kd = prop(el, "kd", 0.0f); st.out_min = prop(el, "out_min", -1e6f); st.out_max = prop(el, "out_max", 1e6f); append_state(LE_BLK_PID, &st, sizeof(st)); break; }
             case LE_OP_I2C: { le_i2c_device_state_t st{}; st.addr_7bit = (uint8_t)prop(el, "addr", 0.0f); st.poll_rate_ms = (uint32_t)prop(el, "poll_rate_ms", 0.0f); st.poll_tx_len = (uint8_t)prop(el, "poll_tx_len", 0.0f); st.poll_rx_len = (uint8_t)prop(el, "poll_rx_len", 0.0f); st.data_dest_addr = (uint16_t)prop(el, "data_dest_addr", 0.0f); append_state(LE_BLK_I2C, &st, sizeof(st)); break; }
@@ -1594,6 +1608,107 @@ if (type == "DIST_21" || type == "LE_DIST_21") {
             push_block(LE_FUNC_DIST_21, args, static_cast<uint8_t>(n_in), 1);
             continue;
         }
+        if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") {
+            /* IEC/IEEE inverse-time overcurrent (ANSI 51) as a variable-arity BLOCK:
+             * one COMPLEX phasor (the current) + a boolean ENABLE -> bool trip.
+             * Enable is AND'd with the pickup evaluation BEFORE the timing
+             * accumulator, so wiring a directionality boolean to it produces a
+             * ground-directional overcurrent element; leaving it unconnected =
+             * always enabled (LE_CONST_TRUE). pickup / time_dial / curve_type are
+             * baked into le_overcurrent_state_t. */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"a", "current", "i_c", "cplx_i", "in", "in_a"}), LE_CONST_ZERO_C);
+            add_in(find_port({"enable", "en", "on", "in_b", "b"}), LE_CONST_TRUE);
+
+            le_overcurrent_state_t oc_st{};
+            oc_st.pickup = (float)prop(el, "pickup", 1.0);
+            oc_st.time_dial = (float)prop(el, "time_dial", 1.0);
+
+            /* Resolve the inverse-time curve and bake the coefficients into the
+             * state so the target runtime only needs a/b/p (it never needs this
+             * table). Rules:
+             *   1. Custom coefficients (curve_a/curve_b/curve_p, or a_coeff/b_coeff/
+             *      p_coeff) win -> LE_CURVE_CUSTOM.
+             *   2. Else the named curve_type (string or enum number), defaulting to
+             *      IEC Very Inverse.
+             * The standard IEEE C37.112 / IEC 60255 (A, B, p) parameters:
+             *   t_operate = time_dial * (A / (M^p - 1) + B),  M = I / pickup. */
+            auto curve_abp = [&](uint8_t ctype, float* A, float* B, float* p) {
+                switch (ctype) {
+                    case LE_CURVE_IEC_NORMAL:      *A=0.14f;    *B=0.0f;    *p=0.02f; break;
+                    case LE_CURVE_IEC_VERY:        *A=13.5f;    *B=0.0f;    *p=1.0f;  break;
+                    case LE_CURVE_IEC_EXTREME:     *A=80.0f;    *B=0.0f;    *p=2.0f;  break;
+                    case LE_CURVE_IEEE_MODERATELY: *A=0.0515f;  *B=0.1140f; *p=0.02f; break;
+                    case LE_CURVE_IEEE_VERY:       *A=19.61f;   *B=0.491f;  *p=2.0f;  break;
+                    case LE_CURVE_IEEE_EXTREME:    *A=28.2f;    *B=0.1217f; *p=2.0f;  break;
+                    case LE_CURVE_IEEE_SHORT:      *A=0.00342f; *B=0.00262f;*p=0.02f; break;
+                    case LE_CURVE_IEEE_LONG:       *A=26.13f;   *B=0.349f;  *p=2.0f;  break;
+                    default:                       *A=13.5f;    *B=0.0f;    *p=1.0f;  break; /* IEC Very Inverse */
+                }
+            };
+
+            const bool has_custom =
+                el.contains("curve_a") || el.contains("curve_b") || el.contains("curve_p") ||
+                el.contains("a_coeff") || el.contains("b_coeff") || el.contains("p_coeff");
+
+            if (has_custom) {
+                oc_st.curve_type = LE_CURVE_CUSTOM;
+                oc_st.a_coeff = (float)prop(el, "curve_a", prop(el, "a_coeff", 0.0));
+                oc_st.b_coeff = (float)prop(el, "curve_b", prop(el, "b_coeff", 0.0));
+                oc_st.p_coeff = (float)prop(el, "curve_p", prop(el, "p_coeff", 1.0));
+            } else {
+                uint8_t ctype = LE_CURVE_IEC_VERY;
+                if (el.contains("curve_type")) {
+                    const JsonValue& ct = el.get("curve_type");
+                    if (ct.is_number()) {
+                        ctype = (uint8_t)ct.as_int(LE_CURVE_IEC_VERY);
+                    } else if (ct.is_string()) {
+                        std::string s = ct.as_string("");
+                        std::string u(s.size(), ' ');
+                        for (size_t k = 0; k < s.size(); k++) {
+                            char c = s[k];
+                            u[k] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+                        }
+                        if (u.find("IEC") != std::string::npos) {
+                            if (u.find("NORMAL") != std::string::npos) ctype = LE_CURVE_IEC_NORMAL;
+                            else if (u.find("EXTREM") != std::string::npos) ctype = LE_CURVE_IEC_EXTREME;
+                            else ctype = LE_CURVE_IEC_VERY;
+                        } else {
+                            if (u.find("MODERAT") != std::string::npos) ctype = LE_CURVE_IEEE_MODERATELY;
+                            else if (u.find("VERY") != std::string::npos) ctype = LE_CURVE_IEEE_VERY;
+                            else if (u.find("EXTREM") != std::string::npos) ctype = LE_CURVE_IEEE_EXTREME;
+                            else if (u.find("SHORT") != std::string::npos) ctype = LE_CURVE_IEEE_SHORT;
+                            else if (u.find("LONG") != std::string::npos) ctype = LE_CURVE_IEEE_LONG;
+                            else ctype = LE_CURVE_IEEE_VERY;
+                        }
+                    }
+                }
+                oc_st.curve_type = ctype;
+                curve_abp(oc_st.curve_type, &oc_st.a_coeff, &oc_st.b_coeff, &oc_st.p_coeff);
+            }
+            /* Sanitize degenerate resolved coefficients (defensive). */
+            if (!(oc_st.a_coeff > 0.0f) || !(oc_st.p_coeff > 0.0f)) {
+                oc_st.a_coeff = 13.5f; oc_st.b_coeff = 0.0f; oc_st.p_coeff = 1.0f;
+            }
+            append_state(LE_BLK_OVERCURRENT, &oc_st, sizeof(oc_st));
+
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_bool(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Bool;
+            element_outputs[name] = out0;
+            args.push_back(out0);
+            push_block(LE_FUNC_OVERCURRENT_51, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+        /* The type-specific block emissions above fall through here for the
+         * generic LE_OP_BLOCK family (CLAMP_F, complex conversions, custom nodes). */
         if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") {
             /* COMPLEX2POLAR: one complex in -> {mag, angle} floats (1-in/2-out). */
             std::vector<uint16_t> args;
@@ -1721,7 +1836,7 @@ if (type == "DIST_21" || type == "LE_DIST_21") {
         }
 
 if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
-            /* PHASOR_1P: complex output phasor (2-in/1-out). */
+            /* PHASOR_1P: complex output phasor (3-in/1-out with freq_hz input and self_sync property). */
             std::vector<uint16_t> args;
             int n_in = 0;
             auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
@@ -1731,11 +1846,21 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             };
             add_in(find_port({"in", "a", "sample", "x", "pv"}), LE_CONST_ZERO_F);
             add_in(find_port({"sync", "sync_complex", "ref", "b", "sync_phasor"}), LE_CONST_ZERO_C);
+            add_in(find_port({"freq", "freq_hz", "freq_measured"}), LE_CONST_60_F);  // freq_hz input
             state_descs[LE_BLK_PHASOR]++;
             le_phasor_state_t ph{};
             ph.samples_per_cycle = (uint16_t)prop(el, "samples_per_cycle", 16.0);
-            if (ph.samples_per_cycle == 0 || ph.samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE)
+            if (ph.samples_per_cycle == 0 || ph.samples_per_cycle > LE_MAX_RAW_SAMPLES)
                 ph.samples_per_cycle = 16;
+            phasor_samples_est = ph.samples_per_cycle;
+            
+            // Initialize sample_rate_hz: circuit scan rate if declared, or element override (0 = derive from dt at runtime)
+            ph.sample_rate_hz = (float)((design_scan_hz > 0.0) ? design_scan_hz : 0.0); /* circuit cadence; element override removed */
+            
+            // Initialize self_sync property (default: false = sync-referenced)
+            ph.self_sync = prop(el, "self_sync", false);
+            
+            // Transient runtime fields (raw_write_idx, raw_samples, phasor, mag, angle) are zero-initialized
             append_state(LE_BLK_PHASOR, &ph, sizeof(ph));
 
             int t0 = -1;
@@ -1747,6 +1872,113 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             element_outputs_port[name]["out"] = out0;
             args.push_back(out0);
             push_block(LE_FUNC_PHASOR_1P, args, static_cast<uint8_t>(n_in), 1);
+            continue;
+        }
+
+if (type == "PHASOR_3P" || type == "LE_PHASOR_3P") {
+    /* PHASOR_3P: three-phase synced phasor extractor (5-in/3-out). Banks three
+     * independent single-phase phasor extractors (a, b, c) against a single bus
+     * reference phasor (sync) and a single system frequency input (freq_hz).
+     * The shared properties (samples_per_cycle / scan_rate_hz / self_sync) apply
+     * identically to all three extractions. */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"a", "in_a", "sample_a", "sa", "x"}), LE_CONST_ZERO_F);
+            add_in(find_port({"b", "in_b", "sample_b", "sb"}), LE_CONST_ZERO_F);
+            add_in(find_port({"c", "in_c", "sample_c", "sc"}), LE_CONST_ZERO_F);
+            add_in(find_port({"sync", "sync_complex", "ref", "b", "sync_phasor"}), LE_CONST_ZERO_C);
+            add_in(find_port({"freq", "freq_hz", "freq_measured"}), LE_CONST_60_F);  // freq_hz input
+            state_descs[LE_BLK_PHASOR3]++;
+            le_phasor3_state_t ph3{};
+            ph3.samples_per_cycle = (uint16_t)prop(el, "samples_per_cycle", 16.0);
+            if (ph3.samples_per_cycle == 0 || ph3.samples_per_cycle > LE_MAX_RAW_SAMPLES)
+                ph3.samples_per_cycle = 16;
+            phasor_samples_est = ph3.samples_per_cycle;
+
+            // Initialize sample_rate_hz: circuit scan rate if declared, or element override (0 = derive from dt at runtime)
+            ph3.sample_rate_hz = (float)((design_scan_hz > 0.0) ? design_scan_hz : 0.0); /* circuit cadence; element override removed */
+
+            // Initialize self_sync property (default: false = sync-referenced)
+            ph3.self_sync = prop(el, "self_sync", false);
+
+            // Transient runtime fields (per-phase buffers, phasors, mag, angle) are zero-initialized
+            append_state(LE_BLK_PHASOR3, &ph3, sizeof(ph3));
+
+            // Three complex phasor outputs (a, b, c)
+            const char* out_names[3] = { "a", "b", "c" };
+            for (int k = 0; k < 3; k++) {
+                int t = -1;
+                uint16_t o = acquire_temp_complex(t);
+                if (k == 0) {
+                    node_temp_idx[name] = t;
+                    node_temp_type[name] = TempType::Complex;
+                    element_outputs[name] = o;
+                }
+                element_outputs_port[name]["phasor_" + std::string(out_names[k])] = o;
+                element_outputs_port[name][out_names[k]] = o;
+                element_outputs_port[name]["out"] = o;
+                args.push_back(o);
+            }
+            push_block(LE_FUNC_PHASOR_3P, args, static_cast<uint8_t>(n_in), 3);
+            continue;
+        }
+
+if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || type == "LE_FREQ_TRACKER" || type == "ANSI_81" || type == "LE_ANSI_81") {
+            /* FREQ_EST: ANSI 81 dynamic fundamental frequency estimator (1-in/2-out).
+             * One float sample in; a float freq_hz and a bool `valid` out. Sampling
+             * rate is strictly derived at runtime from le_rt_scan_dt(); NO sample-rate
+             * property is baked. nominal_freq_hz / hysteresis / min_freq_hz /
+             * max_freq_hz / filter_alpha are baked into le_freq_est_state_t. */
+            std::vector<uint16_t> args;
+            int n_in = 0;
+            auto add_in = [&](const std::string& port_src, uint16_t def_addr) {
+                args.push_back(block_src_addr(port_src, def_addr));
+                consume_input(port_src);
+                n_in++;
+            };
+            add_in(find_port({"in", "x", "sample", "a", "pv"}), LE_CONST_ZERO_F);
+
+            state_descs[LE_BLK_FREQ_EST]++;
+            le_freq_est_state_t fe{};
+            fe.nominal_freq_hz = (float)prop(el, "nominal_freq_hz", 60.0);
+            fe.hysteresis = (float)prop(el, "hysteresis", 0.05);
+            fe.min_freq_hz = (float)prop(el, "min_freq_hz", 45.0);
+            fe.max_freq_hz = (float)prop(el, "max_freq_hz", 65.0);
+            fe.filter_alpha = (float)prop(el, "filter_alpha", 0.0);
+            if (fe.nominal_freq_hz <= 0.0f) fe.nominal_freq_hz = 60.0f;
+            if (fe.hysteresis < 0.0f) fe.hysteresis = -fe.hysteresis;
+            if (fe.min_freq_hz <= 0.0f) fe.min_freq_hz = 45.0f;
+            if (fe.max_freq_hz <= fe.min_freq_hz) fe.max_freq_hz = 65.0f;
+            if (fe.filter_alpha < 0.0f) fe.filter_alpha = 0.0f;
+            if (fe.filter_alpha > 1.0f) fe.filter_alpha = 1.0f;
+            fe.tracked_freq_hz = fe.nominal_freq_hz;  /* start output at nominal */
+
+            append_state(LE_BLK_FREQ_EST, &fe, sizeof(fe));
+
+            /* Output 0: freq_hz (float). Output 1: valid (bool). */
+            int t0 = -1;
+            uint16_t out0 = acquire_temp_float(t0);
+            node_temp_idx[name] = t0;
+            node_temp_type[name] = TempType::Float;
+            element_outputs[name] = out0;
+            element_outputs_port[name]["freq_hz"] = out0;
+            element_outputs_port[name]["freq"] = out0;
+            element_outputs_port[name]["out"] = out0;
+            args.push_back(out0);
+
+            int t1 = -1;
+            uint16_t out1 = acquire_temp_bool(t1);
+            element_outputs_port[name]["valid"] = out1;
+            element_outputs_port[name]["lock"] = out1;
+            element_outputs_port[name]["tracking"] = out1;
+            args.push_back(out1);
+
+            push_block(LE_FUNC_FREQ_EST, args, static_cast<uint8_t>(n_in), 2);
             continue;
         }
         /* Phasor conversions: 2-in (or 3-in) -> 2-out blocks (RECT2POLAR/POLAR2RECT/PHASOR_SHIFT). */
@@ -1934,6 +2166,121 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
         }
         element_outputs[name] = out_addr;
 
+// ------------------------------------------------------------------
+        // Multi-input logic gates (AND/OR/XOR/NAND/NOR with arbitrary fan-in).
+        // The runtime has only 2-input gates, so the compiler decomposes an
+        // N-input gate into a LEFT-FOLD chain of (N-1) two-input runtime calls
+        // through one reused temp bool, applying the final inversion (NAND/NOR)
+        // via the LE_MOD_INVERT_OUT modifier (no extra NOT instruction). N=0/1
+        // reduce to the gate's identity / a passthrough, fan-in is capped at 32.
+        // ------------------------------------------------------------------
+        if (opcode == LE_OP_AND || opcode == LE_OP_OR || opcode == LE_OP_XOR ||
+            opcode == LE_OP_NAND || opcode == LE_OP_NOR) {
+            /* Collect the ordered input addresses using the canonical DIFF-87
+             * port naming (a/b/c, then d..z, then in_N / input_N). Scanning is
+             * non-destructive (find_port only records matches in used_keys); the
+             * single 2-input path below still consumes the a/b ports normally. */
+            std::vector<std::string> gate_srcs;
+            std::vector<uint16_t> gate_addrs;
+            for (int k = 0; k < 32; k++) {   /* fan-in cap = 32 */
+                std::vector<std::string> names;
+                if (k == 0)                names = {"a", "in_a", "in_0", "input_0", "in", "input"};
+                else if (k == 1)            names = {"b", "in_b", "in_1", "input_1"};
+                else if (k == 2)            names = {"c", "in_c", "in_2", "input_2"};
+                else {
+                    if (k < 26) {
+                        names.push_back(std::string(1, (char)('a' + k))); /* d..z */
+                        names.push_back("in_" + std::string(1, (char)('a' + k))); /* in_d..in_z */
+                    }
+                    names.push_back("in_" + std::to_string(k));
+                    names.push_back("input_" + std::to_string(k));
+                }
+                std::string gsrc = find_port(names);
+                if (gsrc.empty()) continue;
+                gate_srcs.push_back(gsrc);
+                std::string gport = used_keys.empty() ? "" : used_keys.back();
+                gate_addrs.push_back(src_address(gsrc, source_port_of(name, gport), default_a));
+            }
+            size_t gN = gate_addrs.size();
+
+            bool invert_final = (opcode == LE_OP_NAND || opcode == LE_OP_NOR);
+            uint8_t base_opcode = (opcode == LE_OP_NAND) ? LE_OP_AND
+                                : (opcode == LE_OP_NOR)  ? LE_OP_OR  : opcode;
+
+            /* N == 0: no wired nets -> fall through to the standard 2-input
+             * emission below with both ports defaulting to the gate identity
+             * constant (false for AND/XOR/NAND, true for OR/NOR). */
+            if (gN == 0) {
+                warning_list.push_back("Warning: 0-input " + type + " '" + name +
+                                       "' evaluates to its identity constant.");
+                /* NOT a continue: let the standard 2-input path emit AND(F,F). */
+            }
+
+            /* N == 1: identity passthrough (MOVE), or NOT for NAND/NOR. */
+            if (gN == 1) {
+                le_instruction_t one;
+                one.opcode = invert_final ? LE_OP_NOT : LE_OP_MOVE;
+                one.modifier = 0;
+                one.in_a = gate_addrs[0];
+                one.in_b = LE_ADDR_UNUSED;
+                one.out = out_addr;
+                instructions.push_back(one);
+                consume_input(gate_srcs[0]);
+                warning_list.push_back("Warning: 1-input " + type + " '" + name + "' reduces to " +
+                                       (invert_final ? "NOT" : "a passthrough (MOVE)") + ".");
+                continue;
+            }
+
+            /* N == 2: fall through to the standard single 2-input emission below.
+             * N == 0 likewise falls through (both ports default to the gate
+             * identity constant -> the standard path emits AND(F,F) etc.). */
+            if (gN == 2) {
+                /* standard path at the bottom handles a + b */
+            } else if (gN >= 3) {
+                /* N >= 3: LEFT-FOLD through one reused temp bool. The first
+                 * operand seeds the fold; each combine reads the previous temp
+                 * (or a leading operand) and writes it back into the SAME temp,
+                 * so N-1 instructions use exactly ONE temp register. */
+                int t_idx = -1;
+                uint16_t tmp = acquire_temp_bool(t_idx);
+
+                uint16_t acc = gate_addrs[0];
+                for (size_t i = 1; i + 1 < gN; i++) {
+                    le_instruction_t gi;
+                    gi.opcode = base_opcode;
+                    gi.modifier = 0;
+                    gi.in_a = acc;
+                    gi.in_b = gate_addrs[i];
+                    gi.out = tmp;
+                    instructions.push_back(gi);
+                    acc = tmp;
+                }
+
+                /* Final combine writes the element output, applying NAND/NOR
+                 * negation through LE_MOD_INVERT_OUT (no extra NOT). */
+                le_instruction_t gfin;
+                gfin.opcode = base_opcode;
+                gfin.modifier = invert_final ? LE_MOD_INVERT_OUT : 0;
+                gfin.in_a = acc;
+                gfin.in_b = gate_addrs[gN - 1];
+                gfin.out = out_addr;
+                instructions.push_back(gfin);
+
+                release_temp_bool(t_idx); /* fold temp is dead after the last combine */
+
+                for (const std::string& gs : gate_srcs) consume_input(gs);
+
+                /* The outer out_addr temp belongs to this element's output; release
+                 * it only if nothing consumes this element. */
+                if (ref_counts[name] <= 0 && node_temp_idx.find(name) != node_temp_idx.end()) {
+                    release_temp_bool(node_temp_idx[name]);
+                    node_temp_idx.erase(name);
+                    node_temp_type.erase(name);
+                }
+                continue;
+            }
+        }
+
         le_instruction_t inst;
         inst.opcode = opcode;
         inst.modifier = modifier;
@@ -2006,6 +2353,8 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             case LE_BLK_21: return (uint16_t)sizeof(le_dist21_state_t);
             case LE_BLK_DIFF_87: return (uint16_t)sizeof(le_diff87_state_t);
             case LE_BLK_PHASE_COMP: return (uint16_t)sizeof(le_comp33_state_t);
+            case LE_BLK_PHASOR3: return (uint16_t)sizeof(le_phasor3_state_t);
+            case LE_BLK_FREQ_EST: return (uint16_t)sizeof(le_freq_est_state_t);
 #endif
             case LE_BLK_I2C: return (uint16_t)sizeof(le_i2c_device_state_t);
             case LE_BLK_SPI: return (uint16_t)sizeof(le_spi_device_state_t);
@@ -2046,7 +2395,87 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
         for (size_t bi = 0; bi < sizeof(a); bi++) alias_bytes.push_back(ab[bi]);
     }
 
-    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size() + alias_bytes.size();
+    /* ------------------------------------------------------------------ */
+    /* Worst-case abstract cost estimate (deterministic timing analysis).  */
+    /* Each instruction contributes its worst-case cost in abstract units;  */
+    /* variable-arity blocks scale with their operand count (N-input diff,  */
+    /* DFT sample window). The total is baked into the .lebin timing        */
+    /* descriptor so ANY target board can scale it by its calibrated        */
+    /* nanoseconds-per-cycle to get an estimated scan duration + margin.    */
+    /* ------------------------------------------------------------------ */
+    auto cost_of_instruction = [&](const le_instruction_t& inst) -> uint32_t {
+        switch (inst.opcode) {
+            case LE_OP_NOP: return 0;
+            case LE_OP_MOVE: case LE_OP_NOT:  case LE_OP_AND:  case LE_OP_OR:
+            case LE_OP_XOR:  case LE_OP_NAND: case LE_OP_NOR:  case LE_OP_MUX:
+            case LE_OP_RTRIG: case LE_OP_FTRIG: case LE_OP_SR: case LE_OP_RS:
+            case LE_OP_MOVE_F: case LE_OP_ADD_F: case LE_OP_SUB_F: case LE_OP_MUL_F:
+            case LE_OP_NEG_F: case LE_OP_ABS_F: case LE_OP_MIN_F: case LE_OP_MAX_F:
+            case LE_OP_CMP_GT: case LE_OP_CMP_LT: case LE_OP_CMP_GE:
+            case LE_OP_CMP_LE: case LE_OP_CMP_EQ: case LE_OP_CMP_NE:
+                return 1;
+            case LE_OP_DIV_F:    return 4;
+            case LE_OP_SCALE_F:  return 3;
+            case LE_OP_CADD_F: case LE_OP_CSUB_F: case LE_OP_CMUL_F: case LE_OP_MOVE_C: return 2;
+            case LE_OP_CDIV_F:   return 6;
+            case LE_OP_TON: case LE_OP_TOF: case LE_OP_TP:             return 2;
+            case LE_OP_CTU: case LE_OP_CTD: case LE_OP_CTUD:           return 2;
+            case LE_OP_PID:        return 6;
+            case LE_OP_SYM_COMP:   return 10;
+            case LE_OP_EXT_CALL:   return 4;
+            case LE_OP_LPF_1P: case LE_OP_DEADBAND: case LE_OP_WASHOUT:
+            case LE_OP_PEAK_DETECTOR: case LE_OP_DERIVATIVE: case LE_OP_TOTALIZER:
+            case LE_OP_MIN_MAX_HOLD:  return 3;
+            case LE_OP_BIQUAD_IIR: return 4;
+            case LE_OP_MOVING_AVG: return 4;
+            case LE_OP_RATE_LIMITER: return 3;
+            case LE_OP_RMS:       return 4;
+            case LE_OP_MEDIAN:    return 6;
+            case LE_OP_ZERO_CROSSING: return 4;
+            case LE_OP_LUT_1D:    return 4;
+            case LE_OP_BLOCK: {
+                if (inst.in_a >= block_calls.size()) return 4;
+                const BlockCall& bc = block_calls[inst.in_a];
+                switch (inst.modifier) {
+                    case LE_FUNC_MUX_SELECT: return 1;
+                    case LE_FUNC_RECT2POLAR: case LE_FUNC_POLAR2RECT:
+                    case LE_FUNC_COMPLEX2POLAR: case LE_FUNC_COMPLEX2RECT:
+                    case LE_FUNC_RECT2COMPLEX: case LE_FUNC_POLAR2COMPLEX:
+                    case LE_FUNC_PHASOR_SHIFT: return 4;
+                    case LE_FUNC_CLAMP_F:   return 2;
+                    case LE_FUNC_PHASOR_1P: return 6u + 2u * (uint32_t)phasor_samples_est; /* DFT window */
+                    case LE_FUNC_PHASOR_3P: return 3u * (6u + 2u * (uint32_t)phasor_samples_est); /* 3x DFT window */
+                    case LE_FUNC_FREQ_EST: return 8;                                  /* hysteresis + crossing interpolation */
+                    case LE_FUNC_DIFF_87:   return 2u + 4u * (uint32_t)bc.in_count;         /* N phasor sum */
+                    case LE_FUNC_DIST_21:   return 10;
+                    case LE_FUNC_PHASE_COMP: return 18;
+                    case LE_FUNC_OVERCURRENT_51: return 8;                 /* phasor mag + integrate */
+                    default: return 4;      /* custom node / future builtin */
+                }
+            }
+            default: return 1;
+        }
+    };
+    uint32_t abstract_cycles = 0;
+    for (const le_instruction_t& inst : instructions) {
+        abstract_cycles += cost_of_instruction(inst);
+    }
+    const uint16_t TIMING_SAFETY_MARGIN_PCT = 150; /* 1.5x worst-case safety */
+
+    /* Timing descriptor appended after the alias table. */
+    std::vector<uint8_t> timing_bytes;
+    {
+        le_timing_desc_t timing;
+        timing.abstract_cycles = abstract_cycles;
+        timing.safety_margin_pct = TIMING_SAFETY_MARGIN_PCT;
+        timing.design_scan_rate_hz = (uint16_t)design_scan_hz;
+        timing.rsvd = 0;
+        const uint8_t* tb = (const uint8_t*)&timing;
+        for (size_t bi = 0; bi < sizeof(timing); bi++) timing_bytes.push_back(tb[bi]);
+    }
+
+    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() +
+                           state_image.size() + alias_bytes.size() + timing_bytes.size();
 
     std::vector<uint8_t> payload_all(total_payload);
     if (payload_bytes > 0) {
@@ -2065,6 +2494,10 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
     if (!alias_bytes.empty()) {
         std::memcpy(payload_all.data() + payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size(),
                     alias_bytes.data(), alias_bytes.size());
+    }
+    if (!timing_bytes.empty()) {
+        std::memcpy(payload_all.data() + payload_bytes + block_bytes.size() + state_bytes.size() +
+                    state_image.size() + alias_bytes.size(), timing_bytes.data(), timing_bytes.size());
     }
 
     uint32_t crc = compute_crc32(payload_all.data(), total_payload);
@@ -2091,6 +2524,7 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
     header.state_desc_count = static_cast<uint16_t>(state_records);
     header.state_img_len = static_cast<uint32_t>(state_image.size());
     header.alias_count = static_cast<uint16_t>(alias_list.size());
+    header.timing_count = 1;
     header.crc32 = crc;
 
     size_t total_bin_size = sizeof(le_header_t) + total_payload;
@@ -2099,6 +2533,10 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
     if (total_payload > 0) {
         std::memcpy(full_bin.data() + sizeof(le_header_t), payload_all.data(), total_payload);
     }
+
+    /* Report the timing model to tooling regardless of board validation outcome. */
+    out_result->abstract_cycles = (int)abstract_cycles;
+    out_result->estimated_exec_us = 0.0;
 
     // Step 6: Validate against Board Profile Limits
     bool board_valid = true;
@@ -2189,6 +2627,49 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
         if (uses_dsp && !dsp_enabled) {
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Circuit uses Digital Signal Processing (DSP) features, but target board '" + dev_name + "' has DSP disabled.");
+        }
+
+        /* Fixed-rate achievability (circuit-owned scan rate): the estimated worst-case
+         * scan (compiler cost x board ns/cycle x safety margin) must fit inside the
+         * PERIOD of the circuit's declared scan_rate_hz. If the designer's chosen
+         * rate is unachievable, the error tells them the MAX rate that fits so they
+         * can simply pick a lower one. */
+        double scan_hz = design_scan_hz;                    /* designer-owned */
+        double ns_per = limits.get("ns_per_abstract_cycle").as_double(0.0);
+        if (scan_hz > 0.0 && ns_per > 0.0) {
+            double est_us = (double)abstract_cycles * ns_per *
+                            ((double)TIMING_SAFETY_MARGIN_PCT / 100.0) / 1000.0; /* ns -> us, with margin */
+            double period_us = 1000000.0 / scan_hz;
+            out_result->estimated_exec_us = est_us;
+            if (est_us > period_us) {
+                board_valid = false;
+                std::ostringstream ts;
+                ts.precision(2);
+                ts << std::fixed << (est_us / 1000.0) << " ms";
+                std::ostringstream ps;
+                ps.precision(2);
+                ps << std::fixed << (period_us / 1000.0) << " ms";
+                /* The maximum achievable rate keeps the worst case inside the period. */
+                std::ostringstream max_hz;
+                max_hz.precision(0);
+                max_hz << std::fixed << (1000000.0 / est_us);
+                validation_errors.push_back(
+                    "Timing Error: the circuit's declared " +
+                    std::to_string((long long)scan_hz) + " Hz scan_rate_hz needs a " + ps.str() +
+                    " period, but the worst-case scan is estimated at " + ts.str() + " (" +
+                    std::to_string(abstract_cycles) + " abstract cycles x " +
+                    std::to_string((long long)ns_per) + " ns/cycle x " +
+                    std::to_string(TIMING_SAFETY_MARGIN_PCT) + "% safety) on target board '" +
+                    dev_name + "'. Lower scan_rate_hz to at most " + max_hz.str() +
+                    " Hz, or reduce samples_per_cycle / block input counts.");
+            } else if (design_scan_hz > 0.0) {
+                out_result->estimated_exec_us = est_us;
+            }
+        } else if (ns_per > 0.0) {
+            /* Cost model available but no design rate: report the ceiling. */
+            double est_us = (double)abstract_cycles * ns_per *
+                            ((double)TIMING_SAFETY_MARGIN_PCT / 100.0) / 1000.0;
+            out_result->estimated_exec_us = est_us;
         }
     }
 

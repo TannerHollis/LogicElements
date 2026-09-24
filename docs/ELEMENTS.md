@@ -56,6 +56,8 @@ fields with the circuit's properties, then appends the raw bytes to the image.
 | `PID` | `kp`,`ki`,`kd`,`out_min`,`out_max` |
 | `DIST_21` | `reach`,`line_angle`,`offset`,`offset_angle`,`prefault_v_threshold`,`prefault_v_duration` |
 | `PHASOR_1P` | `samples_per_cycle` |
+| `PHASOR_3P` | `samples_per_cycle`, `self_sync` |
+| `FREQ_EST` | `nominal_freq_hz`, `hysteresis`, `min_freq_hz`, `max_freq_hz`, `filter_alpha` |
 | `DIFF_87` | `input_count` (N complex phasors), `o87p`,`slp1`,`irs1`,`slp2` |
 | `PHASE_COMP` | `compensation` (1-12, SEL matrix index) |
 
@@ -455,30 +457,145 @@ Closed-loop PID controller. State is an `le_pid_state_t` baked into the state im
 
 ### `OVERCURRENT` / `OVERCURRENT_51`
 IEC/IEEE inverse-time overcurrent (**ANSI 51**). `OVERCURRENT_51` is the preferred
-ANSI-convention name; `OVERCURRENT` is accepted as an alias. Accumulates
-overcurrent time; trips once sustained past the time dial.
+ANSI-convention name; `OVERCURRENT` is accepted as an alias. Emitted as a
+**variable-arity block builtin** (`LE_FUNC_OVERCURRENT_51`): one **complex phasor**
+`a` + a boolean **`enable`** input -> bool trip.
 
-- Input: current (in `in_a`). Output: trip boolean.
-- Properties: `pickup`, `time_dial`, `curve_type` — **baked into the `.lebin`** and
-  applied at load (see [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
+- `a` / `current` / `i_c` / `in`: complex phasor input; its **magnitude** drives the
+  inverse-time curve (`M = |i_c| / pickup` in per-unit). Unconnected = `LE_CONST_ZERO_C`.
+- `enable` / `en` / `on` / `b`: **boolean enable** input. It is **AND'd with the
+  pickup evaluation BEFORE the timing accumulator** — only an ENABLED element with
+  `M > 1` accrues operate time; otherwise it cools along the reset curve and can
+  never trip. Unconnected = `LE_CONST_TRUE` (always enabled). Wire a directionality
+  boolean here for a **ground directional overcurrent** element, or any designer
+  boolean to just enable/disable it.
+- Output: trip boolean.
+
+**Inverse-time model** (IEEE C37.112 / IEC 60255):
 
 ```
-[0000]  OVERCURRENT_51 BLK[0]       -> 1->1 [FLOAT[0] | T_BOOL[0]]
+t_operate = time_dial * (A / (M^p - 1) + B),   M = |i_c| / pickup  (for M > 1)
+t_reset   = time_dial * (4.6  / (1 - M^2))                           (for M < 1)
 ```
+
+The runtime integrates `dt / t_operate` into an accumulator each scan and **trips
+when it reaches 1.0** (= the full operate time has elapsed); it cools symmetrically
+along `t_reset` below pickup. Divisions are clamped near `M = 1` (the operate/reset
+times blow up there, so the accumulator simply holds — no divide-by-zero, no
+denominator sign flip for a disabled element sitting above pickup).
+
+- `curve_type` selects a standard curve (default **IEC Very Inverse**):
+  - IEC `NORMAL` (A=0.14, p=0.02), `VERY` (A=13.5, p=1), `EXTREME` (A=80, p=2)
+  - IEEE `MODERATELY` (A=0.0515, B=0.114, p=0.02), `VERY` (A=19.61, B=0.491, p=2),
+    `EXTREME` (A=28.2, B=0.1217, p=2), `SHORT-TIME` (A=0.00342, B=0.00262, p=0.02),
+    `LONG-TIME` (A=26.13, B=0.349, p=2)
+- **Custom curve**: provide `curve_a` / `curve_b` / `curve_p` (or `a_coeff`/`b_coeff`/
+  `p_coeff`) — the element is marked `LE_CURVE_CUSTOM` and the coefficients are
+  baked verbatim.
+- Properties: `pickup`, `time_dial`, `curve_type`, `curve_a/curve_b/curve_p` —
+  **baked into the `.lebin`** and resolved to coefficients the target runtime uses
+  directly (see [How element properties reach the runtime](#how-element-properties-reach-the-runtime)).
+
+```
+{ "type": "OVERCURRENT_51", "pickup": 600.0, "time_dial": 1.0, "curve_type": "IEC_VERY" }
+{ "type": "OVERCURRENT_51", "pickup": 600.0, "time_dial": 1.0, "curve_a": 30.0, "curve_p": 2.0 }
+```
+
+```
+[0000]  OVERCURRENT_51 BLK[0]       -> 2->1 [CMPLX[0] | T_BOOL[0] | T_BOOL[1]]
+```
+
+> The obsolete scalar `LE_OP_OVERCURRENT` opcode was **removed** (replaced by a
+> reserved placeholder at `0x71`); the element always compiles to the block form.
 
 ### `PHASOR_1P` (variable-arity block)
-1-phase DFT phasor extractor. Emitted as a **2-in / 1-out block** producing a
+Dynamic frequency phasor extractor with self-sync support. Emitted as a **3-in / 1-out block** producing a
 **complex phasor** (`T_CMPLX`), synchronized to a reference phasor so the result
 stays stable relative to it instead of rotating with the system frequency.
 
-- Inputs: `sample` (wire), `sync` (reference complex phasor). Output: `phasor`
-  (`T_CMPLX`) — decompose with `COMPLEX2POLAR` to get mag/angle.
+- **Inputs**: `sample` (float), `sync` (complex phasor), `freq_hz` (float). Output: `phasor` (`T_CMPLX`)
+
+- **Properties**:
+  - `samples_per_cycle` (default 16): Number of samples per power cycle for the DFT window
+  - `self_sync` (default false): When true, output angle is 0-degree referenced; when false, referenced to sync phasor
+
+- **Cadence**: The scan rate is **not** an element property. It is strictly derived
+  from the enforced VM scan period (`le_rt_scan_dt()`); the per-element
+  `scan_rate_hz` / `sample_rate_hz` override is removed.
+
+- **Behavior**:
+  - The `freq_hz` input determines which subset of high-rate samples to use for the DFT
+  - Higher frequency = fewer samples per cycle; lower frequency = more samples per cycle
+  - DFT uses linear interpolation to synthesize perfectly spaced samples
+  - When `self_sync` = false (default): Output angle is referenced to the sync phasor (sync angle = 0)
+  - When `self_sync` = true: Output angle is 0-degree referenced (self-synchronized)
 
 ```json
-{ "name": "P1", "type": "PHASOR_1P" }
+{ "name": "P1", "type": "PHASOR_1P", "samples_per_cycle": 16, "scan_rate_hz": 2400.0, "self_sync": false }
 ```
 ```
 [0000]  PHASOR_1P      BLK[0]       fn:0x05      -> 2->1 [AIN[0] CMPLX[0] | T_CMPLX[0]]
+```
+
+### `PHASOR_3P` (variable-arity block)
+Three-phase dynamic frequency phasor extractor. Banks **three independent
+single-phase phasor extractors** (a, b, c) against a single bus reference phasor
+and a single system frequency, so all three output phasors stay phase-correct
+relative to one another. Each phase runs the same `PHASOR_1P` DFT and
+self-sync logic, sharing all element properties.
+
+- **Inputs**: `sample_a`, `sample_b`, `sample_c` (float), `sync` (complex phasor), `freq_hz` (float).
+  Outputs: `phasor_a`, `phasor_b`, `phasor_c` (each `T_CMPLX`; also aliased as `a`/`b`/`c` and `out`).
+
+- **Properties** (applied identically to all three phases):
+  - `samples_per_cycle` (default 16): Number of samples per power cycle for the DFT window
+  - `self_sync` (default false): When true, each output angle is 0-degree referenced; when false, referenced to the shared sync phasor
+
+- **Cadence**: Sample rate derives from the enforced VM scan period
+  (`le_rt_scan_dt()`); no per-element `scan_rate_hz` override.
+
+- **Behavior**: Identical to `PHASOR_1P`, but the `sample_a/b/c` inputs each feed
+  their own DFT accumulator. The `freq_hz` input picks the (shared) DFT window and
+  the `sync` phasor is the common reference at which all three phase angles are
+  expressed. With a balanced `cos(2πft + φ)` set you recover three phasors with
+  magnitudes ≈ amplitude and angles ≈ φ_a/φ_b/φ_c.
+
+```json
+{ "name": "P3", "type": "PHASOR_3P", "samples_per_cycle": 16, "scan_rate_hz": 2400.0, "self_sync": false }
+```
+```
+[0000]  PHASOR_3P      BLK[0]       fn:0x10      -> 5->3 [AIN[0] AIN[1] AIN[2] CMPLX[0] AIN[3] | T_CMPLX[0] T_CMPLX[1] T_CMPLX[2]]
+```
+
+### `FREQ_EST` (variable-arity block, ANSI 81)
+Dynamic fundamental frequency estimator for under/over-frequency protection
+(81U/81O) and dynamic phasor tracking. Emitted as a **1-in / 2-out** block: a float
+sample in; a float `freq_hz` and a bool `valid` out. The sampling rate is strictly
+derived from the enforced VM scan cadence (`le_rt_scan_dt()`); **no sample-rate
+property is stored** — the circuit owns the scan rate, not the element.
+
+- **Inputs**: `sample` (float; aliases `in`, `x`, `a`, `pv`).
+  Outputs: `freq_hz` (float; aliases `freq`, `out`), `valid` (bool; aliases `lock`, `tracking`).
+
+- **Properties**:
+  - `nominal_freq_hz` (default 60): Fallback center frequency (50 or 60 Hz)
+  - `hysteresis` (default 0.05): Noise deadband threshold around zero
+  - `min_freq_hz` (default 45), `max_freq_hz` (default 65): Validity bounds
+  - `filter_alpha` (default 0.0): Optional EWMA output smoothing (0 = unfiltered)
+
+- **Behavior** (hysteresis noise rejection → sub-sample zero-crossing interpolation
+  → period/frequency → bounds gating):
+  - Healthy in-bounds measurement → `freq_hz` = measured, `valid` = true
+  - **Out-of-bounds but measured** → `freq_hz` = measured, `valid` = false
+    (the true under/over-frequency is still reported so 81U/81O can trip)
+  - **Loss of potential / stall** (no crossing within 1.25× the `min_freq_hz`
+    period) → `freq_hz` = `nominal_freq_hz`, `valid` = false
+
+```json
+{ "name": "F1", "type": "FREQ_EST", "nominal_freq_hz": 60.0, "hysteresis": 0.05, "min_freq_hz": 45.0, "max_freq_hz": 65.0 }
+```
+```
+[0000]  FREQ_EST       BLK[0]       fn:0x11      -> 1->2 [AIN[0] | T_FLOAT[0] T_BOOL[0]]
 ```
 
 ### `RECT2POLAR` (variable-arity block)

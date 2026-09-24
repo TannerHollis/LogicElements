@@ -1,12 +1,12 @@
-{
-  "name": "Element_PHASOR_1P",
+﻿{
+  "name": "Element_PHASOR_1P_SELF_SYNC",
   "elements": [
     {
       "name": "N1",
       "type": "PHASOR_1P",
       "samples_per_cycle": 16,
       "scan_rate_hz": 2400.0,
-      "self_sync": false
+      "self_sync": true
     }
   ],
   "nets": []

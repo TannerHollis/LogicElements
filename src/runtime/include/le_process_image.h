@@ -300,6 +300,15 @@ void le_process_image_set_totalizer(le_process_image_t* img, uint8_t idx,
  * @brief Configures min/max peak hold output mode.
  */
 void le_process_image_set_min_max_hold(le_process_image_t* img, uint8_t idx, uint8_t mode);
+
+/**
+ * @brief Configures the ANSI 81 dynamic frequency estimator (FREQ_EST).
+ * Sample rate is always derived from le_rt_scan_dt(); no sample-rate property.
+ */
+void le_process_image_set_freq_est(le_process_image_t* img, uint8_t idx,
+                                   float nominal_freq_hz, float hysteresis,
+                                   float min_freq_hz, float max_freq_hz,
+                                   float filter_alpha);
 #endif
 
 /**

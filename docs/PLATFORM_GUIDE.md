@@ -21,55 +21,55 @@ LogicElements turns any microcontroller into a field-programmable PLC where:
 ## Architecture: How UART upload operates
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚                            HOST / DESKTOP SIDE                              â”‚
-â”‚                                                                             â”‚
-â”‚   Circuit Schematic (.json)                                                 â”‚
-â”‚               â”‚                                                             â”‚
-â”‚               â–¼                                                             â”‚
-â”‚   le_compile / le_compiler.py -b my_board.leconfig                          â”‚
-â”‚               â”‚                                                             â”‚
-â”‚               â–¼                                                             â”‚
-â”‚   Compiled .lebin (58 bytes per 4 gates, CRC32 verified)                    â”‚
-â”‚               â”‚                                                             â”‚
-â”‚               â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
-â”‚               â–¼                          â–¼                              â–¼   â”‚
-â”‚       Serial Terminal CLI           Python Tools                  Desktop UIâ”‚
-â”‚      (PuTTY / TeraTerm)          (le_board.py)                    (Custom)  â”‚
-â”‚   [XMODEM-CRC or Hex Paste]    [Framed UART Packets]          [Binary API]  â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”˜
-                â”‚                          â”‚                              â”‚
-                â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                                           â”‚ UART Serial (115200 8N1)
-                                           â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚                        MICROCONTROLLER RUNTIME (C)                          â”‚
-â”‚                                                                             â”‚
-â”‚   Hardware UART RX (Interrupt / DMA Ring Buffer)                            â”‚
-â”‚               â”‚                                                             â”‚
-â”‚               â–¼                                                             â”‚
-â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
-â”‚   â”‚ Ingestion Engine:                                                    â”‚  â”‚
-â”‚   â”‚   â€¢ le_cli_process_char()    -> Interactive CLI & XMODEM-CRC engine  â”‚  â”‚
-â”‚   â”‚   â€¢ le_comms_process_byte()  -> Framed Packet Parser (0xAA SYNC)     â”‚  â”‚
-â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
-â”‚                                      â”‚                                      â”‚
-â”‚                                      â–¼                                      â”‚
-â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
-â”‚   â”‚ Non-Volatile Storage Manager (le_storage.c):                         â”‚  â”‚
-â”‚   â”‚   â€¢ Validates chunk offset and slot boundary                         â”‚  â”‚
-â”‚   â”‚   â€¢ Calls g_le_hal->storage_write() -> Internal Flash / EEPROM / FRAMâ”‚  â”‚
-â”‚   â”‚   â€¢ Verifies slot integrity & CRC32                                  â”‚  â”‚
-â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
-â”‚                                      â”‚                                      â”‚
-â”‚                                      â–¼                                      â”‚
-â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
-â”‚   â”‚ Virtual Machine Activation (le_vm.c):                                â”‚  â”‚
-â”‚   â”‚   â€¢ le_storage_activate_slot() -> Points VM to Flash (XIP) or RAM   â”‚  â”‚
-â”‚   â”‚   â€¢ Initializes Process Image (%I, %Q, %M, %R, Timers)              â”‚  â”‚
-â”‚   â”‚   â€¢ Resumes deterministic PLC execution loop (le_vm_step)            â”‚  â”‚
-â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            HOST / DESKTOP SIDE                              │
+│                                                                             │
+│   Circuit Schematic (.json)                                                 │
+│               │                                                             │
+│               ▼                                                             │
+│   le_compile / le_compiler.py -b my_board.leconfig                          │
+│               │                                                             │
+│               ▼                                                             │
+│   Compiled .lebin (58 bytes per 4 gates, CRC32 verified)                    │
+│               │                                                             │
+│               ├──────────────────────────┬──────────────────────────────┐   │
+│               ▼                          ▼                              ▼   │
+│       Serial Terminal CLI           Python Tools                  Desktop UI│
+│      (PuTTY / TeraTerm)          (le_board.py)                    (Custom)  │
+│   [XMODEM-CRC or Hex Paste]    [Framed UART Packets]          [Binary API]  │
+└───────────────┼──────────────────────────┼──────────────────────────────┼───┘
+                │                          │                              │
+                └──────────────────────────┼──────────────────────────────┘
+                                           │ UART Serial (115200 8N1)
+                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        MICROCONTROLLER RUNTIME (C)                          │
+│                                                                             │
+│   Hardware UART RX (Interrupt / DMA Ring Buffer)                            │
+│               │                                                             │
+│               ▼                                                             │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │ Ingestion Engine:                                                    │  │
+│   │   • le_cli_process_char()    -> Interactive CLI & XMODEM-CRC engine  │  │
+│   │   • le_comms_process_byte()  -> Framed Packet Parser (0xAA SYNC)     │  │
+│   └──────────────────────────────────┬───────────────────────────────────┘  │
+│                                      │                                      │
+│                                      ▼                                      │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │ Non-Volatile Storage Manager (le_storage.c):                         │  │
+│   │   • Validates chunk offset and slot boundary                         │  │
+│   │   • Calls g_le_hal->storage_write() -> Internal Flash / EEPROM / FRAM│  │
+│   │   • Verifies slot integrity & CRC32                                  │  │
+│   └──────────────────────────────────┬───────────────────────────────────┘  │
+│                                      │                                      │
+│                                      ▼                                      │
+│   ┌──────────────────────────────────────────────────────────────────────┐  │
+│   │ Virtual Machine Activation (le_vm.c):                                │  │
+│   │   • le_storage_activate_slot() -> Points VM to Flash (XIP) or RAM   │  │
+│   │   • Initializes Process Image (%I, %Q, %M, %R, Timers)              │  │
+│   │   • Resumes deterministic PLC execution loop (le_vm_step)            │  │
+│   └──────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -387,24 +387,24 @@ For desktop IDEs, SCADA masters, Python automated testing, or custom host softwa
 #### Upload protocol flow
 ```
 HOST (Desktop / CI Tool)                     TARGET MCU (LogicElements)
-        â”‚                                                â”‚
-        â”‚â”€â”€ LE_CMD_GET_CAPS (0x02) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚
-        â”‚â—„â”€â”€ LE_CMD_CAPS_DATA (0x82, limits, features) â”€â”€â”‚
-        â”‚                                                â”‚
-        â”‚â”€â”€ LE_CMD_GET_CUSTOM_NODES (0x03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚
-        â”‚â—„â”€â”€ LE_CMD_CUSTOM_NODES_DATA (0x83, JSON) â”€â”€â”€â”€â”€â”€â”‚
-        â”‚                                                â”‚
-        â”‚â”€â”€ LE_CMD_PROG_BEGIN (0x10, total_size) â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚
-        â”‚â—„â”€â”€ LE_CMD_ACK (0x06) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚
-        â”‚                                                â”‚
-        â”‚â”€â”€ LE_CMD_PROG_CHUNK (0x11, offset, data...) â”€â”€â–ºâ”‚
-        â”‚â—„â”€â”€ LE_CMD_ACK (0x06) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚
-        â”‚     (Repeat for all chunks, 64-128B each)      â”‚
-        â”‚                                                â”‚
-        â”‚â”€â”€ LE_CMD_PROG_END (0x12) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚
-        â”‚   [MCU verifies CRC32, commits to Flash,       â”‚
-        â”‚    reloads VM & auto-starts execution]         â”‚
-        â”‚â—„â”€â”€ LE_CMD_ACK (0x06) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚
+        │                                                │
+        │── LE_CMD_GET_CAPS (0x02) ─────────────────────►│
+        │◄── LE_CMD_CAPS_DATA (0x82, limits, features) ──│
+        │                                                │
+        │── LE_CMD_GET_CUSTOM_NODES (0x03) ─────────────►│
+        │◄── LE_CMD_CUSTOM_NODES_DATA (0x83, JSON) ──────│
+        │                                                │
+        │── LE_CMD_PROG_BEGIN (0x10, total_size) ───────►│
+        │◄── LE_CMD_ACK (0x06) ──────────────────────────│
+        │                                                │
+        │── LE_CMD_PROG_CHUNK (0x11, offset, data...) ──►│
+        │◄── LE_CMD_ACK (0x06) ──────────────────────────│
+        │     (Repeat for all chunks, 64-128B each)      │
+        │                                                │
+        │── LE_CMD_PROG_END (0x12) ─────────────────────►│
+        │   [MCU verifies CRC32, commits to Flash,       │
+        │    reloads VM & auto-starts execution]         │
+        │◄── LE_CMD_ACK (0x06) ──────────────────────────│
 ```
 
 Upload `.lebin` files directly using the provided Python utility:
@@ -416,7 +416,7 @@ py tools/compiler/le_board.py --port COM3 --upload my_logic.lebin --slot 0
 
 ## Step 4: Implement custom board nodes and hardware extensions (optional)
 
-Microcontrollers frequently feature specialized on-chip peripheralsâ€”such as hardware PWM timers, quadrature encoders, accelerated DSP filters, or coprocessorsâ€”that you can expose directly to schematic designers.
+Microcontrollers frequently feature specialized on-chip peripherals—such as hardware PWM timers, quadrature encoders, accelerated DSP filters, or coprocessors—that you can expose directly to schematic designers.
 
 LogicElements carries custom nodes as `LE_OP_BLOCK` (`0xA0`) with a function id ≥ `LE_FUNC_CUSTOM_BASE (0x80)`, dispatched to the HAL `ext_call`. When the runtime executes such an `LE_OP_BLOCK` call, it dispatches to the adopter callback registered in `le_hal_t`:
 

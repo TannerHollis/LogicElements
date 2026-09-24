@@ -6,6 +6,7 @@
 #include "le_vm.h"
 #include "le_opcodes.h"
 #include "le_rt.h"
+#include "le_hal.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -40,9 +41,22 @@ le_status_t le_vm_load_blocks(le_vm_t* vm, const le_block_desc_t* blocks, uint16
     return LE_OK;
 }
 
-le_status_t le_vm_step(le_vm_t* vm, uint32_t now_ms)
+le_status_t le_vm_step_us(le_vm_t* vm, uint32_t now_us)
 {
     if (!vm) return LE_ERR_NULL_PTR;
+
+    /* Fixed-rate cadence enforcement: every scan must land EXACTLY one period
+     * after the previous one. Any skip/retry is a host bug (silent drift would
+     * corrupt DSP/phasing/timing-dependent logic). */
+    if (vm->enforce_fixed_rate && vm->scan_period_us > 0) {
+        if (vm->last_scan_us != 0 && now_us != vm->last_scan_us + vm->scan_period_us) {
+            return LE_ERR_SCAN_JITTER;
+        }
+        vm->last_scan_us = now_us;
+    }
+
+    uint32_t now_ms = now_us / 1000u;
+    uint32_t t0 = (g_le_hal && g_le_hal->get_time_us) ? g_le_hal->get_time_us() : 0u;
 
     /* Sweep pending pulses first so they clear even if the VM is currently
      * stopped (the simulator/CLI keeps calling step with an advancing clock). */
@@ -77,7 +91,54 @@ le_status_t le_vm_step(le_vm_t* vm, uint32_t now_ms)
     }
 
     vm->cycle_count++;
+
+    /* Measure the actual scan duration and gauge the margin (HAL clock only). */
+    if (t0 != 0u && g_le_hal && g_le_hal->get_time_us) {
+        uint32_t spent = (uint32_t)(g_le_hal->get_time_us() - t0);
+        if (spent > vm->observed_worst_us) vm->observed_worst_us = spent;
+        if (vm->scan_period_us > 0 && spent > vm->scan_period_us) vm->scan_overruns++;
+    }
     return LE_OK;
+}
+
+/**
+ * @brief Compatibility wrapper: steps at millisecond resolution. When the scan
+ * period is not an integer number of milliseconds, use @ref le_vm_step_us.
+ */
+le_status_t le_vm_step(le_vm_t* vm, uint32_t now_ms)
+{
+    return le_vm_step_us(vm, now_ms * 1000u);
+}
+
+le_status_t le_vm_set_scan_period_us(le_vm_t* vm, uint32_t period_us)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+    vm->scan_period_us = period_us;
+    vm->last_scan_us = 0;
+    le_rt_set_scan_dt((period_us > 0) ? ((float)period_us / 1000000.0f) : LE_DEFAULT_SCAN_DT_SEC);
+    return LE_OK;
+}
+
+void le_vm_set_enforce_fixed_rate(le_vm_t* vm, bool enable)
+{
+    if (!vm) return;
+    vm->enforce_fixed_rate = enable ? 1 : 0;
+    vm->last_scan_us = 0;
+}
+
+le_status_t le_vm_run_scan(le_vm_t* vm)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+    if (vm->scan_period_us == 0) return LE_ERR_TIMING_BUDGET;
+
+    uint32_t now_us = (g_le_hal && g_le_hal->get_time_us) ? g_le_hal->get_time_us() : 0u;
+    uint32_t next = (vm->last_scan_us != 0) ? (vm->last_scan_us + vm->scan_period_us) : now_us;
+
+    /* Busy-wait until the fixed-rate boundary (the timer is the truth). */
+    if (g_le_hal && g_le_hal->get_time_us) {
+        while (g_le_hal->get_time_us() < next) { /* spin */ }
+    }
+    return le_vm_step_us(vm, next);
 }
 
 void le_vm_start(le_vm_t* vm)
@@ -103,6 +164,9 @@ void le_vm_reset(le_vm_t* vm)
     for (uint8_t i = 0; i < LE_MAX_PULSES; i++) {
         vm->pulses[i].active = false;
     }
+    vm->last_scan_us = 0;
+    vm->observed_worst_us = 0;
+    vm->scan_overruns = 0;
 }
 
 /* ========================================================================== */

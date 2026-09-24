@@ -268,6 +268,22 @@ static void handle_packet(le_comms_t* comms)
             break;
         }
 
+        case LE_CMD_GET_TIMING: {
+            /* Report the timing / achievability model (le_timing_t bytes). */
+            if (comms->vm) {
+                le_timing_t t;
+                le_loader_timing(comms->vm, &t);
+                uint8_t pl[sizeof(le_timing_t)];
+                const uint8_t* tb = (const uint8_t*)&t;
+                for (size_t i = 0; i < sizeof(le_timing_t); i++) pl[i] = tb[i];
+                send_packet(LE_CMD_IMAGE_DATA, seq, pl, sizeof(le_timing_t));
+            } else {
+                uint8_t nack[1] = {0x01};
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+            }
+            break;
+        }
+
         default: {
             uint8_t nack[1] = {0xFF};
             send_packet(LE_CMD_NACK, seq, nack, 1);

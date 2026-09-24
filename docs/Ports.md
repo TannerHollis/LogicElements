@@ -96,6 +96,17 @@ the compiler and the loader agree:
 | :--- | :--- |
 | `LE_RAM_WORKSPACE_BYTES` | The one board-tunable **unified RAM pool** the loader carves into a packed **register arena** (sized from the program's declared register counts) followed by the **state blocks**. A program is rejected at load when `register arena + state image > LE_RAM_WORKSPACE_BYTES`. |
 | `LE_MAX_DIGITAL_IN/OUT`, `LE_MAX_BOOL_REGS`, `LE_MAX_FLOATS`, `LE_MAX_INT_REGS`, `LE_MAX_ANALOG_IN` | Per-region ceilings. Must be **≥** the profile's `digital_inputs`, `digital_outputs`, `coils`, `floats`, `analog_inputs`. |
+| `LE_NS_PER_ABSTRACT_CYCLE` | Port-calibrated worst-case **nanoseconds per compiler abstract cycle** (the `.leconfig` `ns_per_abstract_cycle`). This is the board's **cost model only**. The loader rejects any program whose `abstract_cycles × ns/cycle` exceeds the program's own declared scan period (`LE_ERR_TIMING_BUDGET`), so an unachievable circuit never loads. |
+
+> **Fixed-rate model:** the **scan rate is circuit-owned** — each circuit declares `scan_rate_hz`
+> (e.g. `"scan_rate_hz": 960`) and the compiler embeds it in the `.lebin` timing descriptor; the
+> loader applies the period (`1e6/rate` µs) to the VM clock and verifies achievability against the
+> board's `ns_per_abstract_cycle`. If a designer's chosen rate is unachievable, the compiler/loader
+> reply with the **max achievable rate** so they simply pick a lower one. DSP/phasing/timers all
+> derive their `dt` from this enforced period, so features like phasor extraction and filters run
+> on a uniform sample grid. `ns_per_abstract_cycle` is a **safety estimate**, not precision — it
+> only needs to be within a comfortable factor so pathological circuits are caught before they
+> brick a board; calibrate it by measuring your MCU's worst case with a representative program.
 
 Feature switches (each `0` removes the subsystem's state/opcodes — a board can be reduced all
 the way down to boolean-only):

@@ -150,6 +150,19 @@ static void cmd_status(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "  Active Slot:     Slot %d\r\n", cli->storage ? cli->storage->active_slot : 0); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Instructions:    %d\r\n", cli->vm ? cli->vm->instruction_count : 0); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Cycle Count:     %u cycles\r\n", cli->vm ? cli->vm->cycle_count : 0); cli_print(buf);
+    if (cli->vm && cli->vm->scan_period_us > 0) {
+        snprintf(buf, sizeof(buf), "  Scan Period:     %u us (%u Hz)\r\n",
+                 cli->vm->scan_period_us,
+                 cli->vm->scan_period_us ? (1000000u / cli->vm->scan_period_us) : 0u); cli_print(buf);
+        if (cli->vm->timing_feasible) {
+            snprintf(buf, sizeof(buf), "  Timing:          est %u us of %u us period (%u%% margin) [%u overruns]\r\n",
+                     cli->vm->timed_worst_us, cli->vm->scan_period_us,
+                     cli->vm->scan_period_us ? (uint16_t)(100u - (uint64_t)cli->vm->timed_worst_us * 100u / cli->vm->scan_period_us) : 0,
+                     cli->vm->scan_overruns); cli_print(buf);
+        } else {
+            snprintf(buf, sizeof(buf), "  Timing:          no program loaded / not budgeted\r\n"); cli_print(buf);
+        }
+    }
 }
 
 static void cmd_slots(le_cli_t* cli)

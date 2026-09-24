@@ -22,6 +22,11 @@
  * -DLE_RAM_WORKSPACE_BYTES=512      (2 KB total RAM; profile declares 512)
  * -DLE_MAX_DIGITAL_IN=6  -DLE_MAX_DIGITAL_OUT=6   -DLE_MAX_BOOL_REGS=32
  * -DLE_MAX_FLOATS=16     -DLE_MAX_INT_REGS=16     -DLE_MAX_ANALOG_IN=6
+ * -DLE_NS_PER_ABSTRACT_CYCLE=3000   (profile ns_per_abstract_cycle — AVR
+ *                                    ~3 us per abstract cycle; the board only
+ *                                    calibrates this COST MODEL — the scan rate
+ *                                    itself is declared per-CIRCUIT via
+ *                                    `scan_rate_hz` and applied by the loader)
  * -DLE_ENABLE_PROTECTION=0          (profile: "protection": false; saves RAM)
  * feature switches complex/analog/dsp/serial_bus stay at their defaults (1).
  * ========================================================================== */

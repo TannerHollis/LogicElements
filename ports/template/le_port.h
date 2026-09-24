@@ -27,6 +27,18 @@
  *   -DLE_MAX_DIGITAL_IN=N -DLE_MAX_DIGITAL_OUT=N -DLE_MAX_BOOL_REGS=N
  *   -DLE_MAX_FLOATS=N -DLE_MAX_INT_REGS=N -DLE_MAX_ANALOG_IN=N
  *
+ * Fixed-rate scan configuration (deterministic execution):
+ *   The SCAN RATE IS CIRCUIT-OWNED: each circuit declares `scan_rate_hz` in its
+ *   JSON and the compiler embeds it in the .lebin timing descriptor; the loader
+ *   applies the period (1e6/rate us) to the VM clock and verifies achievability.
+ *   The board only calibrates the COST MODEL used for that verification:
+ *   -DLE_NS_PER_ABSTRACT_CYCLE=600  port-calibrated worst-case nanoseconds per
+ *                                   compiler abstract cycle (the `.leconfig`
+ *                                   `ns_per_abstract_cycle`). Programs whose
+ *                                   estimated scan exceeds their declared period
+ *                                   are rejected with LE_ERR_TIMING_BUDGET, so a
+ *                                   designer lowers `scan_rate_hz` until it fits.
+ *
  * Optionally disable subsystems you do not need (smaller RAM + opcode space):
  *   -DLE_ENABLE_PROTECTION=0 -DLE_ENABLE_COMPLEX=0 -DLE_ENABLE_ANALOG=0
  *   -DLE_ENABLE_SERIAL_BUS=0 -DLE_ENABLE_DSP=0

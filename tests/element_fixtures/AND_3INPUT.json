@@ -1,0 +1,16 @@
+{
+  "name": "Element_AND_3INPUT",
+  "elements": [
+    { "name": "AND3", "type": "AND" },
+    { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+    { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+    { "name": "IN3", "type": "DIGITALINPUT", "address": "%I2" },
+    { "name": "OUT", "type": "DIGITALOUTPUT", "address": "%Q0" }
+  ],
+  "nets": [
+    { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND3", "port": "in_a" } ] },
+    { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND3", "port": "in_b" } ] },
+    { "output": { "name": "IN3", "port": "out" }, "inputs": [ { "name": "AND3", "port": "in_c" } ] },
+    { "output": { "name": "AND3", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+  ]
+}

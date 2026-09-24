@@ -22,6 +22,10 @@
  * -DLE_RAM_WORKSPACE_BYTES=2048           (unified register + state budget)
  * -DLE_MAX_DIGITAL_IN=16 -DLE_MAX_DIGITAL_OUT=16  -DLE_MAX_BOOL_REGS=128
  * -DLE_MAX_FLOATS=64     -DLE_MAX_INT_REGS=64     -DLE_MAX_ANALOG_IN=16
+ * -DLE_NS_PER_ABSTRACT_CYCLE=600    (profile ns_per_abstract_cycle — STM32F401
+ *                                    Cortex-M4 @ 168 MHz ~0.6 us per cycle; the
+ *                                    board only calibrates this COST MODEL — the
+ *                                    scan rate is circuit-owned via `scan_rate_hz`)
  * feature switches (protection/complex/analog/dsp/serial_bus) = defaults (1).
  * ========================================================================== */
 #ifndef LE_PORT_H

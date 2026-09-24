@@ -85,6 +85,19 @@ int32_t le_rt_kind_base(uint8_t kind);
  */
 uint8_t* le_rt_state(uint8_t kind, uint16_t idx);
 
+/**
+ * @brief Sets the fixed scan period (in seconds) used by time-dependent
+ * opcodes (PID, overcurrent, totalizers) when no scan rate is configured.
+ * Called by the scheduler / host alongside le_vm_set_scan_period_us().
+ */
+void le_rt_set_scan_dt(float seconds);
+
+/**
+ * @brief Returns the current fixed scan period in seconds (defaults to
+ * LE_DEFAULT_SCAN_DT_SEC when no scan rate has been configured).
+ */
+float le_rt_scan_dt(void);
+
 #ifdef __cplusplus
 }
 #endif

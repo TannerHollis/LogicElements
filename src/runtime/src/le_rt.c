@@ -15,6 +15,13 @@ static uint32_t s_ws_len = 0;
 /* Byte offset of each kind group within the workspace (-1 = kind absent). */
 static int32_t s_kind_base[LE_BLK_LAST];
 
+/* Fixed scan period in seconds used by time-dependent opcodes when no scan
+ * rate is configured (set by the scheduler alongside le_vm_set_scan_period_us). */
+static float s_scan_dt = LE_DEFAULT_SCAN_DT_SEC;
+
+void le_rt_set_scan_dt(float seconds) { s_scan_dt = (seconds > 0.0f) ? seconds : LE_DEFAULT_SCAN_DT_SEC; }
+float le_rt_scan_dt(void) { return (s_scan_dt > 0.0f) ? s_scan_dt : LE_DEFAULT_SCAN_DT_SEC; }
+
 /* Declared instance count per kind (set by the loader from the state-desc
  * table). le_rt_state rejects indices at or past this count. */
 static uint16_t s_kind_count[LE_BLK_LAST];
@@ -27,6 +34,7 @@ void le_rt_bind(uint8_t* base, uint32_t len)
 {
     s_ws = base;
     s_ws_len = len;
+    s_scan_dt = LE_DEFAULT_SCAN_DT_SEC; /* re-assert default when the workspace re-binds */
     for (int k = 0; k < LE_BLK_LAST; k++) s_kind_size[k] = le_rt_kind_size((uint8_t)k);
 }
 
@@ -47,14 +55,18 @@ uint16_t le_rt_kind_size(uint8_t kind)
     switch (kind) {
         case LE_BLK_TIMER:                 return (uint16_t)sizeof(le_timer_state_t);
         case LE_BLK_COUNTER:               return (uint16_t)sizeof(le_counter_state_t);
+#if LE_ENABLE_DSP
+        case LE_BLK_PID:                   return (uint16_t)sizeof(le_pid_state_t);   /* PID is DSP/control */
+#endif
 #if LE_ENABLE_PROTECTION
-        case LE_BLK_PID:                   return (uint16_t)sizeof(le_pid_state_t);
         case LE_BLK_OVERCURRENT:           return (uint16_t)sizeof(le_overcurrent_state_t);
         case LE_BLK_PHASOR:                return (uint16_t)sizeof(le_phasor_state_t);
         case LE_BLK_SYMCOMP:               return (uint16_t)sizeof(le_symcomp_state_t);
         case LE_BLK_21:                    return (uint16_t)sizeof(le_dist21_state_t);
         case LE_BLK_DIFF_87:               return (uint16_t)sizeof(le_diff87_state_t);
         case LE_BLK_PHASE_COMP:            return (uint16_t)sizeof(le_comp33_state_t);
+        case LE_BLK_PHASOR3:               return (uint16_t)sizeof(le_phasor3_state_t);
+        case LE_BLK_FREQ_EST:              return (uint16_t)sizeof(le_freq_est_state_t);
 #endif
         case LE_BLK_SCALER:                return (uint16_t)sizeof(le_scale_state_t);
 #if LE_ENABLE_DSP

@@ -25,42 +25,42 @@ Custom nodes allow adopters to expose these hardware capabilities directly to sc
 The lifecycle of a custom node spans hardware profile definition, interactive discovery, schematic compilation, and runtime dispatch:
 
 ```
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚               1. Board Profile (.leconfig)             â”‚
-â”‚  Declares custom node types, function IDs, categories, â”‚
-â”‚  and pin signatures for the target hardware.           â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                            â”‚
-                            â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚             2. Discovery & Tooling Support             â”‚
-â”‚  - le_cli: "nodes" command prints JSON over UART.      â”‚
-â”‚  - le_comms: Binary packet 0x03 interrogates firmware. â”‚
-â”‚  - Desktop UI / IDE loads nodes into component palette.â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                            â”‚
-                            â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚             3. Schematic Circuit Authoring             â”‚
-â”‚  Designer places custom node and wires input/output    â”‚
-â”‚  pins to digital signals, registers, or sensors.       â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                            â”‚
-                            â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚             4. Compiler Translation (le_compile)       â”‚
-â”‚  - Validates node pins against board profile.          â”‚
-â”‚  - Preserves hardware side effects during optimization.â”‚
-â”‚  - Emits a variable-arity LE_OP_BLOCK (0xA0) call (func id ≥ 0x80).     â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                            â”‚
-                            â–¼
-â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-â”‚             5. Microcontroller Virtual Machine         â”‚
-â”‚  - VM encounters LE_OP_BLOCK (custom func id) during scan loop.      â”‚
-â”‚  - Dispatches to adopter HAL callback: ext_call().     â”‚
-â”‚  - Executes native C peripheral code in real time.     â”‚
-â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+┌────────────────────────────────────────────────────────┐
+│               1. Board Profile (.leconfig)             │
+│  Declares custom node types, function IDs, categories, │
+│  and pin signatures for the target hardware.           │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             2. Discovery & Tooling Support             │
+│  - le_cli: "nodes" command prints JSON over UART.      │
+│  - le_comms: Binary packet 0x03 interrogates firmware. │
+│  - Desktop UI / IDE loads nodes into component palette.│
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             3. Schematic Circuit Authoring             │
+│  Designer places custom node and wires input/output    │
+│  pins to digital signals, registers, or sensors.       │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             4. Compiler Translation (le_compile)       │
+│  - Validates node pins against board profile.          │
+│  - Preserves hardware side effects during optimization.│
+│  - Emits a variable-arity LE_OP_BLOCK (0xA0) call (func id ≥ 0x80).     │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│             5. Microcontroller Virtual Machine         │
+│  - VM encounters LE_OP_BLOCK (custom func id) during scan loop.      │
+│  - Dispatches to adopter HAL callback: ext_call().     │
+│  - Executes native C peripheral code in real time.     │
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -390,9 +390,9 @@ Desktop engineering tools, automated test fixtures, and web configurators query 
 
 ```
 HOST                                      TARGET MCU
-  â”‚                                           â”‚
-  â”‚â”€â”€ LE_CMD_GET_CUSTOM_NODES (0x03) â”€â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚
-  â”‚â—„â”€â”€ LE_CMD_CUSTOM_NODES_DATA (0x83, JSON) â”€â”‚
+  │                                           │
+  │── LE_CMD_GET_CUSTOM_NODES (0x03) ────────►│
+  │◄── LE_CMD_CUSTOM_NODES_DATA (0x83, JSON) ─│
 ```
 
 - **Request Command**: `0x03` (`LE_CMD_GET_CUSTOM_NODES`), length 0.

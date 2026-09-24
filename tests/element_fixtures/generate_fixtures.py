@@ -60,6 +60,26 @@ add("CONSTANT", lambda: ([e("C1", "CONSTANT", dataType="Boolean", value=True)], 
 # --- Logic gates (standalone -> exactly one opcode at -O0) ---
 for _t in ["AND", "OR", "XOR", "NAND", "NOR"]:
     add(_t, lambda t=_t: standalone(t))
+
+# --- Multi-input logic gates (decomposed into 2-input gates) ---
+# Simple 3-input gate with inputs directly connected
+for _t in ["AND", "OR", "XOR", "NAND", "NOR"]:
+    def build_multi(t=_t):
+        # Create a 3-input gate with inputs IN1, IN2, IN3
+        ins = [din("IN1", "%I0"), din("IN2", "%I1"), din("IN3", "%I2")]
+        outs = [dout("OUT", "%OUT0")]
+        # Use a single gate with multiple inputs (will be decomposed)
+        gate = e(f"{t}3", t)
+        # Wire inputs using standard port names
+        nets = [
+            net("IN1", "out", f"{t}3", "in_a"),
+            net("IN2", "out", f"{t}3", "in_b"),
+            net("IN3", "out", f"{t}3", "in_c"),
+            net(f"{t}3", "out", "OUT", "in")
+        ]
+        return ins + outs + [gate], nets
+    add(f"{_t}_3INPUT", build_multi)
+
 add("NOT", lambda: standalone("NOT"))
 add("MUX", lambda: standalone("MUX"))
 
@@ -104,6 +124,9 @@ add("RECT2POLAR", lambda: standalone("RECT2POLAR"))
 add("POLAR2RECT", lambda: standalone("POLAR2RECT"))
 add("PHASOR_SHIFT", lambda: standalone("PHASOR_SHIFT", delta_deg=45.0))
 add("PHASOR_1P", lambda: standalone("PHASOR_1P", samples_per_cycle=16))
+add("PHASOR_3P", lambda: standalone("PHASOR_3P", samples_per_cycle=16))
+add("FREQ_EST", lambda: standalone("FREQ_EST", nominal_freq_hz=60.0, hysteresis=0.05,
+    min_freq_hz=45.0, max_freq_hz=65.0, filter_alpha=0.0))
 add("SYM_COMP", lambda: standalone("SYM_COMP"))
 add("DIFF_87", lambda: standalone("DIFF_87", input_count=3, o87p=0.3, slp1=0.25, irs1=1.5, slp2=0.6))
 add("PHASE_COMP", lambda: standalone("PHASE_COMP", compensation=6))

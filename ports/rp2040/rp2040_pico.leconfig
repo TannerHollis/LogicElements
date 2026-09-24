@@ -13,7 +13,8 @@
     "analog_inputs": 3,
     "workspace_bytes": 4096,
     "config_slots": 4,
-    "slot_size_bytes": 4096
+    "slot_size_bytes": 4096,
+    "ns_per_abstract_cycle": 400
   },
   "features": {
     "protection": true,

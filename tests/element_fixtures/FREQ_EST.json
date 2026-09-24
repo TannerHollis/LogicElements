@@ -1,0 +1,15 @@
+{
+  "name": "Element_FREQ_EST",
+  "elements": [
+    {
+      "name": "N1",
+      "type": "FREQ_EST",
+      "nominal_freq_hz": 60.0,
+      "hysteresis": 0.05,
+      "min_freq_hz": 45.0,
+      "max_freq_hz": 65.0,
+      "filter_alpha": 0.0
+    }
+  ],
+  "nets": []
+}

@@ -57,6 +57,8 @@ static const element_spec_t g_oracle[] = {
     SPEC("AND", "AND", 1), SPEC("OR", "OR", 1), SPEC("XOR", "XOR", 1),
     SPEC("NAND", "NAND", 1), SPEC("NOR", "NOR", 1), SPEC("NOT", "NOT", 1),
     SPEC("MUX", "MUX", 1),
+    /* Multi-input gate: a 3-input AND decomposes to 2 two-input AND calls (left-fold). */
+    SPEC("AND_3INPUT", "AND", 2),
     /* Edge & latches */
     SPEC("RTRIG", "RTRIG", 1), SPEC("FTRIG", "FTRIG", 1),
     SPEC("SR", "SR", 1), SPEC("RS", "RS", 1),
@@ -85,7 +87,8 @@ static const element_spec_t g_oracle[] = {
     SPEC("PID", "PID", 1), SPEC("OVERCURRENT_51", "OVERCURRENT_51", 1),
     SPEC("RECT2POLAR", "RECT2POLAR", 1), SPEC("POLAR2RECT", "POLAR2RECT", 1),
     SPEC("PHASOR_SHIFT", "PHASOR_SHIFT", 1),
-    SPEC("PHASOR_1P", "PHASOR_1P", 1), SPEC("SYM_COMP", "SYM_COMP", 1),
+    SPEC("PHASOR_1P", "PHASOR_1P", 1), SPEC("PHASOR_3P", "PHASOR_3P", 1), SPEC("SYM_COMP", "SYM_COMP", 1),
+    SPEC("FREQ_EST", "FREQ_EST", 1),
     SPEC("DIST_21", "DIST_21", 1),
     SPEC("DIFF_87", "DIFF_87", 1),
     SPEC("PHASE_COMP", "PHASE_COMP", 1),
@@ -222,6 +225,9 @@ static int run_fixture(const char* dir, const element_spec_t* spec)
 
 int main(int argc, char** argv)
 {
+    /* Unbuffered stdout so a mid-run crash still reveals the last fixture. */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     const char* dir = (argc > 1) ? argv[1] : NULL;
     int i;
     int covered = 0;

@@ -1,11 +1,11 @@
 {
-  "name": "Element_PHASOR_1P",
+  "name": "Element_PHASOR_3P",
   "elements": [
     {
       "name": "N1",
-      "type": "PHASOR_1P",
+      "type": "PHASOR_3P",
       "samples_per_cycle": 16,
-      "scan_rate_hz": 2400.0,
+      
       "self_sync": false
     }
   ],
