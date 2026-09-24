@@ -17,12 +17,14 @@ typedef struct {
     uint8_t                dout[(LE_MAX_DIGITAL_OUT + 7) / 8];
     uint8_t                bool_regs[(LE_MAX_BOOL_REGS + 7) / 8];
     float                  floats[LE_MAX_FLOATS];
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
     le_complex_t           cmplx[LE_MAX_COMPLEX];
 #endif
     int32_t                int_regs[LE_MAX_INT_REGS];
+#if LE_ENABLE_ANALOG
     int32_t                ain_raw[LE_MAX_ANALOG_IN];
     float                  ain[LE_MAX_ANALOG_IN];
+#endif
 } le_process_image_t;
 
 /**
@@ -87,13 +89,23 @@ int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr);
 void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t val);
 
 /**
+ * @brief Writes an active (non-zero) or idle (zero) value based on the register
+ * region. See the implementation for per-region semantics.
+ *
+ * @param img Pointer to the process image structure.
+ * @param addr Encoded 16-bit process-image address.
+ * @param active True to set the active (non-zero) state, false to clear to zero.
+ */
+void le_process_image_set_active(le_process_image_t* img, uint16_t addr, bool active);
+
+/**
  * @brief Reads a complex value from the specified 16-bit process image address.
  *
  * @param img Pointer to the process image structure.
  * @param addr Encoded 16-bit address indicating complex register index (LE_REGION_CMPLX).
  * @return Returns the complex value at the address; `0+0j` if invalid.
  */
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 le_complex_t le_process_image_get_complex(const le_process_image_t* img, uint16_t addr);
 
 /**

@@ -242,6 +242,80 @@ The compiler ingests standard circuit JSON containing `name`, `elements`, and `n
 
 ---
 
+## Variables in element properties
+
+Circuit schematics may declare a top-level `variables` object and reference
+those names from any numeric element property using `%VARNAME%` (or a bare name
+inside an arithmetic string). This lets a designer retune a whole schematic from
+one place instead of editing every element.
+
+### Declaration
+
+```json
+{
+  "name": "ZoneRelays",
+  "variables": {
+    "Z_Line": 5.0,
+    "Z2": "Z_Line * 1.20",
+    "pu": 0.90
+  },
+  "elements": [
+    { "name": "D21", "type": "DIST_21", "reach": "%Z2%", "prefault_v_threshold": "%pu%" }
+  ],
+  "nets": []
+}
+```
+
+A variable is either:
+
+- **Direct scalar** — a JSON number (`"Z_Line": 5.0`).
+- **Indirect / derived** — a JSON string expression over other variables and/or
+  literals (`"Z2": "Z_Line * 1.20"`). Indirect variables may reference each other
+  (`"A": "B * 2", "B": "10"`).
+
+### Usage in properties
+
+Any numeric property (timer `preset_ms`, `reach`, `alpha`, `kp`, `o87p`,
+`time_dial`, `input_count`, …) accepts:
+
+- a literal number, unchanged;
+- `"%VAR%"` — resolves to the variable's numeric value;
+- a string expression mixing variables/literals, e.g. `"reach": "Z2 * 0.8"`.
+
+### Supported expression grammar
+
+Arithmetic operators `+ - * /`, parentheses, unary `+`/`-`, and a set of
+**trig + math functions** (case-insensitive; unary or two-argument):
+
+| Class | Functions |
+| :--- | :--- |
+| Trig    | `sin`, `cos`, `tan`, `asin`, `acos`, `atan` (1- or 2-arg `atan2`) |
+| Exp/log | `exp`, `ln`/`log`, `log10`, `log2`, `pow(a,b)` |
+| Roots   | `sqrt`, `cbrt` |
+| Round   | `abs`, `floor`, `ceil`, `round`, `min(a,b)`, `max(a,b)`, `fmod(a,b)` |
+
+Variables may be bare (`Z_Line`) or wrapped in `%…%`. Examples:
+`"imp": "(Z_Line + Z2) / 2.0"`, `"mag": "sqrt(Z2 * Z2 + Z_Line * Z_Line)"`,
+`"k": "max(0.5, sin(theta) * 2)"`.
+
+### Resolution & errors
+
+Variables are resolved **topologically** (an indirect variable's dependencies are
+evaluated first) and memoized, so a variable used in many properties is
+evaluated once. A **circular** reference (`A -> B -> A`) or an **undefined**
+reference produces a compile error:
+
+```
+Variable Error: undefined variable reference: Missing
+Variable Error: circular variable reference: B
+```
+
+Direct scalar expressions, indirect (variable-on-variable) definitions, cycle
+detection, and undefined-variable rejection are all covered by the compiler test
+suite (`test_variables`, `test_variable_errors`).
+
+---
+
 ## Target Board Profile specification (`.leconfig`)
 
 Target board profiles define physical microcontroller limits and configuration:
@@ -397,28 +471,30 @@ le_compile <circuit.json> [options]
 
 ## Binary bytecode specification (`.lebin`)
 
-A compiled LogicElements binary comprises a fixed **32-byte header** followed by
-$N$ contiguous **8-byte instructions**, then the variable-arity block table, the
-**state-group (directive) table**, and the **preconfigured state image** — all
-covered by a trailing IEEE 802.3 CRC32 over the whole payload.
+A compiled LogicElements binary comprises a fixed **header** followed by $N$
+contiguous **8-byte instructions**, then the variable-arity block table, the
+**state-group (directive) table**, the **preconfigured state image**, and — when
+declared — a **register-alias table**. All of it is covered by a trailing IEEE
+802.3 CRC32 over the whole payload.
 
-### Binary Header (32 Bytes)
+### Binary Header (34 Bytes)
 
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `5`). |
+| `0x04` | `version` | `uint16_t` | Format version (Current: `6`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
-| `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%I). |
-| `0x0C` | `digital_out_count` | `uint16_t` | Number of digital outputs allocated (%Q). |
-| `0x0E` | `bool_reg_count` | `uint16_t` | Total internal boolean registers allocated (%M). |
-| `0x10` | `float_reg_count` | `uint16_t` | Total float registers allocated (%R). |
+| `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%IN). |
+| `0x0C` | `digital_out_count` | `uint16_t` | Number of digital outputs allocated (%OUT). |
+| `0x0E` | `bool_reg_count` | `uint16_t` | Total internal boolean registers allocated (%B). |
+| `0x10` | `float_reg_count` | `uint16_t` | Total float registers allocated (%F). |
 | `0x12` | `complex_reg_count` | `uint16_t` | Total complex registers allocated (%C). |
 | `0x14` | `block_count` | `uint16_t` | Number of variable-arity block descriptors. |
 | `0x16` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
 | `0x18` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
-| `0x1C` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image). |
+| `0x1C` | `alias_count` | `uint16_t` | Number of user-declared register aliases in the trailing alias table. |
+| `0x1E` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table). |
 
 > State element instances are **not** enumerated per type in the header. The
 > compiler bakes each block's state (defaults + properties) as concrete bytes
@@ -438,19 +514,104 @@ Bytes 6-7: [ Output Address  (uint16_t, Little-Endian) ]
 
 ### Memory address mapping
 
-The 16-bit address fields encode the memory region in their high bits:
+The 16-bit address fields encode the memory region in their high bits. Register
+families use the canonical user-facing names (`%IN`, `%OUT`, `%AIN`, `%B`, `%I`,
+`%F`, `%C`):
 
 | Region | Address Range | Notation | Description |
 | :--- | :--- | :--- | :--- |
-| Digital Inputs | `0x0000 - 0x0FFF` | `DIN[i]` | Read-only hardware digital inputs (%I) |
-| Digital Outputs | `0x1000 - 0x1FFF` | `DOUT[i]` | Read/write physical digital outputs (%Q) |
-| Boolean Registers | `0x2000 - 0x3FFF` | `BOOL[i]` / `T_BOOL[i]` | Bit-packed internal coils (%M) & scratchpads |
-| Float Registers | `0x4000 - 0x7FFF` | `FLOAT[i]` / `T_FLOAT[i]` | 32-bit floating-point registers (%R) |
+| Digital Inputs | `0x0000 - 0x0FFF` | `%IN[i]` | Read-only hardware digital inputs (%IN) |
+| Digital Outputs | `0x1000 - 0x1FFF` | `%OUT[i]` | Read/write physical digital outputs (%OUT) |
+| Boolean Registers | `0x2000 - 0x3FFF` | `%B[i]` / `T_B[i]` | Bit-packed internal coils & scratchpads (%B) |
+| Float Registers | `0x4000 - 0x7FFF` | `%F[i]` / `T_F[i]` | 32-bit floating-point registers (%F) |
 | Timers | `0x8000 - 0x8FFF` | `TIMER[i]` | Hardware timer state blocks |
 | Counters | `0x9000 - 0x9FFF` | `COUNTER[i]` | Hardware counter state blocks |
-| Integer Registers | `0xA000 - 0xAFFF` | `INT[i]` | 16-bit integer registers |
-| Analog Inputs | `0xB000 - 0xBFFF` | `AIN[i]` | Hardware ADC channels |
+| Integer Registers | `0xA000 - 0xAFFF` | `%I[i]` / `T_I[i]` | 32-bit integer registers (%I) |
+| Analog Inputs | `0xB000 - 0xBFFF` | `%AIN[i]` | Hardware ADC channels (%AIN) |
 | Constants / Special | `0xF000 - 0xFFFF` | `FALSE`, `TRUE`, `0.0f` | Immediate constants & unused ports |
+
+> The legacy `%I` (digital input) / `%Q` / `%M` / `%R` spellings were renamed to
+> `%IN` / `%OUT` / `%B` / `%F` respectively in binary version `6`. Existing
+> element JSON using the old spellings is still accepted by the compiler, and
+> `DIN[i]` / `DOUT[i]` / `BOOL[i]` / `FLOAT[i]` / `INT[i]` / `AIN[i]` remain
+> valid synonyms in alias targets.
+
+---
+
+---
+
+## Register aliases
+
+Circuit designers can give a process-image register a short symbolic name so a
+host/runtime can **override, pulse, or target** it without knowing its raw 16-bit
+address or register family. Aliases are **dynamic per program**: only the names a
+circuit explicitly declares are embedded in the `.lebin`; nothing is generated
+automatically.
+
+### Declaring aliases in a circuit
+
+Add a top-level `aliases` object mapping a name (1..7 characters) to a register
+target written in the canonical notation (`%B`, `%F`, `%I`, `%C`, `%IN`, `%OUT`,
+`%AIN`):
+
+```json
+{
+  "name": "ZoneAlarms",
+  "elements": [ ],
+  "nets": [ ],
+  "aliases": {
+    "START": "%B0",
+    "SP":    "%F2",
+    "TRIP":  "%OUT1"
+  }
+}
+```
+
+A target may be a register mnemonic, the name of a `BOOLREGISTER` /
+`FLOATREGISTER` / `INTREGISTER` / `COMPLEXREGISTER` element (resolved to that
+element's output address), or a board pin alias supplied by the board profile.
+
+### Binary storage
+
+Declared aliases are appended as a compact **alias table** after the state
+image. Each 10-byte `le_alias_t` entry stores the 7-character name, a reserved
+`kind`/`pad` byte, and the 16-bit process-image address the name resolves to.
+`header.alias_count` reports the number of entries; `alias_count == 0` when the
+circuit declares none, so existing binaries without aliases remain valid. The
+CRC32 covers the alias table like every other section.
+
+### Board aliases do not grow the binary
+
+A board profile ships its own `pin_map` aliases as compile-time physical pin
+names. These are **not** baked into the program. The host/firmware supplies them
+at runtime via `le_vm_load_board_aliases`, so the runtime can resolve them by
+name without carrying them in every program's `.lebin`. The alias lookup checks
+program aliases first, then board aliases.
+
+### Runtime API
+
+| Function | Purpose |
+| :--- | :--- |
+| `le_alias_lookup(vm, name, &addr)` | Resolve a name to a 16-bit address. |
+| `le_alias_set_bool/float/int(vm, name, val)` | Override a register by alias. |
+| `le_alias_toggle(vm, name)` | Toggle a boolean register by alias. |
+| `le_alias_pulse(vm, name)` | Pulse for the default **1 second**. |
+| `le_alias_pulse_for(vm, name, seconds)` | Pulse for an explicit duration. |
+| `le_vm_pulse(vm, addr, duration_ms)` | Pulse a raw address for a duration. |
+
+A pulse sets the register to its active (non-zero) state and clears it back to
+zero once the VM clock advances past the duration.
+
+### Terminal command
+
+The interactive terminal exposes:
+
+```
+pulse <name> [seconds]
+```
+
+`pulse <name>` holds the register for 1 second; `pulse <name> 2.5` holds it for
+2.5 seconds. The name may be an alias or a raw register reference.
 
 ---
 

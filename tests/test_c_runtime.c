@@ -17,8 +17,17 @@
 
 const le_hal_t* le_hal_get_sim(void);
 
-/* Embed the compiled example binary for testing */
-#include "../example_configs/example_embedded.h"
+/* The self-contained 4-instruction example program (OR->%OUT0, AND->%OUT1)
+ * previously shipped in example_configs/example_embedded.h. It is embedded here
+ * so the runtime tests carry no external config dependency. */
+static const uint8_t le_default_program[] = {
+    0x31, 0x42, 0x45, 0x4c, 0x06, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
+    0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xde, 0x68, 0xbf, 0xc5, 0x03, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x20, 0x04, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x01, 0x20, 0x01, 0x00, 0x01, 0x20, 0xff, 0xff, 0x00, 0x10, 0x01, 0x00,
+    0x00, 0x20, 0xff, 0xff, 0x01, 0x10
+}; /* 66 bytes, version 6 */
 
 int g_tests_passed = 0;
 int g_tests_failed = 0;
@@ -569,8 +578,8 @@ void test_storage_and_terminal_cli(void)
     TEST_ASSERT(cli.mode == LE_CLI_MODE_NORMAL, "CLI remains in normal mode after info/status/slots");
 
     /* Force I/O via CLI */
-    feed_str_to_cli(&cli, "force %I0 1\r\n");
-    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "CLI 'force %I0 1' set DIN 0 to true");
+    feed_str_to_cli(&cli, "force %IN0 1\r\n");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "CLI 'force %IN0 1' set DIN 0 to true");
 
     feed_str_to_cli(&cli, "run\r\n");
     TEST_ASSERT(vm.running, "CLI 'run' started VM");

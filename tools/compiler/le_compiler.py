@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
 LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 4
+LE_BIN_VERSION = 6
 LE_FLAG_AUTOSTART = 0x0001
 
 # Address Regions
@@ -105,6 +105,7 @@ class _LeCompileResult(Structure):
         ("int_count", c_int),
         ("timer_count", c_int),
         ("counter_count", c_int),
+        ("alias_count", c_int),
         ("crc32", c_uint32),
         ("user_bool_count", c_int),
         ("temp_bool_count", c_int),

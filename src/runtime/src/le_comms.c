@@ -107,7 +107,11 @@ static void handle_packet(le_comms_t* comms)
 
             caps.max_digital_in = LE_MAX_DIGITAL_IN;
             caps.max_digital_out = LE_MAX_DIGITAL_OUT;
+#if LE_ENABLE_ANALOG
             caps.max_analog_in = LE_MAX_ANALOG_IN;
+#else
+            caps.max_analog_in = 0;
+#endif
             caps.max_bool_regs = LE_MAX_BOOL_REGS;
             caps.max_floats = LE_MAX_FLOATS;
             caps.workspace_bytes = LE_STATE_WORKSPACE_BYTES;
@@ -115,6 +119,12 @@ static void handle_packet(le_comms_t* comms)
             caps.slot_size_bytes = LE_SLOT_SIZE_BYTES;
 
             uint16_t flags = 0;
+#if LE_ENABLE_COMPLEX
+            flags |= LE_CAP_COMPLEX;
+#endif
+#if LE_ENABLE_ANALOG
+            flags |= LE_CAP_ANALOG;
+#endif
 #if LE_ENABLE_PROTECTION
             flags |= LE_CAP_PROTECTION;
 #endif
@@ -232,6 +242,23 @@ static void handle_packet(le_comms_t* comms)
                 le_process_image_set_bool(&comms->vm->image, addr, val);
                 uint8_t ack[1] = {0x00};
                 send_packet(LE_CMD_ACK, seq, ack, 1);
+            }
+            break;
+        }
+
+        case LE_CMD_PULSE: {
+            /* Payload: [addr: uint16_t] [duration_ms: uint32_t] */
+            if (len >= 6 && comms->vm) {
+                uint16_t addr = (uint16_t)(p[0] | (p[1] << 8));
+                uint32_t dur = (uint32_t)(p[2] | ((uint32_t)p[3] << 8) |
+                                          ((uint32_t)p[4] << 16) | ((uint32_t)p[5] << 24));
+                if (le_vm_pulse(comms->vm, addr, dur) == LE_OK) {
+                    uint8_t ack[1] = {0x00};
+                    send_packet(LE_CMD_ACK, seq, ack, 1);
+                } else {
+                    uint8_t nack[1] = {0x04}; /* pulse rejected */
+                    send_packet(LE_CMD_NACK, seq, nack, 1);
+                }
             }
             break;
         }

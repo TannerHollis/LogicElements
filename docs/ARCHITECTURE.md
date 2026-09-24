@@ -237,4 +237,4 @@ The repository ships three automated suites (see root `CMakeLists.txt`):
 | :--- | :--- |
 | `test_c_runtime` | Process image, opcodes, timers/counters, DSP, protection, loader/storage, comms, serial bus, blocks, phasors, workspace. |
 | `test_compiler` | Compilation, optimizer passes, multi-output selection, state-image binding, workspace-backed timer execution. |
-| `test_element_assembly` | One fixture per element -> compile + parse disassembly for the exact opcode (see [element_fixtures.md](element_fixtures.md)). |
+| `test_element_assembly` | One fixture per element -> compile + parse disassembly for the exact opcode (see [ElementFixtures.md](ElementFixtures.md)). |

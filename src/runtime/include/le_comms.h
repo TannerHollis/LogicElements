@@ -51,6 +51,9 @@ extern "C" {
 #define LE_CMD_CONTROL          0x30
 /** @brief Force input or output override command for testing. */
 #define LE_CMD_FORCE_IO         0x40
+/** @brief Pulse a register (by process-image address) for a duration.
+ *  Payload: [addr: uint16_t] [duration_ms: uint32_t]. */
+#define LE_CMD_PULSE            0x41
 
 /* ========================================================================== */
 /* Hardware feature flags                                                     */
@@ -64,6 +67,10 @@ extern "C" {
 #define LE_CAP_I2C              (1U << 2)
 /** @brief Indicates hardware SPI master driver is available. */
 #define LE_CAP_SPI              (1U << 3)
+/** @brief Indicates complex registers/arithmetic (%C) are compiled in. */
+#define LE_CAP_COMPLEX          (1U << 4)
+/** @brief Indicates analog input channels (%AIN) are compiled in. */
+#define LE_CAP_ANALOG           (1U << 5)
 
 #pragma pack(push, 1)
 /**

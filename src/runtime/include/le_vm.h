@@ -22,6 +22,12 @@ typedef struct {
     uint16_t                  instruction_count; /**< Number of valid instructions in the active program. */
     const le_block_desc_t*    blocks;            /**< Pointer to active variable-arity block table (or NULL). */
     uint16_t                  block_count;       /**< Number of valid block descriptors. */
+    const le_alias_t*         aliases;           /**< Zero-copy program alias table (from the .lebin) or NULL. */
+    uint16_t                  alias_count;       /**< Number of valid program aliases. */
+    const le_alias_t*         board_aliases;     /**< Host/board-supplied alias table (NOT carried in the .lebin) or NULL. */
+    uint16_t                  board_alias_count; /**< Number of valid board aliases. */
+    le_pulse_t                pulses[LE_MAX_PULSES]; /**< Pending runtime pulses (alias/register pulse commands). */
+    uint8_t                   pulse_count;       /**< Number of active pulse slots. */
     bool                      running;           /**< True if the execution loop is actively stepping. */
     uint32_t                  cycle_count;       /**< Monotonically increasing execution scan count. */
 } le_vm_t;
@@ -95,6 +101,90 @@ void le_vm_stop(le_vm_t* vm);
  * @param vm Pointer to the virtual machine instance to reset.
  */
 void le_vm_reset(le_vm_t* vm);
+
+/**
+ * @brief Attaches a zero-copy program alias table (from the .lebin) to the VM.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param aliases Pointer to the alias table array, or NULL to clear.
+ * @param count Number of alias entries.
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_load_aliases(le_vm_t* vm, const le_alias_t* aliases, uint16_t count);
+
+/**
+ * @brief Attaches a host/board-supplied alias table.
+ *
+ * Board pin aliases are resolved by the host/firmware (from the board profile)
+ * and supplied here so the runtime can target them by name WITHOUT carrying
+ * them in the program's .lebin. Program aliases take precedence on collision.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param aliases Pointer to the board alias table array, or NULL to clear.
+ * @param count Number of alias entries.
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_load_board_aliases(le_vm_t* vm, const le_alias_t* aliases, uint16_t count);
+
+/**
+ * @brief Resolves an alias name to a process-image address.
+ *
+ * Searches the program alias table first, then the board alias table. Aliases
+ * may optionally be prefixed with '%'.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (<= LE_ALIAS_NAME_MAX chars; optional leading '%').
+ * @param out_addr Pointer receiving the resolved address (must be non-NULL).
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NOT_FOUND / @ref LE_ERR_NULL_PTR otherwise.
+ */
+le_status_t le_alias_lookup(const le_vm_t* vm, const char* name, uint16_t* out_addr);
+
+/**
+ * @brief Writes a boolean to the register referenced by an alias.
+ */
+le_status_t le_alias_set_bool(le_vm_t* vm, const char* name, bool val);
+
+/**
+ * @brief Writes a float to the register referenced by an alias.
+ */
+le_status_t le_alias_set_float(le_vm_t* vm, const char* name, float val);
+
+/**
+ * @brief Writes an integer to the register referenced by an alias.
+ */
+le_status_t le_alias_set_int(le_vm_t* vm, const char* name, int32_t val);
+
+/**
+ * @brief Toggles the boolean register referenced by an alias.
+ */
+le_status_t le_alias_toggle(le_vm_t* vm, const char* name);
+
+/**
+ * @brief Pulses an alias for the default duration (1000 ms = 1 second).
+ *
+ * Sets the register to its active (non-zero) state and clears it back to zero
+ * once `now_ms` advances past the duration. See @ref le_alias_pulse_for.
+ */
+le_status_t le_alias_pulse(le_vm_t* vm, const char* name);
+
+/**
+ * @brief Pulses an alias for an explicit duration in seconds.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name.
+ * @param seconds Positive duration in seconds (e.g. 2.5); <= 0 defaults to 1 s.
+ * @return Returns @ref LE_OK on success, @ref LE_ERR_NOT_FOUND if the alias is
+ *         unknown, or @ref LE_ERR_CAPACITY if all pulse slots are busy.
+ */
+le_status_t le_alias_pulse_for(le_vm_t* vm, const char* name, float seconds);
+
+/**
+ * @brief Arms a raw process-image address as a pulse for a duration in ms.
+ *
+ * Used by the CLI / comms pulse command. Clears the register to zero when the
+ * VM's `now_ms` crosses the expiry (checked inside @ref le_vm_step).
+ */
+le_status_t le_vm_pulse(le_vm_t* vm, uint16_t addr, uint32_t duration_ms);
 
 #ifdef __cplusplus
 }

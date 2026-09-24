@@ -25,9 +25,10 @@ LogicElements provides a low-overhead binary framing protocol:
 | `0x10` | `LE_CMD_PROG_BEGIN` | Announces incoming `.lebin` upload size; resets staging cursor |
 | `0x11` | `LE_CMD_PROG_CHUNK` | Sends 32–128 byte chunk of binary program |
 | `0x12` | `LE_CMD_PROG_END` | Verifies CRC32, commits to flash/EEPROM, reloads VM |
-| `0x20` | `LE_CMD_GET_IMAGE` | Requests snapshot of `%I`, `%Q`, `%M` for live UI watch window |
+| `0x20` | `LE_CMD_GET_IMAGE` | Requests snapshot of `%IN`, `%OUT`, `%B` for live UI watch window |
 | `0x30` | `LE_CMD_CONTROL` | START (1), STOP (2), RESET (3) execution |
 | `0x40` | `LE_CMD_FORCE_IO` | Force digital input/output high/low for testing |
+| `0x41` | `LE_CMD_PULSE` | Pulse a register for a duration — payload `[addr:u16][duration_ms:u32]` |
 
 Program upload (`LE_CMD_PROG_*`) streams `.lebin` payload in bounded chunks;
 the loader verifies the IEEE 802.3 CRC32 and header integrity before

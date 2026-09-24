@@ -73,6 +73,7 @@ static void cmd_help(void)
     cli_print("  reset                   Reset process image memory\r\n");
     cli_print("  io                      Print live Process Image (DIN, DOUT, BOOL)\r\n");
     cli_print("  force <addr> <val>      Force register or I/O value (e.g. 'force din0 1' or 'force bool0 1')\r\n");
+cli_print("  pulse <name> [sec]       Pulse an alias for N seconds (default 1 s), e.g. \"pulse TRIP 2\"\r\n");
     cli_print("  upload <slot> [xmodem]  Upload .lebin via secure XMODEM-CRC\r\n");
     cli_print("  upload <slot> hex       Upload .lebin by pasting Hex string\r\n");
 }
@@ -92,7 +93,9 @@ static void cmd_caps(le_cli_t* cli)
     cli_print("  \"limits\": {\r\n");
     snprintf(buf, sizeof(buf), "    \"digital_inputs\": %d,\r\n", LE_MAX_DIGITAL_IN); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"digital_outputs\": %d,\r\n", LE_MAX_DIGITAL_OUT); cli_print(buf);
+#if LE_ENABLE_ANALOG
     snprintf(buf, sizeof(buf), "    \"analog_inputs\": %d,\r\n", LE_MAX_ANALOG_IN); cli_print(buf);
+#endif
     snprintf(buf, sizeof(buf), "    \"bool_regs\": %d,\r\n", LE_MAX_BOOL_REGS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"floats\": %d,\r\n", LE_MAX_FLOATS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_STATE_WORKSPACE_BYTES); cli_print(buf);
@@ -129,8 +132,13 @@ static void cmd_info(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "  Platform:        %s\r\n", plat); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Firmware Ver:    v%d.0\r\n", LE_BIN_VERSION); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Config Slots:    %d slots (%d bytes each)\r\n", LE_MAX_CONFIG_SLOTS, LE_SLOT_SIZE_BYTES); cli_print(buf);
+    #if LE_ENABLE_ANALOG
     snprintf(buf, sizeof(buf), "  Process Image:   DIN:%d, DOUT:%d, AIN:%d, BOOL:%d, FLOAT:%d, INT:%d\r\n",
              LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT, LE_MAX_ANALOG_IN, LE_MAX_BOOL_REGS, LE_MAX_FLOATS, LE_MAX_INT_REGS); cli_print(buf);
+#else
+    snprintf(buf, sizeof(buf), "  Process Image:   DIN:%d, DOUT:%d, BOOL:%d, FLOAT:%d, INT:%d\r\n",
+             LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT, LE_MAX_BOOL_REGS, LE_MAX_FLOATS, LE_MAX_INT_REGS); cli_print(buf);
+#endif
     (void)cli;
 }
 
@@ -204,10 +212,12 @@ static void cmd_io(le_cli_t* cli)
         cli_print(buf);
     }
     cli_print("\r\n  Analog Inputs:\r\n    ");
+#if LE_ENABLE_ANALOG
     for (int i = 0; i < 8 && i < LE_MAX_ANALOG_IN; i++) {
         snprintf(buf, sizeof(buf), "AIN[%d]=%ld (%.2f)  ", i, (long)le_process_image_get_int(&cli->vm->image, LE_ADDR_MAKE_AIN(i)), le_process_image_get_float(&cli->vm->image, LE_ADDR_MAKE_AIN(i)));
         cli_print(buf);
     }
+#endif
     cli_print("\r\n  Boolean Registers:\r\n    ");
     for (int i = 0; i < 8 && i < LE_MAX_BOOL_REGS; i++) {
         snprintf(buf, sizeof(buf), "BOOL[%d]=%d  ", i, le_process_image_get_bool(&cli->vm->image, LE_ADDR_MAKE_BOOL_REG(i)));
@@ -226,6 +236,80 @@ static void cmd_force(le_cli_t* cli, const char* args)
         return;
     }
 
+/* New register mnemonics: normalize to uppercase, strip a leading '%',
+     * then dispatch on the alpha prefix. Recognised: IN/DIN, OUT/DOUT, AIN,
+     * B/BOOL, F/FLOAT, I/INT, C. Non-mnemonic input falls through to the
+     * legacy raw-address / old-name parser below. */
+    {
+        char na[40] = {0};
+        size_t nk = 0;
+        if (addr_str[0] == '%') nk = 1;
+        for (size_t nq = nk; nq < 32 && addr_str[nq]; nq++) {
+            na[nq - nk] = (char)((addr_str[nq] >= 'a' && addr_str[nq] <= 'z')
+                                 ? (addr_str[nq] - 'a' + 'A') : addr_str[nq]);
+        }
+        size_t nj = 0;
+        while (na[nj] >= 'A' && na[nj] <= 'Z') nj++;
+        size_t nlen = nj;
+        int nidx = 0;
+        if (na[nj] == '[') {
+            nidx = (int)strtol(&na[nj + 1], NULL, 10);
+        } else {
+            nidx = (int)strtol(&na[nj], NULL, 10);
+        }
+        const char* tok = na;
+        int dm = -1;
+        if (nlen == 2 && strncmp(tok, "IN", 2) == 0) dm = 0;
+        else if (nlen == 3 && strncmp(tok, "DIN", 3) == 0) dm = 0;
+        else if (nlen == 3 && strncmp(tok, "OUT", 3) == 0) dm = 1;
+        else if (nlen == 4 && strncmp(tok, "DOUT", 4) == 0) dm = 1;
+        else if (nlen == 3 && strncmp(tok, "AIN", 3) == 0) dm = 2;
+        else if (nlen == 1 && strncmp(tok, "B", 1) == 0) dm = 3;
+        else if (nlen == 4 && strncmp(tok, "BOOL", 4) == 0) dm = 3;
+        else if (nlen == 1 && strncmp(tok, "F", 1) == 0) dm = 4;
+        else if (nlen == 5 && strncmp(tok, "FLOAT", 5) == 0) dm = 4;
+        else if (nlen == 3 && strncmp(tok, "INT", 3) == 0) dm = 5;
+        else if (nlen == 1 && strncmp(tok, "I", 1) == 0) dm = 5;
+        else if (nlen == 1 && strncmp(tok, "C", 1) == 0) dm = 6;
+
+        switch (dm)
+        {
+            case 0:
+                le_process_image_set_bool(&cli->vm->image, LE_ADDR_MAKE_DIN((uint16_t)nidx), val != 0);
+                cli_print("Value forced.\r\n");
+                return;
+            case 1:
+                le_process_image_set_bool(&cli->vm->image, LE_ADDR_MAKE_DOUT((uint16_t)nidx), val != 0);
+                cli_print("Value forced.\r\n");
+                return;
+            case 2:
+                le_process_image_set_int(&cli->vm->image, LE_ADDR_MAKE_AIN((uint16_t)nidx), (int32_t)val);
+                cli_print("Value forced.\r\n");
+                return;
+            case 3:
+                le_process_image_set_bool(&cli->vm->image, LE_ADDR_MAKE_BOOL_REG((uint16_t)nidx), val != 0);
+                cli_print("Value forced.\r\n");
+                return;
+            case 4:
+                le_process_image_set_float(&cli->vm->image, LE_ADDR_MAKE_FLOAT((uint16_t)nidx), (float)val);
+                cli_print("Value forced.\r\n");
+                return;
+            case 5:
+                le_process_image_set_int(&cli->vm->image, LE_ADDR_MAKE_INT_REG((uint16_t)nidx), (int32_t)val);
+                cli_print("Value forced.\r\n");
+                return;
+            case 6:
+#if LE_ENABLE_COMPLEX
+                le_process_image_set_complex(&cli->vm->image,
+                                             (uint16_t)(LE_REGION_CMPLX | ((uint16_t)nidx & LE_ADDR_INDEX_MASK)),
+                                             le_c_make((float)val, 0.0f));
+#endif
+                cli_print("Value forced.\r\n");
+                return;
+            default:
+                break;
+        }
+    }
     uint16_t addr = LE_ADDR_UNUSED;
     if ((addr_str[0] == 'd' || addr_str[0] == 'D') &&
         (addr_str[1] == 'i' || addr_str[1] == 'I') &&
@@ -254,6 +338,40 @@ static void cmd_force(le_cli_t* cli, const char* args)
 
     le_process_image_set_bool(&cli->vm->image, addr, val != 0);
     cli_print("Value forced.\r\n");
+}
+
+/**
+ * @brief Implements the interactive `pulse` terminal command.
+ *
+ * Pulses a register alias for a duration; with no argument the pulse holds for
+ * the default 1 second, otherwise for the given non-negative number of seconds.
+ * Dispatches to @ref le_alias_pulse_for, so the name must resolve via the VM's
+ * alias tables (program then board aliases).
+ *
+ * @param cli  The interactive shell whose VM is pulsed.
+ * @param args The raw argument token stream following the `pulse` keyword.
+ */
+static void cmd_pulse(le_cli_t* cli, const char* args)
+{
+    if (!cli->vm) return;
+    char name[32] = {0};
+    float secs = 1.0f;
+    int parsed = sscanf(args, "%31s %f", name, &secs);
+    if (parsed < 1 || name[0] == '\0') {
+        cli_print("Usage: pulse <name> [seconds] (default 1 s).\r\n");
+        return;
+    }
+    if (secs < 0.0f) secs = 0.0f;
+    le_status_t st = le_alias_pulse_for(cli->vm, name, secs);
+    if (st == LE_OK) {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "Pulsed '%%%s' for %.3f s.\r\n", name, (secs <= 0.0f) ? 1.0f : secs);
+        cli_print(buf);
+    } else if (st == LE_ERR_NOT_FOUND) {
+        cli_print("Pulse error: alias not found.\r\n");
+    } else {
+        cli_print("Pulse error.\r\n");
+    }
 }
 
 static void start_xmodem_upload(le_cli_t* cli, uint8_t slot)
@@ -332,6 +450,8 @@ static void handle_command(le_cli_t* cli, char* line)
         cmd_io(cli);
     } else if (strcmp(cmd, "force") == 0) {
         cmd_force(cli, line + 5);
+    } else if (strcmp(cmd, "pulse") == 0) {
+        cmd_pulse(cli, line + 5);
     } else if (strcmp(cmd, "upload") == 0) {
         uint8_t slot = (uint8_t)atoi(arg1);
         if (slot >= LE_MAX_CONFIG_SLOTS) {

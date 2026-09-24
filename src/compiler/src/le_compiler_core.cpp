@@ -238,6 +238,329 @@ static std::string to_lower_str(std::string s) {
     return s;
 }
 
+static std::string trim_str(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace((unsigned char)s[b])) b++;
+    while (e > b && std::isspace((unsigned char)s[e-1])) e--;
+    return s.substr(b, e - b);
+}
+
+/* Recursive-descent expression parser/evaluator.
+ *   expr  := term (('+'|'-') term)*
+ *   term  := factor (('*'|'/') factor)*
+ *   factor:= unary | call | number | VARNAME | '(' expr ')'
+ *   call  := NAME '(' expr (',' expr)? ')'
+ * Supported functions: sin cos tan asin acos atan atan2 sqrt cbrt pow exp ln/log
+ * log10 log2 abs floor ceil round min max fmod.
+ * Variables may be bare (Z_Line) or wrapped in %...% (stripped by the caller). */
+double CompilerCore::eval_expr(const std::string& expression, const std::map<std::string,double>& var_values)
+{
+    const std::string s = trim_str(expression);
+    std::size_t pos = 0;
+
+    struct Parser {
+        const std::string& s; std::size_t pos; const std::map<std::string,double>& vals;
+        std::string ident() {
+            std::size_t st = pos;
+            while (pos < s.size() && (std::isalnum((unsigned char)s[pos]) || s[pos]=='_' || s[pos]=='.')) pos++;
+            return s.substr(st, pos-st);
+        }
+        double primary() {
+            while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+            if (pos >= s.size()) return 0.0;
+            char c = s[pos];
+            if (c == '(') { pos++; double v = expr(); while (pos<s.size()&&std::isspace((unsigned char)s[pos]))pos++; if (pos<s.size()&&s[pos]==')')pos++; return v; }
+            if (std::isdigit((unsigned char)c) || c=='.') {
+                std::size_t st = pos;
+                while (pos < s.size() && (std::isdigit((unsigned char)s[pos]) || s[pos]=='.')) pos++;
+                try { return std::stod(s.substr(st,pos-st)); } catch (...) { return 0.0; }
+            }
+            std::string n = ident();
+            /* function call? */
+            std::size_t save = pos;
+            while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+            if (pos < s.size() && s[pos]=='(') {
+                std::size_t call_pos = pos;
+                std::string fn = n;
+                for (std::size_t k = 0; k < fn.size(); k++) fn[k] = static_cast<char>(std::tolower((unsigned char)fn[k]));
+                pos = call_pos + 1;
+                double a = expr();
+                /* optional second argument */
+                double b = a;
+                bool two = false;
+                while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+                if (pos < s.size() && s[pos]==',') { pos++; b = expr(); two = true; }
+                while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+                if (pos < s.size() && s[pos]==')') pos++;
+                if (fn == "sin")  return two ? 0.0 : std::sin(a);
+                if (fn == "cos")  return two ? 0.0 : std::cos(a);
+                if (fn == "tan")  return two ? 0.0 : std::tan(a);
+                if (fn == "asin") return two ? 0.0 : std::asin(a);
+                if (fn == "acos") return two ? 0.0 : std::acos(a);
+                if (fn == "atan") return two ? std::atan2(a, b) : std::atan(a);
+                if (fn == "atan2") return std::atan2(a, b);
+                if (fn == "sqrt") return two ? 0.0 : std::sqrt(a);
+                if (fn == "cbrt") return two ? 0.0 : std::cbrt(a);
+                if (fn == "pow")  return std::pow(a, b);
+                if (fn == "exp")  return two ? 0.0 : std::exp(a);
+                if (fn == "ln" || fn == "log") return two ? 0.0 : std::log(a);
+                if (fn == "log10") return two ? 0.0 : std::log10(a);
+                if (fn == "log2")  return two ? 0.0 : (std::log(a) / std::log(2.0));
+                if (fn == "abs")  return two ? 0.0 : std::fabs(a);
+                if (fn == "floor") return two ? 0.0 : std::floor(a);
+                if (fn == "ceil")  return two ? 0.0 : std::ceil(a);
+                if (fn == "round") return two ? 0.0 : std::round(a);
+                if (fn == "min")  return std::fmin(a, b);
+                if (fn == "max")  return std::fmax(a, b);
+                if (fn == "fmod") return std::fmod(a, b);
+                /* unknown function: fall back to evaluating the parenthesized expr */
+                return a;
+            }
+            pos = save;
+            auto it = vals.find(n);
+            return (it != vals.end()) ? it->second : 0.0;
+        }
+        double factor() {
+            while (pos < s.size() && std::isspace((unsigned char)s[pos])) pos++;
+            if (pos < s.size() && s[pos]=='-') { pos++; return -factor(); }
+            if (pos < s.size() && s[pos]=='+') { pos++; return factor(); }
+            return primary();
+        }
+        double term() {
+            double v = factor();
+            for (;;) {
+                while (pos<s.size()&&std::isspace((unsigned char)s[pos]))pos++;
+                if (pos>=s.size())break;
+                char o=s[pos]; if (o!='*'&&o!='/')break; pos++;
+                double r=factor();
+                v = (o=='*') ? v*r : ((r!=0.0) ? v/r : 0.0);
+            }
+            return v;
+        }
+        double expr() {
+            double v = term();
+            for (;;) {
+                while (pos<s.size()&&std::isspace((unsigned char)s[pos]))pos++;
+                if (pos>=s.size())break;
+                char o=s[pos]; if (o!='+'&&o!='-')break; pos++;
+                double r=term();
+                v = (o=='+') ? v+r : v-r;
+            }
+            return v;
+        }
+    };
+    Parser p{s, 0, var_values};
+    return p.expr();
+}
+/* Resolve a variable into a numeric value (memoized + cycle-detected).
+ * Supports direct numbers and indirect definitions ("Z_Line * 1.20") that may
+ * reference other %VAR% or bare-name variables. */
+static double resolve_var_value(std::string name,
+                                std::map<std::string,double>& resolved,
+                                std::map<std::string,std::string>& defs,
+                                std::map<std::string,int>& state,
+                                std::string& err)
+{
+    /* strip optional %...% wrappers */
+    if (name.size() >= 2 && name.front()=='%' && name.back()=='%') name = name.substr(1, name.size()-2);
+    int st = state[name];
+    if (st == 2) return resolved[name];
+    if (st == 1) { if (err.empty()) err = "circular variable reference: " + name; return 0.0; }
+    state[name] = 1;
+
+    auto it = defs.find(name);
+    double val = 0.0;
+    if (it == defs.end()) {
+        /* direct numeric variable already in the resolved table */
+        auto ri = resolved.find(name);
+        if (ri != resolved.end()) { val = ri->second; }
+        else {
+            /* treat as a literal numeric source */
+            try { val = std::stod(name); }
+            catch (...) { if (err.empty()) err = "undefined variable reference: " + name; val = 0.0; }
+        }
+    } else {
+        std::string def = trim_str(it->second);
+        /* First expand all %VAR% tokens to their resolved numeric literals. */
+        std::string inlined;
+        for (std::size_t i = 0; i < def.size();) {
+            if (def[i]=='%') {
+                std::size_t j = def.find('%', i+1);
+                if (j != std::string::npos) {
+                    std::string inner = def.substr(i+1, j-i-1);
+                    double iv = resolve_var_value(inner, resolved, defs, state, err);
+                    char buf[48]; std::snprintf(buf, sizeof(buf), "%.10g", iv);
+                    inlined += buf; i = j+1; continue;
+                }
+            }
+            inlined += def[i]; i++;
+        }
+        /* Then inline any bare variable names (Z_Line * 1.20) as numbers, but
+         * leave function names (sin( ... ), pow( ... ), ...) for eval_expr. */
+        std::string expanded;
+        for (std::size_t k = 0; k < inlined.size();) {
+            if (std::isalpha((unsigned char)inlined[k]) || inlined[k]=='_') {
+                std::size_t ks = k;
+                while (k < inlined.size() && (std::isalnum((unsigned char)inlined[k]) || inlined[k]=='_' || inlined[k]=='.')) k++;
+                std::string vn = inlined.substr(ks, k-ks);
+                /* skip whitespace; if next is '(' it's a math function call, keep it */
+                std::size_t t = k;
+                while (t < inlined.size() && std::isspace((unsigned char)inlined[t])) t++;
+                if (t < inlined.size() && inlined[t]=='(') {
+                    /* function call: leave as-is for eval_expr */
+                    expanded += vn;
+                    continue;
+                }
+                /* recognized variable: substitute its value */
+                if (resolved.find(vn) != resolved.end() || defs.find(vn) != defs.end()) {
+                    double vv = resolve_var_value(vn, resolved, defs, state, err);
+                    char buf[48]; std::snprintf(buf, sizeof(buf), "%.10g", vv);
+                    expanded += buf;
+                } else {
+                    /* unknown bare word: still a variable reference -> error */
+                    if (err.empty()) err = "undefined variable reference: " + vn;
+                    expanded += vn;
+                }
+            } else { expanded += inlined[k]; k++; }
+        }
+        val = CompilerCore::eval_expr(expanded, resolved);
+    }
+
+    state[name] = 2;
+    resolved[name] = val;
+    return val;
+}
+/* Numeric property read that supports direct numbers, "%VAR%", or expressions. */
+double CompilerCore::prop(const JsonValue& element, const std::string& key, double default_value)
+{
+    if (!element.is_object() || !element.contains(key)) return default_value;
+    const JsonValue& v = element.get(key);
+    if (v.is_number()) return v.as_double(default_value);
+    if (v.is_string()) {
+        std::string s = trim_str(v.as_string());
+        if (s.empty()) return default_value;
+        /* single %VAR% -> resolve directly */
+        if (s.size() >= 2 && s.front()=='%' && s.back()=='%')
+            return resolve_var_value(s, m_var_values, m_var_exprs, m_var_state, m_var_error);
+        /* embedded %VAR% tokens mixed with arithmetic */
+        if (s.find('%') != std::string::npos) {
+            std::string inlined;
+            for (std::size_t i = 0; i < s.size();) {
+                if (s[i]=='%') {
+                    std::size_t j = s.find('%', i+1);
+                    if (j != std::string::npos) {
+                        std::string inner = s.substr(i+1, j-i-1);
+                        double iv = resolve_var_value("%"+inner+"%", m_var_values, m_var_exprs, m_var_state, m_var_error);
+                        char buf[48]; std::snprintf(buf, sizeof(buf), "%.10g", iv);
+                        inlined += buf; i = j+1; continue;
+                    }
+                }
+                inlined += s[i]; i++;
+            }
+            return eval_expr(inlined, m_var_values);
+        }
+        /* plain arithmetic over literals / bare variable names */
+        return eval_expr(s, m_var_values);
+    }
+    return default_value;
+}
+
+/* Populate the variable tables from the circuit's "variables" object and resolve
+ * each entry topologically. Returns 0 on success or -1 if a variable error occurs
+ * (m_var_error is set; out_result->error_message is filled by the caller). */
+int CompilerCore::build_variables(const JsonValue& circuit_doc)
+{
+    m_var_values.clear(); m_var_exprs.clear(); m_var_state.clear(); m_var_error.clear();
+    if (!circuit_doc.contains("variables") || !circuit_doc.get("variables").is_object())
+        return 0;
+    const auto& vars = circuit_doc.get("variables").as_object();
+    for (const auto& kv : vars) {
+        if (kv.second.is_number()) {
+            /* direct scalar: value only (no expression stored) */
+            m_var_values[kv.first] = kv.second.as_double(0.0);
+        } else if (kv.second.is_string()) {
+            m_var_exprs[kv.first] = kv.second.as_string();
+        }
+    }
+    /* Resolve every variable once (memoized); direct ones return immediately. */
+    for (const auto& kv : vars) {
+        resolve_var_value(kv.first, m_var_values, m_var_exprs, m_var_state, m_var_error);
+        if (!m_var_error.empty()) break;
+    }
+    /* mark any remaining direct numerics done */
+    for (const auto& kv : vars) {
+        if (kv.second.is_number() && m_var_state[kv.first] == 0) {
+            m_var_state[kv.first] = 2;
+        }
+    }
+    return m_var_error.empty() ? 0 : -1;
+}
+
+
+
+/**
+ * @brief Parses a register address string into a process-image address.
+ *
+ * Accepts an optional leading '%' and either a bare decimal index or a
+ * bracketed index ("%B[4]"). New mnemonics are supported: %IN %OUT %AIN %B %I
+ * %F %C (int register = %I; digital input = %IN). Legacy forms are accepted for
+ * back-compat: %M (bool), %R (float), %Q (output), %N (int), plus the
+ * DIN/DOUT/BOOL/FLOAT/INT/CMPLX spellings.
+ *
+ * @param in  The register mnemonic string to parse.
+ * @param out On success, receives the encoded 16-bit process-image address.
+ * @return True if @p in denotes a known register family + valid index, false
+ *         otherwise (unknown mnemonic, missing/invalid index, or the not-yet
+ *         allocated analog-output region).
+ */
+static bool parse_register_addr(const std::string& in, uint16_t* out)
+{
+    std::string s = in;
+    size_t i = 0;
+    while (i < s.size() && s[i] == '%') i++;
+    size_t j = i;
+    while (j < s.size() && ((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z'))) j++;
+    std::string tok = to_upper_str(s.substr(i, j - i));
+    std::string rest = s.substr(j);
+
+    auto all_digits = [](const std::string& t) -> bool {
+        if (t.empty()) return false;
+        for (char c : t) if (c < '0' || c > '9') return false;
+        return true;
+    };
+
+    int idx = -1;
+    if (!rest.empty() && rest[0] == '[') {
+        size_t close = rest.find(']');
+        if (close == std::string::npos) return false;
+        std::string num = rest.substr(1, close - 1);
+        if (all_digits(num)) idx = std::stoi(num);
+    } else if (all_digits(rest)) {
+        idx = std::stoi(rest);
+    }
+    if (idx < 0 || idx > 0x3FFF) return false;
+
+    uint16_t region;
+    if      (tok == "IN"   || tok == "DIN")   region = LE_REGION_DIN;
+    else if (tok == "OUT"  || tok == "DOUT")  region = LE_REGION_DOUT;
+    else if (tok == "B"    || tok == "BOOL")  region = LE_REGION_BOOL_REG;
+    else if (tok == "F"    || tok == "FLOAT") region = LE_REGION_FLOAT;
+    else if (tok == "I"    || tok == "INT")   region = LE_REGION_INT_REG;
+    else if (tok == "C"    || tok == "CMPLX") region = LE_REGION_CMPLX;
+    else if (tok == "AIN")                    region = LE_REGION_AIN;
+    else if (tok == "AOUT")  return false;   /* analog-output region not yet allocated */
+    else if (tok == "M")     region = LE_REGION_BOOL_REG;  /* legacy coils */
+    else if (tok == "R")     region = LE_REGION_FLOAT;     /* legacy floats */
+    else if (tok == "Q")     region = LE_REGION_DOUT;      /* legacy outputs */
+    else if (tok == "N")     region = LE_REGION_INT_REG;   /* legacy ints */
+    else return false;
+
+    uint16_t mask = (region == LE_REGION_BOOL_REG) ? 0x1FFFU :
+                   ((region == LE_REGION_FLOAT) ? 0x3FFFU : LE_ADDR_INDEX_MASK);
+    *out = (uint16_t)((uint16_t)region | ((uint16_t)idx & mask));
+    return true;
+}
+
 int CompilerCore::compile(const std::string& circuit_json_str,
                           const std::string& board_json_str,
                           le_compile_result_t* out_result)
@@ -273,6 +596,15 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         return -1;
     }
 
+
+    // 1b. Build & resolve the circuit's "variables" table (properties may use %VAR%).
+    if (build_variables(circuit_doc) != 0) {
+        out_result->success = 0;
+        std::string err = std::string("Variable Error: ") + m_var_error;
+        out_result->error_message = (char*)std::malloc(err.size() + 1);
+        std::strcpy(out_result->error_message, err.c_str());
+        return -1;
+    }
     // 2. Parse Board Profile JSON if provided
     JsonValue board_doc;
     bool has_board = false;
@@ -452,7 +784,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         } else if (type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER") {
             element_outputs[name] = allocate_user_complex();
         } else if (type == "ANALOGINPUT" || type == "LE_ANALOG_INPUT" || type == "LE_ANALOGINPUT") {
-            int ch = el.get("channel").as_int(0);
+            int ch = (int)prop(el, "channel", 0);
             uint16_t addr = static_cast<uint16_t>(LE_REGION_AIN | (ch & 0x0FFF));
             ain_map[name] = addr;
             std::string m = to_lower_str(el.get("mode").as_string());
@@ -462,10 +794,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         } else if (type == "CONSTANT" || type == "LE_CONSTANT") {
             std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("bool")));
             if (dt == "float") {
-                float f = el.get("value").as_float(0.0f);
+                float f = prop(el, "value", 0.0f);
                 element_outputs[name] = (std::abs(f - 1.0f) < 0.0001f) ? LE_CONST_ONE_F : LE_CONST_ZERO_F;
             } else if (dt == "int" || dt == "integer") {
-                int i = el.get("value").as_int(0);
+                int i = (int)prop(el, "value", 0);
                 element_outputs[name] = (i != 0) ? LE_CONST_TRUE : LE_CONST_FALSE;
             } else {
                 bool b = el.get("value").as_bool(false);
@@ -485,6 +817,58 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             out_result->error_message = (char*)std::malloc(err.size() + 1);
             std::strcpy(out_result->error_message, err.c_str());
             return -1;
+        }
+    }
+
+    // Step 1b: Parse + resolve the circuit's "aliases" object.
+    // Each alias maps a short name (<= LE_ALIAS_NAME_MAX chars) to a register
+    // address. The target may be a register mnemonic ("%B0", "%F2", "%OUT1"),
+    // an element name (e.g. a BOOLREGISTER/FLOATREGISTER output), or a board
+    // pin alias supplied by the board profile. Only explicitly declared aliases
+    // (this object) are embedded; board aliases are never auto-baked, so adding
+    // a board profile never grows the .lebin.
+    std::vector<le_alias_t> alias_list;
+    if (circuit_doc.contains("aliases") && circuit_doc.get("aliases").is_object()) {
+        const auto& als = circuit_doc.get("aliases").as_object();
+        for (const auto& kv : als) {
+            std::string nm = kv.first;
+            std::string target = kv.second.is_string() ? kv.second.as_string() : "";
+            std::string err;
+            if (nm.empty() || nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
+                err = "Alias Error: alias name '" + nm + "' must be 1.." +
+                      std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
+            } else if (target.empty()) {
+                err = "Alias Error: alias '" + nm + "' has no target register.";
+            } else {
+                uint16_t addr = 0;
+                bool ok = false;
+                if (element_outputs.find(target) != element_outputs.end()) {
+                    addr = element_outputs[target];
+                    ok = true;
+                } else {
+                    std::string resolved = target;
+                    auto bit = alias_to_addr.find(target);
+                    if (bit != alias_to_addr.end()) resolved = bit->second;
+                    ok = parse_register_addr(resolved, &addr);
+                }
+                if (!ok) {
+                    err = "Alias Error: alias '" + nm + "' target '" + target +
+                          "' is not a valid register or element.";
+                } else {
+                    le_alias_t a;
+                    std::memset(&a, 0, sizeof(a));
+                    std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
+                    a.kind = 0; a.pad = 0;
+                    a.addr = addr;
+                    alias_list.push_back(a);
+                }
+            }
+            if (!err.empty()) {
+                out_result->success = 0;
+                out_result->error_message = (char*)std::malloc(err.size() + 1);
+                std::strcpy(out_result->error_message, err.c_str());
+                return -1;
+            }
         }
     }
 
@@ -531,6 +915,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
     std::map<std::string, std::string> tag_effective_source;
     std::vector<std::string> warning_list;
+
+    
     for (const auto& el : elements) {
         if (!el.is_object()) continue;
         std::string type = to_upper_str(el.get("type").as_string());
@@ -721,7 +1107,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         if (type == "ANALOGINPUT" || type == "LE_ANALOG_INPUT" || type == "LE_ANALOGINPUT") {
             std::string m = to_lower_str(el.get("mode").as_string());
             if (m == "float" || m == "scaled") {
-                int ch = el.get("channel").as_int(0);
+                int ch = (int)prop(el, "channel", 0);
                 int s_idx = scaler_counter++;
                 state_descs[LE_BLK_SCALER]++;
                 if (s_idx >= 16) s_idx = 15;
@@ -730,11 +1116,11 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                 sm.index = s_idx;
                 sm.name = name;
                 sm.channel = ch;
-                sm.raw_min = el.get("raw_min").as_float(0.0f);
-                sm.raw_max = el.get("raw_max").as_float(4095.0f);
+                sm.raw_min = prop(el, "raw_min", 0.0f);
+                sm.raw_max = prop(el, "raw_max", 4095.0f);
                 if (sm.raw_max == 0.0f && sm.raw_min == 0.0f) sm.raw_max = 4095.0f;
-                sm.scale_min = el.get("scale_min").as_float(0.0f);
-                sm.scale_max = el.get("scale_max").as_float(100.0f);
+                sm.scale_min = prop(el, "scale_min", 0.0f);
+                sm.scale_max = prop(el, "scale_max", 100.0f);
                 sm.units = el.get("units").as_string("%");
                 sm.clamp = el.get("clamp").as_bool(true);
                 scaler_list.push_back(sm);
@@ -929,7 +1315,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         } else if (type == "CUSTOMNODE" || type == "LE_CUSTOM" || type == "LE_NODE_CUSTOM" || type == "LE_OP_EXT_CALL" || type == "EXT_CALL") {
             // Local fallback custom definition
             static CustomNodeInfo fallback_def;
-            fallback_def.function_id = static_cast<uint8_t>(el.get("function_id").as_int(1));
+            fallback_def.function_id = static_cast<uint8_t>((int)prop(el, "function_id", 1));
             std::string out_type = to_lower_str(el.get("output_type").as_string("bool"));
             fallback_def.outputs.clear();
             CustomPinInfo pi;
@@ -991,7 +1377,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             state_descs[LE_BLK_MIN_MAX_HOLD]++;
         } else if (opcode == LE_OP_PHASOR_SHIFT) {
             /* Rotation angle (degrees, 0..255) is carried in the modifier byte. */
-            int deg = static_cast<int>(el.get("angle_deg").as_float(el.get("delta_deg").as_float(0.0f)));
+            int deg = static_cast<int>(el.get("angle_deg").as_float(prop(el, "delta_deg", 0.0f)));
             modifier = static_cast<uint8_t>(deg & 0xFF);
         }
 
@@ -1003,25 +1389,25 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
          * properties baked as concrete bytes) into the preconfigured state image
          * that the loader copies to RAM verbatim at load. */
         switch (opcode) {
-            case LE_OP_LPF_1P: { le_lpf_state_t st{}; st.alpha = el.get("alpha").as_float(0.1f); append_state(LE_BLK_LPF, &st, sizeof(st)); break; }
-            case LE_OP_RATE_LIMITER: { le_rate_limiter_state_t st{}; st.rising_rate = el.get("rising_rate").as_float(1.0f); st.falling_rate = el.get("falling_rate").as_float(1.0f); append_state(LE_BLK_RATE_LIMITER, &st, sizeof(st)); break; }
-            case LE_OP_BIQUAD_IIR: { le_biquad_state_t st{}; st.b0 = el.get("b0").as_float(1.0f); st.b1 = el.get("b1").as_float(0.0f); st.b2 = el.get("b2").as_float(0.0f); st.a1 = el.get("a1").as_float(0.0f); st.a2 = el.get("a2").as_float(0.0f); append_state(LE_BLK_BIQUAD, &st, sizeof(st)); break; }
-            case LE_OP_MOVING_AVG: { le_moving_avg_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(8.0f); append_state(LE_BLK_MOVING_AVG, &st, sizeof(st)); break; }
-            case LE_OP_PEAK_DETECTOR: { le_peak_state_t st{}; st.decay_rate = el.get("decay_rate").as_float(0.995f); append_state(LE_BLK_PEAK, &st, sizeof(st)); break; }
-            case LE_OP_RMS: { le_rms_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(16.0f); append_state(LE_BLK_RMS, &st, sizeof(st)); break; }
-            case LE_OP_MEDIAN: { le_median_state_t st{}; st.window_size = (uint16_t)el.get("window_size").as_float(5.0f); append_state(LE_BLK_MEDIAN, &st, sizeof(st)); break; }
-            case LE_OP_DEADBAND: { le_deadband_state_t st{}; st.threshold = el.get("threshold").as_float(0.0f); st.center = el.get("center").as_float(0.0f); append_state(LE_BLK_DEADBAND, &st, sizeof(st)); break; }
-            case LE_OP_WASHOUT: { le_washout_state_t st{}; st.alpha = el.get("alpha").as_float(0.95f); append_state(LE_BLK_WASHOUT, &st, sizeof(st)); break; }
-            case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = el.get("alpha").as_float(0.8f); st.gain = el.get("gain").as_float(1000.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
-            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = el.get("hysteresis").as_float(0.05f); st.sample_rate_hz = el.get("sample_rate_hz").as_float(1000.0f); append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
-            case LE_OP_LUT_1D: { le_lut_1d_state_t st{}; st.num_points = (uint16_t)el.get("num_points").as_float(2.0f); const auto& xarr = el.get("x").arr_val; const auto& yarr = el.get("y").arr_val; for (size_t k = 0; k < xarr.size() && k < LE_MAX_LUT_POINTS; k++) st.x[k] = (float)xarr[k].as_float(0.0f); for (size_t k = 0; k < yarr.size() && k < LE_MAX_LUT_POINTS; k++) st.y[k] = (float)yarr[k].as_float(0.0f); if (st.num_points < 2) st.num_points = 2; if (st.num_points > LE_MAX_LUT_POINTS) st.num_points = LE_MAX_LUT_POINTS; append_state(LE_BLK_LUT_1D, &st, sizeof(st)); break; }
-            case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = el.get("time_base_sec").as_float(60.0f); st.scale_factor = el.get("scale_factor").as_float(1.0f); st.sample_time_sec = el.get("sample_time_sec").as_float(0.001f); st.max_limit = el.get("max_limit").as_float(0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
-            case LE_OP_MIN_MAX_HOLD: { le_min_max_hold_state_t st{}; st.mode = (uint8_t)el.get("mode").as_float(0.0f); append_state(LE_BLK_MIN_MAX_HOLD, &st, sizeof(st)); break; }
-            case LE_OP_OVERCURRENT: { le_overcurrent_state_t st{}; st.pickup = el.get("pickup").as_float(1.0f); st.time_dial = el.get("time_dial").as_float(1.0f); st.curve_type = (uint8_t)el.get("curve_type").as_float(0.0f); append_state(LE_BLK_OVERCURRENT, &st, sizeof(st)); break; }
-            case LE_OP_DIST_21: { le_dist21_state_t st{}; st.reach_ohms = el.get("reach").as_float(el.get("reach_ohms").as_float(10.0f)); st.line_angle_deg = el.get("line_angle").as_float(el.get("line_angle_deg").as_float(75.0f)); st.offset_mag = el.get("offset").as_float(el.get("offset_ohms").as_float(0.0f)); st.offset_angle_deg = el.get("offset_angle").as_float(el.get("offset_angle_deg").as_float(75.0f)); st.prefault_v_threshold = el.get("prefault_v_threshold").as_float(0.5f); st.prefault_duration_ms = (uint32_t)el.get("prefault_v_duration").as_float(el.get("prefault_duration_ms").as_float(80.0f)); append_state(LE_BLK_21, &st, sizeof(st)); break; }
-            case LE_OP_PID: { le_pid_state_t st{}; st.kp = el.get("kp").as_float(1.0f); st.ki = el.get("ki").as_float(0.0f); st.kd = el.get("kd").as_float(0.0f); st.out_min = el.get("out_min").as_float(-1e6f); st.out_max = el.get("out_max").as_float(1e6f); append_state(LE_BLK_PID, &st, sizeof(st)); break; }
-            case LE_OP_I2C: { le_i2c_device_state_t st{}; st.addr_7bit = (uint8_t)el.get("addr").as_float(0.0f); st.poll_rate_ms = (uint32_t)el.get("poll_rate_ms").as_float(0.0f); st.poll_tx_len = (uint8_t)el.get("poll_tx_len").as_float(0.0f); st.poll_rx_len = (uint8_t)el.get("poll_rx_len").as_float(0.0f); st.data_dest_addr = (uint16_t)el.get("data_dest_addr").as_float(0.0f); append_state(LE_BLK_I2C, &st, sizeof(st)); break; }
-            case LE_OP_SPI: { le_spi_device_state_t st{}; st.cs_pin = (uint8_t)el.get("cs_pin").as_float(0.0f); st.poll_rate_ms = (uint32_t)el.get("poll_rate_ms").as_float(0.0f); st.poll_len = (uint8_t)el.get("poll_len").as_float(0.0f); st.data_dest_addr = (uint16_t)el.get("data_dest_addr").as_float(0.0f); append_state(LE_BLK_SPI, &st, sizeof(st)); break; }
+            case LE_OP_LPF_1P: { le_lpf_state_t st{}; st.alpha = prop(el, "alpha", 0.1f); append_state(LE_BLK_LPF, &st, sizeof(st)); break; }
+            case LE_OP_RATE_LIMITER: { le_rate_limiter_state_t st{}; st.rising_rate = prop(el, "rising_rate", 1.0f); st.falling_rate = prop(el, "falling_rate", 1.0f); append_state(LE_BLK_RATE_LIMITER, &st, sizeof(st)); break; }
+            case LE_OP_BIQUAD_IIR: { le_biquad_state_t st{}; st.b0 = prop(el, "b0", 1.0f); st.b1 = prop(el, "b1", 0.0f); st.b2 = prop(el, "b2", 0.0f); st.a1 = prop(el, "a1", 0.0f); st.a2 = prop(el, "a2", 0.0f); append_state(LE_BLK_BIQUAD, &st, sizeof(st)); break; }
+            case LE_OP_MOVING_AVG: { le_moving_avg_state_t st{}; st.window_size = (uint16_t)prop(el, "window_size", 8.0f); append_state(LE_BLK_MOVING_AVG, &st, sizeof(st)); break; }
+            case LE_OP_PEAK_DETECTOR: { le_peak_state_t st{}; st.decay_rate = prop(el, "decay_rate", 0.995f); append_state(LE_BLK_PEAK, &st, sizeof(st)); break; }
+            case LE_OP_RMS: { le_rms_state_t st{}; st.window_size = (uint16_t)prop(el, "window_size", 16.0f); append_state(LE_BLK_RMS, &st, sizeof(st)); break; }
+            case LE_OP_MEDIAN: { le_median_state_t st{}; st.window_size = (uint16_t)prop(el, "window_size", 5.0f); append_state(LE_BLK_MEDIAN, &st, sizeof(st)); break; }
+            case LE_OP_DEADBAND: { le_deadband_state_t st{}; st.threshold = prop(el, "threshold", 0.0f); st.center = prop(el, "center", 0.0f); append_state(LE_BLK_DEADBAND, &st, sizeof(st)); break; }
+            case LE_OP_WASHOUT: { le_washout_state_t st{}; st.alpha = prop(el, "alpha", 0.95f); append_state(LE_BLK_WASHOUT, &st, sizeof(st)); break; }
+            case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = prop(el, "alpha", 0.8f); st.gain = prop(el, "gain", 1000.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
+            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = prop(el, "hysteresis", 0.05f); st.sample_rate_hz = prop(el, "sample_rate_hz", 1000.0f); append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
+            case LE_OP_LUT_1D: { le_lut_1d_state_t st{}; st.num_points = (uint16_t)prop(el, "num_points", 2.0f); const auto& xarr = el.get("x").arr_val; const auto& yarr = el.get("y").arr_val; for (size_t k = 0; k < xarr.size() && k < LE_MAX_LUT_POINTS; k++) st.x[k] = (float)xarr[k].as_float(0.0f); for (size_t k = 0; k < yarr.size() && k < LE_MAX_LUT_POINTS; k++) st.y[k] = (float)yarr[k].as_float(0.0f); if (st.num_points < 2) st.num_points = 2; if (st.num_points > LE_MAX_LUT_POINTS) st.num_points = LE_MAX_LUT_POINTS; append_state(LE_BLK_LUT_1D, &st, sizeof(st)); break; }
+            case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = prop(el, "time_base_sec", 60.0f); st.scale_factor = prop(el, "scale_factor", 1.0f); st.sample_time_sec = prop(el, "sample_time_sec", 0.001f); st.max_limit = prop(el, "max_limit", 0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
+            case LE_OP_MIN_MAX_HOLD: { le_min_max_hold_state_t st{}; st.mode = (uint8_t)prop(el, "mode", 0.0f); append_state(LE_BLK_MIN_MAX_HOLD, &st, sizeof(st)); break; }
+            case LE_OP_OVERCURRENT: { le_overcurrent_state_t st{}; st.pickup = prop(el, "pickup", 1.0f); st.time_dial = prop(el, "time_dial", 1.0f); st.curve_type = (uint8_t)prop(el, "curve_type", 0.0f); append_state(LE_BLK_OVERCURRENT, &st, sizeof(st)); break; }
+            case LE_OP_DIST_21: { le_dist21_state_t st{}; st.reach_ohms = (float)prop(el, "reach", prop(el, "reach_ohms", 10.0)); st.line_angle_deg = (float)prop(el, "line_angle", prop(el, "line_angle_deg", 75.0)); st.offset_mag = (float)prop(el, "offset", prop(el, "offset_ohms", 0.0)); st.offset_angle_deg = (float)prop(el, "offset_angle", prop(el, "offset_angle_deg", 75.0)); st.prefault_v_threshold = (float)prop(el, "prefault_v_threshold", 0.5); st.prefault_duration_ms = (uint32_t)prop(el, "prefault_v_duration", prop(el, "prefault_duration_ms", 80.0)); append_state(LE_BLK_21, &st, sizeof(st)); break; }
+            case LE_OP_PID: { le_pid_state_t st{}; st.kp = prop(el, "kp", 1.0f); st.ki = prop(el, "ki", 0.0f); st.kd = prop(el, "kd", 0.0f); st.out_min = prop(el, "out_min", -1e6f); st.out_max = prop(el, "out_max", 1e6f); append_state(LE_BLK_PID, &st, sizeof(st)); break; }
+            case LE_OP_I2C: { le_i2c_device_state_t st{}; st.addr_7bit = (uint8_t)prop(el, "addr", 0.0f); st.poll_rate_ms = (uint32_t)prop(el, "poll_rate_ms", 0.0f); st.poll_tx_len = (uint8_t)prop(el, "poll_tx_len", 0.0f); st.poll_rx_len = (uint8_t)prop(el, "poll_rx_len", 0.0f); st.data_dest_addr = (uint16_t)prop(el, "data_dest_addr", 0.0f); append_state(LE_BLK_I2C, &st, sizeof(st)); break; }
+            case LE_OP_SPI: { le_spi_device_state_t st{}; st.cs_pin = (uint8_t)prop(el, "cs_pin", 0.0f); st.poll_rate_ms = (uint32_t)prop(el, "poll_rate_ms", 0.0f); st.poll_len = (uint8_t)prop(el, "poll_len", 0.0f); st.data_dest_addr = (uint16_t)prop(el, "data_dest_addr", 0.0f); append_state(LE_BLK_SPI, &st, sizeof(st)); break; }
             default: break;
         }
 
@@ -1110,7 +1496,7 @@ if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_D
              * image, SEL-style (O87P/SLP1/IRS1/SLP2). Supports large-bus differential
              * with up to 30 phasor inputs. */
             std::vector<uint16_t> args;
-            int n_in = (int)el.get("input_count").as_float(2.0);
+            int n_in = (int)prop(el, "input_count", 2.0);
             if (n_in < 2) n_in = 2;
             if (n_in > 30) n_in = 30;
             int n_added = 0;
@@ -1124,10 +1510,10 @@ if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_D
             }
 
             le_diff87_state_t d87{};
-            d87.o87p = (float)el.get("o87p").as_float(el.get("pickup").as_float(0.3));
-            d87.slp1 = (float)el.get("slp1").as_float(0.25);
-            d87.irs1 = (float)el.get("irs1").as_float(el.get("ips1").as_float(1.5));
-            d87.slp2 = (float)el.get("slp2").as_float(0.60);
+            d87.o87p = (float)prop(el, "o87p", prop(el, "pickup", 0.3));
+            d87.slp1 = (float)prop(el, "slp1", 0.25);
+            d87.irs1 = (float)prop(el, "irs1", prop(el, "ips1", 1.5));
+            d87.slp2 = (float)prop(el, "slp2", 0.60);
             append_state(LE_BLK_DIFF_87, &d87, sizeof(d87));
 
             int t0 = -1;
@@ -1157,7 +1543,7 @@ if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type ==
             add_in(find_port({"c", "phase_c", "ic", "in_c", "cc"}), LE_CONST_ZERO_C);
 
             le_comp33_state_t c33{};
-            c33.comp = (uint8_t)((int)el.get("compensation").as_float(el.get("comp").as_float(el.get("tcomp").as_float(6.0))) % 13);
+            c33.comp = (uint8_t)((int)el.get("compensation").as_float(el.get("comp").as_float(prop(el, "tcomp", 6.0))) % 13);
             append_state(LE_BLK_PHASE_COMP, &c33, sizeof(c33));
 
             for (int k = 0; k < 3; k++) {
@@ -1338,7 +1724,7 @@ if (opcode == LE_OP_PHASOR_1P) {
             add_in(find_port({"sync", "sync_complex", "ref", "b", "sync_phasor"}), LE_CONST_ZERO_C);
             state_descs[LE_BLK_PHASOR]++;
             le_phasor_state_t ph{};
-            ph.samples_per_cycle = (uint16_t)el.get("samples_per_cycle").as_float(16.0f);
+            ph.samples_per_cycle = (uint16_t)prop(el, "samples_per_cycle", 16.0);
             if (ph.samples_per_cycle == 0 || ph.samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE)
                 ph.samples_per_cycle = 16;
             append_state(LE_BLK_PHASOR, &ph, sizeof(ph));
@@ -1506,13 +1892,13 @@ if (opcode == LE_OP_PHASOR_1P) {
                 state_descs[LE_BLK_TIMER]++;
                 le_timer_state_t tst{};
                 tst.preset_ms = (uint32_t)el.get("preset_ms").as_float(
-                    el.get("preset").as_float(0.0f));
+                    prop(el, "preset", 0.0f));
                 append_state(LE_BLK_TIMER, &tst, sizeof(tst));
             } else if (is_counter_op) {
                 out_addr = allocate_counter();
                 state_descs[LE_BLK_COUNTER]++;
                 le_counter_state_t cst{};
-                cst.preset = (int32_t)el.get("preset").as_float(0.0f);
+                cst.preset = (int32_t)prop(el, "preset", 0.0f);
                 append_state(LE_BLK_COUNTER, &cst, sizeof(cst));
             } else if (is_float_op) {
                 int temp_idx = -1;
@@ -1643,7 +2029,14 @@ if (opcode == LE_OP_PHASOR_1P) {
             for (uint8_t b : blob) state_image.push_back(b);
         }
     }
-    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size();
+    /* Append the user-declared alias table after the state image. */
+    std::vector<uint8_t> alias_bytes;
+    for (const le_alias_t& a : alias_list) {
+        const uint8_t* ab = (const uint8_t*)&a;
+        for (size_t bi = 0; bi < sizeof(a); bi++) alias_bytes.push_back(ab[bi]);
+    }
+
+    size_t total_payload = payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size() + alias_bytes.size();
 
     std::vector<uint8_t> payload_all(total_payload);
     if (payload_bytes > 0) {
@@ -1658,6 +2051,10 @@ if (opcode == LE_OP_PHASOR_1P) {
     if (!state_image.empty()) {
         std::memcpy(payload_all.data() + payload_bytes + block_bytes.size() + state_bytes.size(),
                     state_image.data(), state_image.size());
+    }
+    if (!alias_bytes.empty()) {
+        std::memcpy(payload_all.data() + payload_bytes + block_bytes.size() + state_bytes.size() + state_image.size(),
+                    alias_bytes.data(), alias_bytes.size());
     }
 
     uint32_t crc = compute_crc32(payload_all.data(), total_payload);
@@ -1681,6 +2078,7 @@ if (opcode == LE_OP_PHASOR_1P) {
     header.block_count = static_cast<uint16_t>(block_calls.size());
     header.state_desc_count = static_cast<uint16_t>(state_records);
     header.state_img_len = static_cast<uint32_t>(state_image.size());
+    header.alias_count = static_cast<uint16_t>(alias_list.size());
     header.crc32 = crc;
 
     size_t total_bin_size = sizeof(le_header_t) + total_payload;
@@ -1787,6 +2185,7 @@ if (opcode == LE_OP_PHASOR_1P) {
     out_result->int_count = total_int_regs;
     out_result->timer_count = m_timer_counter;
     out_result->counter_count = m_counter_counter;
+    out_result->alias_count = static_cast<int>(alias_list.size());
     out_result->crc32 = crc;
     out_result->user_bool_count = m_user_bool_count;
     out_result->temp_bool_count = m_peak_temp_bool;

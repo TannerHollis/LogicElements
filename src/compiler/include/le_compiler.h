@@ -56,6 +56,7 @@ typedef struct {
     int int_count;             /**< Total number of 32-bit integer registers allocated. */
     int timer_count;           /**< Total number of timer function blocks allocated. */
     int counter_count;         /**< Total number of counter function blocks allocated. */
+int alias_count;           /**< Total number of user-declared register aliases packed into the binary. */
     uint32_t crc32;            /**< Calculated CRC-32 checksum of the bytecode payload. */
 
     /* Register allocation breakdown */

@@ -13,7 +13,7 @@ zero-heap state workspace, and UART/telemetry support.
 | :--- | :--- |
 | **Language** | ANSI C99 runtime · C++17 compiler |
 | **Runtime core** | ~10 KB flash, zero-heap, execute-in-place (XIP) |
-| **Binary format** | `.lebin` v5 — `LEB1` magic, IEEE 802.3 CRC32 |
+| **Binary format** | `.lebin` v6 — `LEB1` magic, IEEE 802.3 CRC32 |
 | **License** | MIT |
 
 ## Quick start
@@ -51,18 +51,18 @@ All documentation lives in `docs/`.
   optimization passes, liveness/register allocation, and CLI/API usage.
 - **[Custom nodes](docs/CUSTOM_NODES_GUIDE.md)** — adding board-specific
   hardware blocks (`LE_OP_BLOCK` / `LE_FUNC_CUSTOM_BASE`, `ext_call`).
-- **[Supported boards](docs/ports.md)** — reference board profiles.
-- **[Custom-nodes example](docs/custom_nodes_example.md)** — working PWM /
+- **[Supported boards](docs/Ports.md)** — reference board profiles.
+- **[Custom-nodes example](docs/CustomNodesExample.md)** — working PWM /
   encoder / filter example.
-- **[Element test fixtures](docs/element_fixtures.md)** — the per-element
+- **[Element test fixtures](docs/ElementFixtures.md)** — the per-element
   assembly test suite.
 
 ### Reference
 
 - **Elements** — [all elements and their disassembly](docs/ELEMENTS.md)
 - **Board profiles & UART protocol** — [communications & profiles](docs/COMMUNICATIONS_BOARD_PROFILES.md)
-- **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/ports.md))
-- **Binary format** — [`.lebin` v5](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
+- **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/Ports.md))
+- **Binary format** — [`.lebin` v6](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
 - **Generation & tooling** — `tools/compiler/le_compiler.py`,
   `le_board.py`, `le_disasm.py`; `tools/sim/main.c`
 
@@ -74,7 +74,6 @@ All documentation lives in `docs/`.
 CMakeLists.txt               # C/C++ build, library + CLI + tests
 build_element_assembly.bat   # Windows per-element assembly test build
 docs/                        # all documentation
-example_configs/             # example .lebin, C-header exports, platform configs
 examples/custom_nodes/       # custom node example (circuit, board, HAL, runner)
 ports/                       # board profiles + HAL ports (stm32, rp2040, avr, template)
 src/compiler/                # C++17 compiler engine + C API + CLI

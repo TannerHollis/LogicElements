@@ -39,21 +39,43 @@ extern "C" {
 #define LE_MAX_INT_REGS         64      /* Up to 64 32-bit integer registers */
 #endif
 
+/* ========================================================================== */
+/* Optional Capability Switches                                               */
+/* A board designer can reduce the runtime down toward boolean-only by setting */
+/* the unwanted subsystems' switches to 0; each guarded block then contributes */
+/* no state, opcodes, or registers. LE_ENABLE_PROTECTION only gates the        */
+/* protection & control relays; complex arithmetic and analog inputs are gated */
+/* independently by LE_ENABLE_COMPLEX and LE_ENABLE_ANALOG.                    */
+/* ========================================================================== */
+#ifndef LE_ENABLE_PROTECTION
+#define LE_ENABLE_PROTECTION    1       /* Set to 1 to enable P&C relay opcodes (requires complex) */
+#endif
+
+#ifndef LE_ENABLE_COMPLEX
+#define LE_ENABLE_COMPLEX       1       /* Set to 1 to enable complex arithmetic & %C registers */
+#endif
+
+#ifndef LE_ENABLE_ANALOG
+#define LE_ENABLE_ANALOG        1       /* Set to 1 to enable analog inputs (%AIN) */
+#endif
+
+#if LE_ENABLE_ANALOG
 #ifndef LE_MAX_ANALOG_IN
 #define LE_MAX_ANALOG_IN        16      /* Up to 16 Analog Inputs (ADC channels) */
 #endif
-
-/* ========================================================================== */
-/* Optional Protection & Control Relay Configuration                          */
-/* ========================================================================== */
-#ifndef LE_ENABLE_PROTECTION
-#define LE_ENABLE_PROTECTION    1       /* Set to 1 to enable P&C relay opcodes */
 #endif
 
-#if LE_ENABLE_PROTECTION
+#ifndef LE_MAX_ALIASES
+#define LE_MAX_ALIASES          32      /* Up to 32 user-declared register aliases (+ board aliases) */
+#endif
+
+#if LE_ENABLE_COMPLEX
 #ifndef LE_MAX_COMPLEX
 #define LE_MAX_COMPLEX          64      /* Up to 64 complex registers (%C, real+imag pairs) */
 #endif
+#endif
+
+#if LE_ENABLE_PROTECTION
 #ifndef LE_MAX_SAMPLES_PER_CYCLE
 #define LE_MAX_SAMPLES_PER_CYCLE 32     /* Samples per cycle buffer inside one phasor state */
 #endif
@@ -103,7 +125,16 @@ extern "C" {
 /* ========================================================================== */
 
 #define LE_BIN_MAGIC            0x4C454231  /* ASCII "LEB1" */
-#define LE_BIN_VERSION          5
+#define LE_BIN_VERSION          6
+
+/* Alias table limits: an alias name is at most 7 characters (LE_ALIAS_NAME_MAX),
+ * matching le_alias_t::name. Runtime pulse slots bound concurrent aliased pulses. */
+#ifndef LE_ALIAS_NAME_MAX
+#define LE_ALIAS_NAME_MAX       7
+#endif
+#ifndef LE_MAX_PULSES
+#define LE_MAX_PULSES           8
+#endif
 
 /* Program Header Flags */
 #define LE_FLAG_AUTOSTART       (1U << 0)
@@ -112,14 +143,14 @@ extern "C" {
 /* ========================================================================== */
 /* Memory Address Encoding (16-bit)                                           */
 /* Bits 15..12 encode the region type:                                       */
-/*   0x0000 - 0x0FFF : Digital Inputs                                        */
-/*   0x1000 - 0x1FFF : Digital Outputs                                       */
-/*   0x2000 - 0x3FFF : Boolean Registers                                     */
-/*   0x4000 - 0x7FFF : Float Registers                                       */
+/*   0x0000 - 0x0FFF : Digital Inputs  (%IN)                                  */
+/*   0x1000 - 0x1FFF : Digital Outputs (%OUT)                                 */
+/*   0x2000 - 0x3FFF : Bool Registers  (%B)                                   */
+/*   0x4000 - 0x7FFF : Float Registers (%F)                                   */
 /*   0x8000 - 0x8FFF : Timer Status / Output Bits                            */
 /*   0x9000 - 0x9FFF : Counter Status / Output Bits                          */
-/*   0xA000 - 0xAFFF : Integer Registers                                     */
-/*   0xB000 - 0xBFFF : Analog Inputs                                         */
+/*   0xA000 - 0xAFFF : Integer Registers (%I)                                */
+/*   0xB000 - 0xBFFF : Analog Inputs    (%AIN)                               */
 /*   0xC000 - 0xFFFF : Constants / Literals                                  */
 /* ========================================================================== */
 
@@ -139,7 +170,7 @@ extern "C" {
 #define LE_REGION_INT_REG       0xA000
 #define LE_REGION_AIN           0xB000
 #define LE_REGION_CONST         0xC000
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 #define LE_REGION_CMPLX         0xD000   /* Complex registers (%C): 12-bit index, real+imag pair each */
 #endif
 
@@ -148,7 +179,7 @@ extern "C" {
 #define LE_CONST_TRUE           0xC001
 #define LE_CONST_ZERO_F         0xC002
 #define LE_CONST_ONE_F          0xC003
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 #define LE_CONST_ZERO_C         0xC004   /* Complex zero (0+0j) */
 #endif
 #define LE_ADDR_UNUSED          0xFFFF
@@ -162,7 +193,7 @@ extern "C" {
 #define LE_ADDR_MAKE_TIMER(idx)    ((uint16_t)(LE_REGION_TIMER | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_COUNTER(idx)  ((uint16_t)(LE_REGION_COUNTER | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_AIN(idx)      ((uint16_t)(LE_REGION_AIN | ((idx) & LE_ADDR_INDEX_MASK)))
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 #define LE_ADDR_MAKE_CMPLX(idx)    ((uint16_t)(LE_REGION_CMPLX | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_CMPLX_PAIR(idx) ((uint16_t)(LE_REGION_CMPLX | (((idx) & 0x0FFE))))  /* even index */
 #endif
@@ -211,7 +242,7 @@ typedef enum {
     LE_OP_SCALE_F           = 0x4A,  /* linear scaling */
 
     /* 0x4B - 0x4E: Complex Arithmetic (T_CMPLX operands) */
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
     LE_OP_CADD_F            = 0x4B,  /* out_c = in_a_c + in_b_c  (complex add) */
     LE_OP_CSUB_F            = 0x4C,  /* out_c = in_a_c - in_b_c  (complex sub) */
     LE_OP_CMUL_F            = 0x4D,  /* out_c = in_a_c * in_b_c  (complex mul) */
@@ -387,7 +418,8 @@ typedef struct {
     uint16_t block_count;       /**< Number of variable-arity block descriptors in the payload. */
     uint16_t state_desc_count;  /**< Number of state-group records (kinds present) in the payload. */
     uint32_t state_img_len;     /**< Bytes of the preconfigured state image (copied to RAM at load). */
-    uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + state image). */
+    uint16_t alias_count;       /**< Number of user-declared register aliases (le_alias_t entries) appended after the state image. */
+    uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + state image + aliases). */
 } le_header_t;
 
 /**
@@ -423,11 +455,39 @@ typedef struct {
 /** @brief Bytes of a descriptor header (excludes the variable arg array). */
 #define LE_BLOCK_DESC_HEADER_BYTES 4
 
+/**
+ * @brief A single user-declared register alias.
+ *
+ * Maps a short (<= LE_ALIAS_NAME_MAX) symbolic name to a process-image
+ * address. Compiled circuits may declare an `aliases` object; each entry pairs
+ * a name with a register target (`%B`, `%F`, `%I`, `%C`, `%IN`, `%OUT`,
+ * `%AIN`, ...). The table is appended after the state image. The runtime/host
+ * queries it (le_alias_lookup) to override, pulse, and target registers by
+ * name instead of a raw address.
+ */
+typedef struct {
+    char     name[LE_ALIAS_NAME_MAX]; /* Alias, left-aligned, NUL-terminated (max 7 chars). */
+    uint8_t  kind;                    /* Reserved; 0 = generic/writable register. */
+    uint8_t  pad;                     /* Reserved (0). */
+    uint16_t addr;                    /* Process-image address the alias resolves to. */
+} le_alias_t;                         /* 11 bytes, packed */
+
+/** @brief Bytes of one alias table entry. */
+#define LE_ALIAS_BYTES              (LE_ALIAS_NAME_MAX + 1 + 1 + 2)
+
 #pragma pack(pop)
 
-/* ========================================================================== */
-/* State structures for stateful runtime elements                             */
-/*                                                                           */
+/**
+ * @brief A single runtime pulse slot used to implement alias/register pulse
+ * commands. A pulse sets a writable register to its active (non-zero) state,
+ * then clears it to zero once `now_ms` reaches @p clear_after_ms.
+ */
+typedef struct {
+    uint16_t addr;              /**< Process-image address being pulsed. */
+    bool     active;            /**< Set while the pulse slot is in use. */
+    uint32_t duration_ms;       /**< Requested pulse duration in milliseconds. */
+    uint32_t clear_after_ms;    /**< Absolute VM timestamp when the pulse clears (0 = not yet anchored to a scan). */
+} le_pulse_t;
 /* These are laid out 1-byte-aligned (`#pragma pack`) so their in-memory     */
 /* byte layout is identical between the host compiler (which bakes a          */
 /* preconfigured state image into the .lebin) and the target MCU compiler     */
@@ -787,7 +847,8 @@ typedef enum {
     LE_ERR_CRC_MISMATCH     = -4,  /**< CRC32 checksum validation failed. */
     LE_ERR_CAPACITY         = -5,  /**< Required resources exceed target capacity limits. */
     LE_ERR_OUT_OF_BOUNDS    = -6,  /**< Index or address exceeds allocated bounds. */
-    LE_ERR_UNKNOWN_OPCODE   = -7   /**< Instruction contains an unrecognized opcode. */
+    LE_ERR_UNKNOWN_OPCODE   = -7,  /**< Instruction contains an unrecognized opcode. */
+    LE_ERR_NOT_FOUND        = -8   /**< Named alias/register not found. */
 } le_status_t;
 
 #ifdef __cplusplus

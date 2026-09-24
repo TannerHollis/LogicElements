@@ -20,33 +20,35 @@ std::string format_address(uint16_t addr, int user_bool_count, int user_float_co
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
 
-    if (region == LE_REGION_DIN) return "DIN[" + std::to_string(idx) + "]";
-    if (region == LE_REGION_DOUT) return "DOUT[" + std::to_string(idx) + "]";
+    if (region == LE_REGION_DIN) return "%IN[" + std::to_string(idx) + "]";
+    if (region == LE_REGION_DOUT) return "%OUT[" + std::to_string(idx) + "]";
     if (region == LE_REGION_BOOL_REG) {
         int b_idx = addr & 0x1FFF;
         if (user_bool_count >= 0 && b_idx >= user_bool_count) {
-            return "T_BOOL[" + std::to_string(b_idx - user_bool_count) + "]";
+            return "T_B[" + std::to_string(b_idx - user_bool_count) + "]";
         }
-        return "BOOL[" + std::to_string(b_idx) + "]";
+        return "%B[" + std::to_string(b_idx) + "]";
     }
     if (region == LE_REGION_FLOAT || region == LE_REGION_FLOAT_EXT1 ||
         region == LE_REGION_FLOAT_EXT2 || region == LE_REGION_FLOAT_EXT3) {
         int f_idx = addr & 0x3FFF;
         if (user_float_count >= 0 && f_idx >= user_float_count) {
-            return "T_FLOAT[" + std::to_string(f_idx - user_float_count) + "]";
+            return "T_F[" + std::to_string(f_idx - user_float_count) + "]";
         }
-        return "FLOAT[" + std::to_string(f_idx) + "]";
+        return "%F[" + std::to_string(f_idx) + "]";
     }
     if (region == LE_REGION_TIMER) return "TIMER[" + std::to_string(idx) + "]";
     if (region == LE_REGION_COUNTER) return "COUNTER[" + std::to_string(idx) + "]";
     if (region == LE_REGION_INT_REG) {
         if (user_int_count >= 0 && idx >= static_cast<uint16_t>(user_int_count)) {
-            return "T_INT[" + std::to_string(idx - user_int_count) + "]";
+            return "T_I[" + std::to_string(idx - user_int_count) + "]";
         }
-        return "INT[" + std::to_string(idx) + "]";
+        return "%I[" + std::to_string(idx) + "]";
     }
-    if (region == LE_REGION_AIN) return "AIN[" + std::to_string(idx) + "]";
-    if (region == LE_REGION_CMPLX) return "CMPLX[" + std::to_string(idx) + "]";
+    if (region == LE_REGION_AIN) return "%AIN[" + std::to_string(idx) + "]";
+#if LE_ENABLE_COMPLEX
+    if (region == LE_REGION_CMPLX) return "%C[" + std::to_string(idx) + "]";
+#endif
 
     std::ostringstream ss;
     ss << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << addr;
@@ -89,11 +91,13 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         case LE_OP_MAX_F: return "MAX_F";
         case LE_OP_CLAMP_F: return "CLAMP_F";
         case LE_OP_SCALE_F: return "SCALE_F";
+#if LE_ENABLE_COMPLEX
         case LE_OP_CADD_F: return "CADD_F";
         case LE_OP_CSUB_F: return "CSUB_F";
         case LE_OP_CMUL_F: return "CMUL_F";
         case LE_OP_CDIV_F: return "CDIV_F";
         case LE_OP_MOVE_C: return "MOVE_C";
+#endif
 
         case LE_OP_CMP_GT: return "CMP_GT";
         case LE_OP_CMP_LT: return "CMP_LT";
@@ -543,7 +547,8 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
     out << "I/O Allocation:      DIN:" << h.digital_in_count << "  DOUT:" << h.digital_out_count
         << "  " << bool_summary << "  " << float_summary
         << "  StateGroups:" << h.state_desc_count
-        << "  StateImage:" << h.state_img_len << " bytes\n";
+        << "  StateImage:" << h.state_img_len << " bytes"
+        << "  Aliases:" << h.alias_count << "\n";
 
     out << "Header CRC32:        0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << h.crc32 << "\n";
 
@@ -624,6 +629,25 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
 
     out << "============================================================\n";
     emit_state_section(out, bin_data, bin_len, h);
+    /* User-declared register aliases (appended after the state image). */
+    if (h.alias_count > 0) {
+        size_t bo = sizeof(le_header_t) + (size_t)inst_count * sizeof(le_instruction_t);
+        for (uint16_t b = 0; b < h.block_count; b++) {
+            if (bo + (size_t)LE_BLOCK_DESC_HEADER_BYTES > bin_len) break;
+            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + bo);
+            bo += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                  ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+        }
+        bo += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES + (size_t)h.state_img_len;
+        out << "Register Aliases (" << std::dec << h.alias_count << "):\n";
+        const le_alias_t* ta = (const le_alias_t*)(bin_data + bo);
+        for (uint16_t i = 0; i < h.alias_count; i++) {
+            std::string nm(ta[i].name, LE_ALIAS_NAME_MAX);
+            while (!nm.empty() && (nm.back() == '\0' || nm.back() == ' ')) nm.pop_back();
+            out << "  %" << std::left << std::setw(8) << nm << " -> "
+                << format_address(ta[i].addr, user_bool_count, user_float_count, user_int_count) << "\n";
+        }
+    }
     if (!board_profile_json.empty()) {
         emit_custom_node_section(out, board_profile_json);
     }

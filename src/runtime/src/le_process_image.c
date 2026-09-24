@@ -164,9 +164,11 @@ float le_process_image_get_float(const le_process_image_t* img, uint16_t addr)
     else if (region == LE_REGION_AIN)
     {
         uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+#if LE_ENABLE_ANALOG
         if (idx < LE_MAX_ANALOG_IN) {
             return img->ain[idx];
         }
+#endif
     }
 
     return 0.0f;
@@ -187,10 +189,12 @@ void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float va
     else if (region == LE_REGION_AIN)
     {
         uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+#if LE_ENABLE_ANALOG
         if (idx < LE_MAX_ANALOG_IN) {
             img->ain[idx] = val;
             img->ain_raw[idx] = (int32_t)val;
         }
+#endif
     }
 }
 
@@ -206,9 +210,11 @@ int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
             return img->int_regs[idx];
         }
     } else if (region == LE_REGION_AIN) {
+#if LE_ENABLE_ANALOG
         if (idx < LE_MAX_ANALOG_IN) {
             return img->ain_raw[idx];
         }
+#endif
     } else if (region == LE_REGION_COUNTER) {
         le_counter_state_t* c = le_process_image_counter(img, idx);
         if (c) return c->count;
@@ -228,17 +234,19 @@ void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t va
             img->int_regs[idx] = val;
         }
     } else if (region == LE_REGION_AIN) {
+#if LE_ENABLE_ANALOG
         if (idx < LE_MAX_ANALOG_IN) {
             img->ain_raw[idx] = val;
             img->ain[idx] = (float)val;
         }
+#endif
     } else if (region == LE_REGION_COUNTER) {
         le_counter_state_t* c = le_process_image_counter(img, idx);
         if (c) c->count = val;
     }
 }
 
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 le_complex_t le_process_image_get_complex(const le_process_image_t* img, uint16_t addr)
 {
     if (!img || addr == LE_ADDR_UNUSED) return le_c_make(0.0f, 0.0f);
@@ -265,6 +273,52 @@ void le_process_image_set_complex(le_process_image_t* img, uint16_t addr, le_com
     }
 }
 #endif
+
+/**
+ * @brief Writes an "active" (non-zero) or idle (zero) value to a writable
+ * register based on its address region.
+ *
+ * Bool regions (digital in/out, bool registers) receive the boolean; float and
+ * complex registers receive 1.0 / (1+0j) active and 0 active-idle; integer and
+ * analog-input registers receive 1 / 0. This is the shared funnel used by the
+ * alias/register pulse command so a caller does not need to know the type.
+ *
+ * @param img Pointer to the process image structure.
+ * @param addr Encoded 16-bit process-image address.
+ * @param active True to set the active (non-zero) state, false to clear to zero.
+ */
+void le_process_image_set_active(le_process_image_t* img, uint16_t addr, bool active)
+{
+    if (!img || addr == LE_ADDR_UNUSED) return;
+    uint16_t region = addr & LE_ADDR_REGION_MASK;
+    switch (region)
+    {
+        case LE_REGION_DIN:
+        case LE_REGION_DOUT:
+        case LE_REGION_BOOL_REG:
+        case LE_REGION_BOOL_REG_EXT:
+            le_process_image_set_bool(img, addr, active);
+            break;
+        case LE_REGION_FLOAT:
+        case LE_REGION_FLOAT_EXT1:
+        case LE_REGION_FLOAT_EXT2:
+        case LE_REGION_FLOAT_EXT3:
+            le_process_image_set_float(img, addr, active ? 1.0f : 0.0f);
+            break;
+        case LE_REGION_INT_REG:
+        case LE_REGION_AIN:
+            le_process_image_set_int(img, addr, active ? 1 : 0);
+            break;
+#if LE_ENABLE_COMPLEX
+        case LE_REGION_CMPLX:
+            le_process_image_set_complex(img, addr, le_c_make(active ? 1.0f : 0.0f, 0.0f));
+            break;
+#endif
+        default:
+            break;
+    }
+}
+
 void le_process_image_set_scaler(le_process_image_t* img, uint8_t idx,
                                  float raw_min, float raw_max,
                                  float scale_min, float scale_max,

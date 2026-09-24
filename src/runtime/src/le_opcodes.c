@@ -297,7 +297,7 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
         return LE_OK;
     }
 
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 /* Complex Arithmetic (T_CMPLX operands -> T_CMPLX out) */
     if (op >= LE_OP_CADD_F && op <= LE_OP_MOVE_C)
     {

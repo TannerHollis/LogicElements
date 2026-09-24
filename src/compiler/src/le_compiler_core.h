@@ -93,6 +93,22 @@ public:
                                        const std::vector<std::string>& custom_headers = {},
                                        const std::vector<ScalerInfo>& scalers = {});
 
+    /* ====================================================================== */
+    /* Variable resolution (used by property reads and expression evaluation). */
+    /* ====================================================================== */
+
+    /* Variable tables (populated by build_variables from the circuit JSON). */
+    std::map<std::string, double>  m_var_values;      /* resolved variable values */
+    std::map<std::string, std::string> m_var_exprs;   /* raw indirect definitions */
+    std::map<std::string, int>     m_var_state;       /* 0=unseen 1=in-progress 2=done */
+    std::string m_var_error;                          /* first unresolved/cycle error */
+    /* Evaluate a numeric property: number, "%VAR%", or arithmetic expression. */
+    double prop(const JsonValue& element, const std::string& key, double default_value);
+    /* Populate + resolve the circuit's "variables" table. */
+    int build_variables(const JsonValue& circuit_doc);
+    /* Internal: parse+eval an expression over variables and literals. */
+    static double eval_expr(const std::string& expr, const std::map<std::string,double>& var_values);
+
 private:
     uint16_t allocate_user_bool();
     uint16_t allocate_user_int();

@@ -67,11 +67,12 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
     }
     size_t state_table_off = sizeof(le_header_t) + expected_payload_size + block_table_size;
     size_t state_table_size = (size_t)header->state_desc_count * LE_STATE_DESC_BYTES;
-    if (state_table_off + state_table_size + (size_t)header->state_img_len > size) {
+    size_t alias_bytes = (size_t)header->alias_count * LE_ALIAS_BYTES;
+    if (state_table_off + state_table_size + (size_t)header->state_img_len + alias_bytes > size) {
         return LE_ERR_OUT_OF_BOUNDS;
     }
     size_t total_payload = expected_payload_size + block_table_size + state_table_size +
-                           (size_t)header->state_img_len;
+                           (size_t)header->state_img_len + alias_bytes;
 
     if (size < sizeof(le_header_t) + total_payload) {
         return LE_ERR_OUT_OF_BOUNDS;
@@ -83,7 +84,7 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
         header->digital_out_count > LE_MAX_DIGITAL_OUT ||
         header->bool_reg_count > LE_MAX_BOOL_REGS ||
         header->float_reg_count > LE_MAX_FLOATS ||
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
         header->complex_reg_count > LE_MAX_COMPLEX ||
 #endif
         header->state_img_len > LE_STATE_WORKSPACE_BYTES)
@@ -170,6 +171,13 @@ le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size)
             le_rt_set_kind_base(sd->kind, (int32_t)base);
             base += (uint32_t)sd->size * (uint32_t)sd->count;
         }
+    }
+
+    /* Zero-copy reference to the program alias table (appended after the state image). */
+    le_vm_load_aliases(vm, NULL, 0);
+    if (header.alias_count > 0) {
+        const le_alias_t* al = (const le_alias_t*)(img + header.state_img_len);
+        le_vm_load_aliases(vm, al, header.alias_count);
     }
 
     if (header.flags & LE_FLAG_AUTOSTART) {

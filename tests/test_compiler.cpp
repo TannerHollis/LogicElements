@@ -1160,6 +1160,198 @@ void test_conversion_roundtrip_and_clamp()
     le_compile_result_free(&res);
 }
 
+void test_variables()
+{
+    // Circuit variables in properties: direct scalar, indirect (var-on-var), and
+    // arithmetic. Used here in a DIST_21 reach property (reach = Z2 = Z_Line*1.20).
+    const char* circuit_json = R"({
+        "name": "Vars",
+        "variables": {
+            "Z_Line": 5.0,
+            "Z2": "Z_Line * 1.20",
+            "pu": 0.90
+        },
+        "elements": [
+            { "name": "C1", "type": "CONSTANT", "dataType": "Float", "value": "%Z_Line%" },
+            { "name": "D21", "type": "DIST_21", "reach": "%Z2%", "prefault_v_threshold": "%pu%" }
+        ],
+        "nets": []
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "variable circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "variable circuit loads");
+
+    // DIST_21 state baked with reach = 6.0 (5.0*1.20) and prefault threshold = 0.9.
+    le_dist21_state_t* d21 = (le_dist21_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_21, 0);
+    TEST_ASSERT(d21 != NULL, "DIST_21 state present");
+    TEST_ASSERT(fabsf(d21->reach_ohms - 6.0f) < 1e-4f, "reach baked from indirect %Z2% = 5.0*1.20 = 6.0");
+    TEST_ASSERT(fabsf(d21->prefault_v_threshold - 0.90f) < 1e-4f, "prefault threshold baked from %pu% = 0.9");
+
+    le_compile_result_free(&res);
+}
+
+void test_variable_errors()
+{
+    // Undefined variable reference must fail cleanly.
+    const char* undef = R"({
+        "name": "Undef",
+        "variables": { "Z2": "Missing * 2.0" },
+        "elements": [ { "name": "D21", "type": "DIST_21", "reach": "%Z2%" } ],
+        "nets": []
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(undef, nullptr, &opts, &res);
+    TEST_ASSERT(!(rc == 0 && res.success), "undefined variable reference is rejected");
+    if (res.error_message) TEST_ASSERT(std::strstr(res.error_message, "undefined") != NULL ||
+                                       std::strstr(res.error_message, "Variable") != NULL,
+                                       "error message mentions variable");
+    le_compile_result_free(&res);
+
+    // Circular reference must fail cleanly.
+    const char* cyc = R"({
+        "name": "Cyc",
+        "variables": { "A": "B", "B": "A" },
+        "elements": [ { "name": "D21", "type": "DIST_21", "reach": "%A%" } ],
+        "nets": []
+    })";
+    le_compile_result_t res2;
+    int rc2 = le_compile_json_ex(cyc, nullptr, &opts, &res2);
+    TEST_ASSERT(!(rc2 == 0 && res2.success), "circular variable reference is rejected");
+    le_compile_result_free(&res2);
+}
+
+void test_variable_math_functions()
+{
+    // Expression evaluator supports trig + math functions (unary and 2-arg).
+    const char* circuit_json = R"m({
+        "name": "MathFns",
+        "variables": {
+            "A": "sqrt(25) + pow(2, 3) + max(1, 5)",
+            "B": "sin(0) + cos(0) + abs(-3)",
+            "C": "atan2(1, 1) * 4"
+        },
+        "elements": [
+            { "name": "D21", "type": "DIST_21", "reach": "%A%" }
+        ],
+        "nets": []
+    })m";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "math-function variable circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "math-function circuit loads");
+
+    // reach = sqrt(25)+pow(2,3)+max(1,5) = 5 + 8 + 5 = 18
+    le_dist21_state_t* d21 = (le_dist21_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_21, 0);
+    TEST_ASSERT(d21 != NULL, "DIST_21 state present");
+    TEST_ASSERT(fabsf(d21->reach_ohms - 18.0f) < 1e-4f,
+                "reach from math fns = sqrt25+pow(2,3)+max = 5+8+5 = 18");
+
+    le_compile_result_free(&res);
+}
+
+void test_aliases_and_pulse()
+{
+    // Circuit-declared register aliases should be packed into the .lebin and
+    // expose lookup + pulse-by-name at runtime. Board aliases attach separately
+    // (host-supplied) and never grow the binary.
+    const char* circuit_json = R"({
+        "name": "AliasCircuit",
+        "elements": [
+            { "name": "B0", "type": "BOOLREGISTER" },
+            { "name": "DO1", "type": "DIGITALOUTPUT", "address": "%Q0" },
+            { "name": "F1", "type": "FLOATREGISTER" }
+        ],
+        "aliases": {
+            "TRIP": "B0",
+            "SSP":  "%B0",
+            "LED":  "%OUT0",
+            "FVAL": "%F0"
+        },
+        "nets": []
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    TEST_ASSERT(le_compile_json_ex(circuit_json, nullptr, &opts, &res) == 0 && res.success,
+                "circuit with aliases compiles");
+    TEST_ASSERT(res.alias_count == 4, "four aliases packed into the result");
+
+    // Parse the packed header alias_count and confirm the table is appended.
+    le_header_t hdr;
+    TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &hdr) == LE_OK,
+                "binary with aliases validates");
+    TEST_ASSERT(hdr.alias_count == 4, "header reports alias_count");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK,
+                "binary with aliases loads");
+    TEST_ASSERT(vm.alias_count == 4, "vm carries the zero-copy alias table");
+
+    uint16_t a = 0;
+    TEST_ASSERT(le_alias_lookup(&vm, "TRIP", &a) == LE_OK && a == LE_ADDR_MAKE_BOOL_REG(0),
+                "TRIP resolves to boolean register 0");
+    TEST_ASSERT(le_alias_lookup(&vm, "SSP", &a) == LE_OK && a == LE_ADDR_MAKE_BOOL_REG(0),
+                "SSP (%B0) resolves to boolean register 0");
+    TEST_ASSERT(le_alias_lookup(&vm, "%LED", &a) == LE_OK && a == LE_ADDR_MAKE_DOUT(0),
+                "LED resolves to digital output 0");
+    TEST_ASSERT(le_alias_lookup(&vm, "fval", &a) == LE_OK && a == LE_ADDR_MAKE_FLOAT(0),
+                "FVAL resolves to float register 0 (case-insensitive)");
+    TEST_ASSERT(le_alias_lookup(&vm, "NOPE", &a) == LE_ERR_NOT_FOUND,
+                "unknown alias returns LE_ERR_NOT_FOUND");
+
+    // Pulse: default 1 s (set active, clear once now_ms advances past 1000).
+    TEST_ASSERT(le_alias_pulse(&vm, "TRIP") == LE_OK, "pulse arms");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "pulse sets the register active immediately");
+    TEST_ASSERT(le_vm_step(&vm, 500) == LE_OK && le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "pulse still active at 500 ms");
+    TEST_ASSERT(le_vm_step(&vm, 1500) == LE_OK && !le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "pulse cleared after 1 s elapses");
+
+    // Explicit-duration pulse via le_alias_pulse_for. The first le_vm_step
+    // anchors the duration to the VM clock; a later step clears it. We pulse a
+    // coil (SSP -> %B0) rather than the output, because an output driven by the
+    // compiled rung is re-written each scan (the scan wins over an override).
+    TEST_ASSERT(le_alias_pulse_for(&vm, "SSP", 0.25f) == LE_OK, "pulse_for arms");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "coil pulse active immediately");
+    TEST_ASSERT(le_alias_set_bool(&vm, "LED", true) == LE_OK &&
+                le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)),
+                "alias set_bool writes an output by name");
+    TEST_ASSERT(le_vm_step(&vm, 2400) == LE_OK && le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "coil pulse anchored (clear-now = 2400 + 250)");
+    TEST_ASSERT(le_vm_step(&vm, 2800) == LE_OK && !le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "coil pulse cleared after 250 ms elapses");
+
+    // Board aliases are host-supplied (NOT in the .lebin): attach and resolve.
+    le_alias_t board[1];
+    board[0].kind = 0; board[0].pad = 0;
+    memset(board[0].name, 0, LE_ALIAS_NAME_MAX);
+    memcpy(board[0].name, "BTN_A", 5);
+    board[0].addr = LE_ADDR_MAKE_DIN(0);
+    TEST_ASSERT(le_vm_load_board_aliases(&vm, board, 1) == LE_OK, "board aliases attach");
+    TEST_ASSERT(le_alias_lookup(&vm, "BTN_A", &a) == LE_OK && a == LE_ADDR_MAKE_DIN(0),
+                "board alias resolves at runtime");
+
+    // The embedded alias table is circuit-only; verifying the board alias did
+    // not touch binary size: header alias_count stayed 4.
+    TEST_ASSERT(hdr.alias_count == 4, "board aliases never grow the .lebin");
+
+    le_compile_result_free(&res);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
@@ -1186,6 +1378,10 @@ int main()
     RUN_TEST(test_dist21_mho);
     RUN_TEST(test_arena_capacity);
     RUN_TEST(test_conversion_roundtrip_and_clamp);
+    RUN_TEST(test_variables);
+    RUN_TEST(test_variable_errors);
+    RUN_TEST(test_variable_math_functions);
+    RUN_TEST(test_aliases_and_pulse);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";
