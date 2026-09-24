@@ -1063,14 +1063,6 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         block_calls.push_back(bc);
     };
 
-    /* Resolve a named source element into its process image address (or a
-     * constant default when the port is unconnected). */
-    auto block_src_addr = [&](const std::string& src, uint16_t default_addr) -> uint16_t {
-        if (src.empty()) return default_addr;
-        auto it = element_outputs.find(src);
-        if (it != element_outputs.end()) return it->second;
-        return default_addr;
-    };
 
     /* source output port observed by a given consumer input port */
     auto source_port_of = [&](const std::string& src_elem, const std::string& consumer_port) -> std::string {
@@ -1459,8 +1451,14 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             return (it != element_outputs.end()) ? it->second : default_addr;
         };
 
-        /* source output port observed by a given consumer input port */
-        /* (source_port_of / src_address are shared lambdas defined above the loop) */
+        /* Resolve a named source element into its process image address, respecting
+         * the exact output port connected to this consumer input. */
+        auto block_src_addr = [&](const std::string& src, uint16_t default_addr) -> uint16_t {
+            if (src.empty()) return default_addr;
+            std::string cport = !used_keys.empty() ? used_keys.back() : "";
+            std::string sport = source_port_of(name, cport);
+            return src_address(src, sport, default_addr);
+        };
 
         /* ------------------------------------------------------------------ */
         /* Variable-arity block calls (MUX, custom nodes).                     */
@@ -1468,11 +1466,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         /* ------------------------------------------------------------------ */
         if (opcode == LE_OP_MUX) {
             std::string sel_src = find_port({"sel", "select", "selector", "s", "in_sel"});
-            std::string in0_src = find_port({"in0", "input_0", "a", "in_a"});
-            std::string in1_src = find_port({"in1", "input_1", "b", "in_b"});
-
             uint16_t sel = block_src_addr(sel_src, LE_CONST_FALSE);
+            std::string in0_src = find_port({"in0", "input_0", "a", "in_a"});
             uint16_t in0 = block_src_addr(in0_src, LE_CONST_FALSE);
+            std::string in1_src = find_port({"in1", "input_1", "b", "in_b"});
             uint16_t in1 = block_src_addr(in1_src, LE_CONST_FALSE);
 
             consume_input(sel_src);
@@ -1572,7 +1569,12 @@ if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type ==
             for (int k = 0; k < 3; k++) {
                 int t = -1;
                 uint16_t o = acquire_temp_complex(t);
-                element_outputs_port[name][(k == 0) ? "a" : (k == 1) ? "b" : "c"] = o;
+                std::string s = (k == 0) ? "a" : (k == 1) ? "b" : "c";
+                element_outputs_port[name][s] = o;
+                element_outputs_port[name]["p" + s] = o;
+                element_outputs_port[name]["phase_" + s] = o;
+                element_outputs_port[name]["i" + s] = o;
+                element_outputs_port[name]["out_" + s] = o;
                 if (k == 0) {
                     node_temp_idx[name] = t;
                     node_temp_type[name] = TempType::Complex;
@@ -1919,8 +1921,12 @@ if (type == "PHASOR_3P" || type == "LE_PHASOR_3P") {
                     node_temp_type[name] = TempType::Complex;
                     element_outputs[name] = o;
                 }
-                element_outputs_port[name]["phasor_" + std::string(out_names[k])] = o;
-                element_outputs_port[name][out_names[k]] = o;
+                std::string s(out_names[k]);
+                element_outputs_port[name]["phasor_" + s] = o;
+                element_outputs_port[name][s] = o;
+                element_outputs_port[name]["p" + s] = o;
+                element_outputs_port[name]["phase_" + s] = o;
+                element_outputs_port[name]["out_" + s] = o;
                 element_outputs_port[name]["out"] = o;
                 args.push_back(o);
             }
