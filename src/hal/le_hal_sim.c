@@ -129,13 +129,45 @@ static size_t sim_uart_read(uint8_t* buf, size_t max_len)
     return 0;
 }
 
+/* Test-bench TX capture: every byte written by the firmware (comms/CLI
+ * responses) is appended here so tests can assert ACK/NACK and prompts. */
+#define SIM_TX_CAPTURE_MAX    2048
+static uint8_t  s_sim_tx[2048] = {0};
+static size_t   s_sim_tx_len = 0;
+
 static size_t sim_uart_write(const uint8_t* buf, size_t len)
 {
     if (buf && len > 0) {
         fwrite(buf, 1, len, stdout);
         fflush(stdout);
+        size_t room = (size_t)SIM_TX_CAPTURE_MAX - s_sim_tx_len;
+        size_t n = (len < room) ? len : room;
+        if (n > 0) {
+            memcpy(s_sim_tx + s_sim_tx_len, buf, n);
+            s_sim_tx_len += n;
+        }
     }
     return len;
+}
+
+/** @brief Clears the sim TX capture buffer (call before a command under test). */
+void le_sim_capture_tx_reset(void)
+{
+    s_sim_tx_len = 0;
+}
+
+/** @brief Returns the number of captured TX bytes. */
+size_t le_sim_capture_tx_len(void)
+{
+    return s_sim_tx_len;
+}
+
+/** @brief Copies captured TX bytes into @p out (up to @p cap). */
+void le_sim_capture_tx_get(uint8_t* out, size_t cap)
+{
+    if (!out || cap == 0) return;
+    size_t n = (s_sim_tx_len < cap) ? s_sim_tx_len : cap;
+    memcpy(out, s_sim_tx, n);
 }
 
 static bool sim_storage_read(uint32_t offset, uint8_t* buf, size_t len)

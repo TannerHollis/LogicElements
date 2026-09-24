@@ -109,10 +109,6 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         #if LE_ENABLE_PROTECTION
         case LE_OP_PID: return "PID";
         case LE_OP_OVERCURRENT: return "OVERCURRENT_51";
-        case LE_OP_RECT2POLAR: return "RECT2POLAR";
-        case LE_OP_POLAR2RECT: return "POLAR2RECT";
-        case LE_OP_PHASOR_SHIFT: return "PHASOR_SHIFT";
-        case LE_OP_PHASOR_1P: return "PHASOR_1P";
         case LE_OP_SYM_COMP: return "SYM_COMP";
         case LE_OP_DIST_21: return "DIST_21";
 #endif

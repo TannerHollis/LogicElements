@@ -42,31 +42,60 @@ extern "C" {
 /* ========================================================================== */
 /* Optional Capability Switches                                               */
 /* A board designer can reduce the runtime down toward boolean-only by setting */
-/* the unwanted subsystems' switches to 0; each guarded block then contributes */
-/* no state, opcodes, or registers. LE_ENABLE_PROTECTION only gates the        */
-/* protection & control relays; complex arithmetic and analog inputs are gated */
-/* independently by LE_ENABLE_COMPLEX and LE_ENABLE_ANALOG.                    */
+/* every subsystem switch to 0; each guarded block then contributes no state,  */
+/* opcodes, or registers.                                                      */
+/*                                                                             */
+/* Dependencies are AUTOMATICALLY satisfied - a subsystem cannot be built      */
+/* without its prerequisites, so enabling a higher layer forces its lower      */
+/* layers ON:                                                                  */
+/*     LE_ENABLE_PROTECTION  =>  LE_ENABLE_COMPLEX  =>  LE_ENABLE_ANALOG       */
+/*     LE_ENABLE_DSP         =>  LE_ENABLE_ANALOG                              */
+/* Complex phasors / %C registers require analog channels to acquire their     */
+/* signals; protection relays operate on phasors; DSP filters mix sampled      */
+/* (analog) channels. Prerequisites are forced ON by the higher layer's own    */
+/* switch - the higher-layer switch is the master control.                     */
 /* ========================================================================== */
 #ifndef LE_ENABLE_PROTECTION
-#define LE_ENABLE_PROTECTION    1       /* Set to 1 to enable P&C relay opcodes (requires complex) */
+#define LE_ENABLE_PROTECTION    1       /* P&C relay opcodes (OVERCURRENT, PID, PHASOR_1P, SYM_COMP, DIST_21, DIFF_87, PHASE_COMP) */
 #endif
 
 #ifndef LE_ENABLE_COMPLEX
-#define LE_ENABLE_COMPLEX       1       /* Set to 1 to enable complex arithmetic & %C registers */
+#define LE_ENABLE_COMPLEX       1       /* Complex arithmetic, %C registers & conversions */
 #endif
 
 #ifndef LE_ENABLE_ANALOG
-#define LE_ENABLE_ANALOG        1       /* Set to 1 to enable analog inputs (%AIN) */
+#define LE_ENABLE_ANALOG        1       /* Analog input channels (%AIN) and scaling */
 #endif
 
+#ifndef LE_ENABLE_SERIAL_BUS
+#define LE_ENABLE_SERIAL_BUS    1       /* I2C and SPI bus opcodes */
+#endif
+
+#ifndef LE_ENABLE_DSP
+#define LE_ENABLE_DSP           1       /* DSP and filter opcodes */
+#endif
+
+/* ---- Prerequisite implication: lower layers are forced ON ---------------- */
+#if LE_ENABLE_PROTECTION
+#undef  LE_ENABLE_COMPLEX
+#define LE_ENABLE_COMPLEX       1       /* protection runs on phasors -> complex must compile */
+#endif
+#if LE_ENABLE_COMPLEX
+#undef  LE_ENABLE_ANALOG
+#define LE_ENABLE_ANALOG        1       /* complex phasors need analog acquisition -> analog must compile */
+#endif
+#if LE_ENABLE_DSP
+#undef  LE_ENABLE_ANALOG
+#define LE_ENABLE_ANALOG        1       /* DSP filters mix sampled channels -> analog must compile */
+#endif
+
+/* ========================================================================== */
+/* Subsystem capacity limits (only defined when the subsystem is enabled)      */
+/* ========================================================================== */
 #if LE_ENABLE_ANALOG
 #ifndef LE_MAX_ANALOG_IN
 #define LE_MAX_ANALOG_IN        16      /* Up to 16 Analog Inputs (ADC channels) */
 #endif
-#endif
-
-#ifndef LE_MAX_ALIASES
-#define LE_MAX_ALIASES          32      /* Up to 32 user-declared register aliases (+ board aliases) */
 #endif
 
 #if LE_ENABLE_COMPLEX
@@ -81,24 +110,14 @@ extern "C" {
 #endif
 #endif
 
-/* ========================================================================== */
-/* Optional Serial Bus (I2C / SPI) Device Configuration                       */
-/* ========================================================================== */
-#ifndef LE_ENABLE_SERIAL_BUS
-#define LE_ENABLE_SERIAL_BUS    1       /* Set to 1 to enable I2C and SPI bus opcodes */
+#ifndef LE_MAX_ALIASES
+#define LE_MAX_ALIASES          32      /* Up to 32 user-declared register aliases (+ board aliases) */
 #endif
 
 #if LE_ENABLE_SERIAL_BUS
 /* No static device-count limits: serial-bus device state is baked into the
  * preconfigured state image and copied into the state workspace at load,
  * bounded only by LE_RAM_WORKSPACE_BYTES. */
-#endif
-
-/* ========================================================================== */
-/* Optional Digital Signal Processing (DSP) & Filters Configuration           */
-/* ========================================================================== */
-#ifndef LE_ENABLE_DSP
-#define LE_ENABLE_DSP           1       /* Set to 1 to enable DSP and filter opcodes */
 #endif
 
 #if LE_ENABLE_DSP
@@ -258,20 +277,20 @@ typedef enum {
     LE_OP_CMP_EQ            = 0x64,  /* out_bool = in_a_f == in_b_f */
     LE_OP_CMP_NE            = 0x65,  /* out_bool = in_a_f != in_b_f */
 
-    /* 0x70 - 0x8F: Control, Protection & Conversions */
+    /* 0x70 - 0x73: Protection & control relays (phasors run on complex registers,
+     * but phasor EXTRACTION and conversion are variable-arity BLOCK builtins —
+     * see LE_FUNC_PHASOR_1P / LE_FUNC_RECT2POLAR, etc.) */
 #if LE_ENABLE_PROTECTION
     LE_OP_PID               = 0x70,  /* Closed-loop PID Controller */
     LE_OP_OVERCURRENT       = 0x71,  /* IEC/IEEE Inverse-Time Overcurrent */
-    LE_OP_RECT2POLAR        = 0x72,  /* (x, y) -> (mag, angle) */
-    LE_OP_POLAR2RECT        = 0x73,  /* (mag, angle) -> (x, y) */
-    LE_OP_PHASOR_SHIFT      = 0x74,  /* Shift angle by delta */
-    LE_OP_PHASOR_1P         = 0x75,  /* 1-Phase Winding Phasor Extraction (DFT / Cosine Filter) */
-    LE_OP_SYM_COMP          = 0x76,  /* 3-Phase Symmetrical Components (Seq 0, 1, 2) */
-    LE_OP_DIST_21           = 0x78,  /* Mho Distance Relay Zone */
+    LE_OP_SYM_COMP          = 0x72,  /* 3-Phase Symmetrical Components (Seq 0, 1, 2) */
+    LE_OP_DIST_21           = 0x73,  /* Mho Distance Relay Zone */
 #endif
+
+    /* 0x74 - 0x75: Serial bus */
 #if LE_ENABLE_SERIAL_BUS
-    LE_OP_I2C               = 0x79,  /* I2C Master Transaction Block */
-    LE_OP_SPI               = 0x7A,  /* SPI Master Transaction Block */
+    LE_OP_I2C               = 0x74,  /* I2C Master Transaction Block */
+    LE_OP_SPI               = 0x75,  /* SPI Master Transaction Block */
 #endif
 
     /* 0x80 - 0x8F: Board custom nodes and external hardware functions */
@@ -383,21 +402,24 @@ typedef struct {
 /* ========================================================================== */
 #define LE_FUNC_NONE             0x00
 #define LE_FUNC_MUX_SELECT       0x01   /* [sel, in0, in1] -> [out]: out = args[2] ? args[1] : args[0] */
-#if LE_ENABLE_PROTECTION
+#if LE_ENABLE_COMPLEX
 #define LE_FUNC_RECT2POLAR       0x02   /* [real, imag] -> [mag, angle_rad] */
 #define LE_FUNC_POLAR2RECT       0x03   /* [mag, angle_rad] -> [real, imag] */
 #define LE_FUNC_PHASOR_SHIFT     0x04   /* [real, imag, delta_rad] -> [real', imag']: CCW rotation by delta */
-#define LE_FUNC_PHASOR_1P        0x05   /* [sample, sync_cplx] -> [cplx]: synced phasor extractor */
-#define LE_FUNC_COMPLEX2POLAR    0x06   /* [cplx] -> [mag, angle_rad] */
-#define LE_FUNC_COMPLEX2RECT     0x07   /* [cplx] -> [real, imag] (complex register to rectangular floats) */
-#define LE_FUNC_COMPLEX_MUL      0x08   /* [c_a, c_b] -> [c_out] */
-#define LE_FUNC_DIFF_87          0x09   /* [cph0..cphN-1] -> [bool]: N-input dual-slope differential (ANSI 87) */
-#define LE_FUNC_DIST_21          0x0A   /* [v_c, i_c, offset_on] -> [bool]: mho distance (21) with prefault V memory */
-#define LE_FUNC_RECT2COMPLEX     0x0B   /* [real, imag] -> [cplx] */
-#define LE_FUNC_POLAR2COMPLEX    0x0C   /* [mag, angle_rad] -> [cplx] */
+#define LE_FUNC_COMPLEX2POLAR    0x05   /* [cplx] -> [mag, angle_rad] */
+#define LE_FUNC_COMPLEX2RECT     0x06   /* [cplx] -> [real, imag] (complex register to rectangular floats) */
+#define LE_FUNC_RECT2COMPLEX     0x07   /* [real, imag] -> [cplx] */
+#define LE_FUNC_POLAR2COMPLEX    0x08   /* [mag, angle_rad] -> [cplx] */
+#define LE_FUNC_COMPLEX_MUL      0x09   /* [c_a, c_b] -> [c_out] */
 #endif
-#define LE_FUNC_CLAMP_F          0x0D   /* [value, min, max] -> [out]: clamp value to [min, max] */
+
+/* 0x0A: stateless float utility */
+#define LE_FUNC_CLAMP_F          0x0A   /* [value, min, max] -> [out]: clamp value to [min, max] */
+
 #if LE_ENABLE_PROTECTION
+#define LE_FUNC_PHASOR_1P        0x0B   /* [sample, sync_cplx] -> [cplx]: synced phasor extractor */
+#define LE_FUNC_DIFF_87          0x0C   /* [cph0..cphN-1] -> [bool]: N-input dual-slope differential (ANSI 87) */
+#define LE_FUNC_DIST_21          0x0D   /* [v_c, i_c, offset_on] -> [bool]: mho distance (21) with prefault V memory */
 #define LE_FUNC_PHASE_COMP       0x0E   /* [c_a, c_b, c_c] -> [c_a', c_b', c_c']: 3p transformer phase-shift compensation (ANSI 87T) */
 #endif
 #define LE_FUNC_CUSTOM_BASE      0x80   /* func_id >= this dispatches to the HAL ext_call. */

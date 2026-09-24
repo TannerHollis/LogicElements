@@ -1264,10 +1264,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") { opcode = LE_OP_CSUB_F; is_complex_op = true; }
         else if (type == "CMUL" || type == "LE_CMUL" || type == "C_MUL") { opcode = LE_OP_CMUL_F; is_complex_op = true; }
         else if (type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") { opcode = LE_OP_CDIV_F; is_complex_op = true; }
-        else if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
-        else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
-        else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
-        else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
+        else if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") { opcode = LE_OP_BLOCK; is_float_op = true; }
         else if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF") { opcode = LE_OP_EXT_CALL; uses_protection = true;
             if (state_descs.find(LE_BLK_DIFF_87) == state_descs.end()) state_descs[LE_BLK_DIFF_87] = 1; }
         else if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" || type == "LE_TRANSFORM_33") { opcode = LE_OP_BLOCK; uses_protection = true;
@@ -1282,10 +1282,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             if (state_descs.find(LE_BLK_PID) == state_descs.end()) state_descs[LE_BLK_PID] = 1; }
         else if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") { opcode = LE_OP_OVERCURRENT; uses_protection = true;
             if (state_descs.find(LE_BLK_OVERCURRENT) == state_descs.end()) state_descs[LE_BLK_OVERCURRENT] = 1; }
-        else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") { opcode = LE_OP_RECT2POLAR; is_float_op = true; }
-        else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") { opcode = LE_OP_POLAR2RECT; is_float_op = true; }
-        else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") { opcode = LE_OP_PHASOR_SHIFT; is_float_op = true; }
-        else if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") { opcode = LE_OP_PHASOR_1P; uses_protection = true; }
+        else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") { opcode = LE_OP_BLOCK; is_float_op = true; }
+        else if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") { opcode = LE_OP_BLOCK; uses_protection = true; }
         else if (type == "SYM_COMP" || type == "LE_SYM_COMP") { opcode = LE_OP_SYM_COMP; uses_protection = true;
             if (state_descs.find(LE_BLK_SYMCOMP) == state_descs.end()) state_descs[LE_BLK_SYMCOMP] = 1; }
         else if (type == "DIST_21" || type == "LE_DIST_21") { opcode = LE_OP_DIST_21; uses_protection = true;
@@ -1375,10 +1375,6 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         } else if (opcode == LE_OP_MIN_MAX_HOLD) {
             modifier = static_cast<uint8_t>(min_max_hold_counter++);
             state_descs[LE_BLK_MIN_MAX_HOLD]++;
-        } else if (opcode == LE_OP_PHASOR_SHIFT) {
-            /* Rotation angle (degrees, 0..255) is carried in the modifier byte. */
-            int deg = static_cast<int>(el.get("angle_deg").as_float(prop(el, "delta_deg", 0.0f)));
-            modifier = static_cast<uint8_t>(deg & 0xFF);
         }
 
         if (opcode == LE_OP_NOP) {
@@ -1724,7 +1720,7 @@ if (type == "DIST_21" || type == "LE_DIST_21") {
             continue;
         }
 
-if (opcode == LE_OP_PHASOR_1P) {
+if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             /* PHASOR_1P: complex output phasor (2-in/1-out). */
             std::vector<uint16_t> args;
             int n_in = 0;
@@ -1754,8 +1750,8 @@ if (opcode == LE_OP_PHASOR_1P) {
             continue;
         }
         /* Phasor conversions: 2-in (or 3-in) -> 2-out blocks (RECT2POLAR/POLAR2RECT/PHASOR_SHIFT). */
-        if (opcode == LE_OP_RECT2POLAR || opcode == LE_OP_POLAR2RECT ||
-            opcode == LE_OP_PHASOR_SHIFT) {
+        if (type == "RECT2POLAR" || type == "LE_RECT2POLAR" || type == "POLAR2RECT" ||
+            type == "LE_POLAR2RECT" || type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") {
             std::vector<uint16_t> args;
             uint8_t fid = LE_FUNC_NONE;
             int n_in = 0;
@@ -1764,15 +1760,15 @@ if (opcode == LE_OP_PHASOR_1P) {
                 consume_input(port_src);
                 n_in++;
             };
-            if (opcode == LE_OP_RECT2POLAR) {
+            if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") {
                 add_in(find_port({"a", "real", "in_a", "in"}), LE_CONST_ZERO_F);
                 add_in(find_port({"b", "imag", "in_b", "imaginary"}), LE_CONST_ZERO_F);
                 fid = LE_FUNC_RECT2POLAR;
-            } else if (opcode == LE_OP_POLAR2RECT) {
+            } else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") {
                 add_in(find_port({"a", "mag", "in_a", "magnitude", "in"}), LE_CONST_ZERO_F);
                 add_in(find_port({"b", "angle", "in_b", "ang"}), LE_CONST_ZERO_F);
                 fid = LE_FUNC_POLAR2RECT;
-            } else if (opcode == LE_OP_PHASOR_SHIFT) {
+            } else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") {
                 add_in(find_port({"a", "real", "in_a", "in"}), LE_CONST_ZERO_F);
                 add_in(find_port({"b", "imag", "in_b"}), LE_CONST_ZERO_F);
                 add_in(find_port({"delta", "delta_rad", "angle"}), LE_CONST_ZERO_F);
@@ -1796,7 +1792,8 @@ if (opcode == LE_OP_PHASOR_1P) {
             element_outputs_port[name]["mag"] = out0;
             element_outputs_port[name]["angle"] = out1;
             element_outputs_port[name]["ang"] = out1;
-            if (opcode == LE_OP_POLAR2RECT || opcode == LE_OP_PHASOR_SHIFT) {
+            if (type == "POLAR2RECT" || type == "LE_POLAR2RECT" ||
+                type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") {
                 element_outputs_port[name]["real"] = out0;
                 element_outputs_port[name]["imag"] = out1;
                 element_outputs_port[name].erase("magnitude");

@@ -149,9 +149,9 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") node.opcode = LE_OP_BLOCK;
         else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") node.opcode = LE_OP_BLOCK;
         else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") node.opcode = LE_OP_BLOCK;
-        else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") node.opcode = LE_OP_RECT2POLAR;
-        else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") node.opcode = LE_OP_POLAR2RECT;
-        else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") node.opcode = LE_OP_PHASOR_SHIFT;
+        else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") node.opcode = LE_OP_BLOCK;
+        else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") node.opcode = LE_OP_BLOCK;
+        else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") node.opcode = LE_OP_BLOCK;
 
         m_nodes[name] = node;
     }

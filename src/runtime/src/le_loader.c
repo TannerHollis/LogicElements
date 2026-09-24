@@ -185,6 +185,7 @@ le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size)
             const le_state_desc_t* sd = (const le_state_desc_t*)(st + (size_t)s * LE_STATE_DESC_BYTES);
             if (sd->kind == LE_BLK_NONE || sd->count == 0) continue;
             le_rt_set_kind_base(sd->kind, (int32_t)base);
+            le_rt_set_kind_count(sd->kind, sd->count);
             base += (uint32_t)sd->size * (uint32_t)sd->count;
         }
     }

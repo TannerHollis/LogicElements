@@ -347,74 +347,12 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
         return LE_OK;
     }
 
-    #if LE_ENABLE_PROTECTION
+#if LE_ENABLE_PROTECTION
     /* ---------------------------------------------------------------------- */
-    /* Control, Protection & Conversions                                      */
+    /* Protection & control relays: PID, OVERCURRENT, SYM_COMP                  */
+    /* (phasor extraction & complex<->float conversions are LE_OP_BLOCK        */
+    /* builtins: see LE_FUNC_PHASOR_1P / LE_FUNC_RECT2POLAR below)              */
     /* ---------------------------------------------------------------------- */
-    /* ---------------------------------------------------------------------- */
-    /* Protection: IEC/IEEE Inverse-Time Overcurrent (ANSI 51)                 */
-    /* ---------------------------------------------------------------------- */
-    if (op == LE_OP_OVERCURRENT)
-    {
-        uint16_t oc_idx = inst->modifier & 0xFF;
-        le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, oc_idx);
-        if (!oc) return LE_ERR_OUT_OF_BOUNDS;
-
-        if (oc->pickup <= 0.0f) oc->pickup = 1.0f;       /* default 1.0 pu pickup */
-        if (oc->time_dial <= 0.0f) oc->time_dial = 1.0f;
-
-        float i = le_process_image_get_float(img, inst->in_a);
-        float i_pu = i / oc->pickup;
-        float dt = 0.01f;
-
-        /* Simple integrating inverse-time accumulator: trip once the
-         * overcurrent is sustained past the time dial. */
-        if (i_pu > 1.0f) {
-            oc->accumulator += dt * (i_pu - 1.0f);
-        } else {
-            oc->accumulator -= dt;
-            if (oc->accumulator < 0.0f) oc->accumulator = 0.0f;
-        }
-        oc->tripped = (oc->accumulator >= oc->time_dial);
-        le_process_image_set_bool(img, inst->out, oc->tripped);
-        return LE_OK;
-    }
-
-    if (op == LE_OP_RECT2POLAR)
-    {
-        /* in_a = real (x), in_b = imag (y), out = magnitude */
-        float x = le_process_image_get_float(img, inst->in_a);
-        float y = le_process_image_get_float(img, inst->in_b);
-        float mag = sqrtf(x * x + y * y);
-        le_process_image_set_float(img, inst->out, mag);
-        return LE_OK;
-    }
-
-    if (op == LE_OP_POLAR2RECT)
-    {
-        /* in_a = mag, in_b = angle (rad), out = real (x) */
-        float mag = le_process_image_get_float(img, inst->in_a);
-        float angle = le_process_image_get_float(img, inst->in_b);
-        float x = mag * cosf(angle);
-        le_process_image_set_float(img, inst->out, x);
-        return LE_OK;
-    }
-
-    if (op == LE_OP_PHASOR_SHIFT)
-    {
-        /* Rotates the phasor (re, im) counter-clockwise by the angle encoded in
-         * the modifier byte (0..255 degrees) and writes the rotated phasor's
-         * real component to out. in_a = real(x), in_b = imag(y). */
-        float x = le_process_image_get_float(img, inst->in_a);
-        float y = le_process_image_get_float(img, inst->in_b);
-        float delta_rad = (float)(mod & 0xFF) * (float)M_PI / 180.0f;
-        float cs = cosf(delta_rad);
-        float sn = sinf(delta_rad);
-        float xr = x * cs - y * sn;
-        le_process_image_set_float(img, inst->out, xr);
-        return LE_OK;
-    }
-
     if (op == LE_OP_PID)
     {
         uint16_t pid_idx = inst->modifier & 0xFF;
@@ -451,54 +389,31 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     }
 
     /* ---------------------------------------------------------------------- */
-    /* Protection: 1P Phasor Extraction (DFT / Cosine Filter)                 */
+    /* Protection: IEC/IEEE Inverse-Time Overcurrent (ANSI 51)                 */
     /* ---------------------------------------------------------------------- */
-    if (op == LE_OP_PHASOR_1P)
+    if (op == LE_OP_OVERCURRENT)
     {
-        uint16_t p_idx = inst->modifier & 0xFF;
+        uint16_t oc_idx = inst->modifier & 0xFF;
+        le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, oc_idx);
+        if (!oc) return LE_ERR_OUT_OF_BOUNDS;
 
-        le_phasor_state_t* p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p_idx);
-        if (!p) return LE_ERR_OUT_OF_BOUNDS;
-        if (p->samples_per_cycle == 0 || p->samples_per_cycle > LE_MAX_SAMPLES_PER_CYCLE) {
-            p->samples_per_cycle = 16; /* Default 16 samples per cycle (960 Hz @ 60Hz) */
+        if (oc->pickup <= 0.0f) oc->pickup = 1.0f;       /* default 1.0 pu pickup */
+        if (oc->time_dial <= 0.0f) oc->time_dial = 1.0f;
+
+        float i = le_process_image_get_float(img, inst->in_a);
+        float i_pu = i / oc->pickup;
+        float dt = 0.01f;
+
+        /* Simple integrating inverse-time accumulator: trip once the
+         * overcurrent is sustained past the time dial. */
+        if (i_pu > 1.0f) {
+            oc->accumulator += dt * (i_pu - 1.0f);
+        } else {
+            oc->accumulator -= dt;
+            if (oc->accumulator < 0.0f) oc->accumulator = 0.0f;
         }
-
-        /* Read raw instantaneous sample */
-        float raw = le_process_image_get_float(img, inst->in_a);
-        p->samples[p->write_idx] = raw;
-        p->write_idx = (p->write_idx + 1) % p->samples_per_cycle;
-
-        /* Full-cycle Discrete Fourier Transform */
-        uint16_t N = p->samples_per_cycle;
-        float sum_cos = 0.0f;
-        float sum_sin = 0.0f;
-        float angle_step = 2.0f * (float)M_PI / (float)N;
-
-        for (uint16_t k = 0; k < N; k++)
-        {
-            uint16_t s_idx = (p->write_idx + k) % N;
-            float angle = angle_step * (float)k;
-            float s_val = p->samples[s_idx];
-            sum_cos += s_val * cosf(angle);
-            sum_sin -= s_val * sinf(angle);
-        }
-
-        float real = (2.0f / (float)N) * sum_cos;
-        float imag = (2.0f / (float)N) * sum_sin;
-        p->phasor = le_c_make(real, imag);
-        p->magnitude = le_c_mag(p->phasor);
-        p->angle_rad = le_c_ang(p->phasor);
-
-        /* Optional reference angle adjustment */
-        if (inst->in_b != LE_ADDR_UNUSED) {
-            float ref_angle = le_process_image_get_float(img, inst->in_b);
-            p->angle_rad -= ref_angle;
-            while (p->angle_rad > (float)M_PI) p->angle_rad -= 2.0f * (float)M_PI;
-            while (p->angle_rad < -(float)M_PI) p->angle_rad += 2.0f * (float)M_PI;
-            p->phasor = le_c_polar(p->magnitude, p->angle_rad);
-        }
-
-        le_process_image_set_float(img, inst->out, p->magnitude);
+        oc->tripped = (oc->accumulator >= oc->time_dial);
+        le_process_image_set_bool(img, inst->out, oc->tripped);
         return LE_OK;
     }
 
@@ -1081,8 +996,8 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
                     return LE_OK;
                 }
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_RECT2POLAR: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_RECT2POLAR: {
                     /* args = [real, imag, out_mag, out_angle_rad] (2-in/2-out) */
                     if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float x = le_process_image_get_float(img, args[0]);
@@ -1096,8 +1011,8 @@ case LE_FUNC_RECT2POLAR: {
 #endif
 
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_POLAR2RECT: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_POLAR2RECT: {
                     /* args = [mag, angle_rad, out_real, out_imag] (2-in/2-out) */
                     if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float mag = le_process_image_get_float(img, args[0]);
@@ -1109,8 +1024,8 @@ case LE_FUNC_POLAR2RECT: {
 #endif
 
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_COMPLEX2POLAR: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_COMPLEX2POLAR: {
                     /* complex in -> {mag, angle} (1-in/2-out) */
                     if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     le_complex_t c = le_process_image_get_complex(img, args[0]);
@@ -1121,8 +1036,8 @@ case LE_FUNC_COMPLEX2POLAR: {
 #endif
 
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_COMPLEX2RECT: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_COMPLEX2RECT: {
                     /* complex in -> {real, imag} (1-in/2-out) */
                     if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     le_complex_t c = le_process_image_get_complex(img, args[0]);
@@ -1133,8 +1048,8 @@ case LE_FUNC_COMPLEX2RECT: {
 #endif
 
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_RECT2COMPLEX: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_RECT2COMPLEX: {
                     /* {real, imag} floats -> complex out (2-in/1-out) */
                     if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
                     float re = le_process_image_get_float(img, args[0]);
@@ -1145,8 +1060,8 @@ case LE_FUNC_RECT2COMPLEX: {
 #endif
 
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_POLAR2COMPLEX: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_POLAR2COMPLEX: {
                     /* {mag, angle} floats -> complex out (2-in/1-out) */
                     if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
                     float mag = le_process_image_get_float(img, args[0]);
@@ -1169,8 +1084,8 @@ case LE_FUNC_POLAR2COMPLEX: {
                     le_process_image_set_float(img, args[3], r);
                     return LE_OK;
                 }
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_PHASE_COMP: {
+#if LE_ENABLE_PROTECTION
+                case LE_FUNC_PHASE_COMP: {
                     /* 3-phase transformer phase-shift compensation (ANSI 87T).
                      * args = [c_a, c_b, c_c, out_a, out_b, out_c]  (3-in/3-out).
                      * Applies the SEL delta/wye compensation matrix M(k) (k = comp,
@@ -1219,8 +1134,8 @@ case LE_FUNC_PHASE_COMP: {
                 }
 #endif
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_DIFF_87: {
+#if LE_ENABLE_PROTECTION
+                case LE_FUNC_DIFF_87: {
                     /* N-complex dual-slope differential protection (ANSI 87).
                      * args = [cph0, cph1, ..., cphN-1, out_bool]  (N-in/1-out)
                      * Operate current = |vector sum of all phasors|; restraint
@@ -1260,8 +1175,8 @@ case LE_FUNC_DIFF_87: {
                 }
 #endif
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_DIST_21: {
+#if LE_ENABLE_PROTECTION
+                case LE_FUNC_DIST_21: {
                     /* Mho distance (21) block with prefault voltage memory.
                      * args = [v_c, i_c, offset_on, out_bool] (3-in/1-out)
                      * v_c, i_c are complex phasors; offset_on is a boolean that gates
@@ -1328,8 +1243,8 @@ case LE_FUNC_DIST_21: {
                 }
 #endif
 
-                #if LE_ENABLE_PROTECTION
-case LE_FUNC_PHASOR_SHIFT: {
+#if LE_ENABLE_COMPLEX
+                case LE_FUNC_PHASOR_SHIFT: {
                     /* args = [real, imag, delta_rad, out_real, out_imag] (3-in/2-out) */
                     if (desc->in_count < 3 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
                     float x = le_process_image_get_float(img, args[0]);

@@ -15,6 +15,10 @@ static uint32_t s_ws_len = 0;
 /* Byte offset of each kind group within the workspace (-1 = kind absent). */
 static int32_t s_kind_base[LE_BLK_LAST];
 
+/* Declared instance count per kind (set by the loader from the state-desc
+ * table). le_rt_state rejects indices at or past this count. */
+static uint16_t s_kind_count[LE_BLK_LAST];
+
 /* Memoized per-kind state struct sizes (filled at bind so the hot
  * le_rt_state path is an array read instead of a per-access switch). */
 static uint16_t s_kind_size[LE_BLK_LAST];
@@ -29,7 +33,10 @@ void le_rt_bind(uint8_t* base, uint32_t len)
 void le_rt_reset(void)
 {
     if (s_ws && s_ws_len > 0) memset(s_ws, 0, s_ws_len);
-    for (int i = 0; i < LE_BLK_LAST; i++) s_kind_base[i] = -1;
+    for (int i = 0; i < LE_BLK_LAST; i++) {
+        s_kind_base[i] = -1;
+        s_kind_count[i] = 0;
+    }
 }
 
 uint8_t* le_rt_workspace(void) { return s_ws; }
@@ -84,6 +91,11 @@ int32_t le_rt_kind_base(uint8_t kind)
     return (kind < LE_BLK_LAST) ? s_kind_base[kind] : -1;
 }
 
+void le_rt_set_kind_count(uint8_t kind, uint16_t count)
+{
+    if (kind < LE_BLK_LAST) s_kind_count[kind] = count;
+}
+
 uint8_t* le_rt_state(uint8_t kind, uint16_t idx)
 {
     if (!s_ws || s_ws_len == 0) return NULL;
@@ -91,6 +103,7 @@ uint8_t* le_rt_state(uint8_t kind, uint16_t idx)
     if (base < 0) return NULL;
     uint16_t sz = (kind < LE_BLK_LAST) ? s_kind_size[kind] : 0;  /* memoized at bind */
     if (sz == 0) return NULL;
+    if (idx >= ((kind < LE_BLK_LAST) ? s_kind_count[kind] : 0)) return NULL; /* past declared instances */
     uint32_t off = (uint32_t)base + (uint32_t)idx * (uint32_t)sz;
     if (off + (uint32_t)sz > s_ws_len) return NULL;
     return &s_ws[off];

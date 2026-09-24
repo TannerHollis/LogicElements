@@ -17,6 +17,11 @@
 
 const le_hal_t* le_hal_get_sim(void);
 
+/* TX-capture helpers from le_hal_sim.c (test-bench observability). */
+void    le_sim_capture_tx_reset(void);
+size_t  le_sim_capture_tx_len(void);
+void    le_sim_capture_tx_get(uint8_t* out, size_t cap);
+
 /* The self-contained 4-instruction example program (OR->%OUT0, AND->%OUT1)
  * previously shipped in example_configs/example_embedded.h. It is embedded here
  * so the runtime tests carry no external config dependency. */
@@ -83,6 +88,7 @@ static void test_bind_kind(uint8_t kind, int count, uint16_t size)
 {
     if (s_test_off + (uint32_t)size * (uint32_t)count > le_rt_workspace_bytes()) return;
     le_rt_set_kind_base(kind, (int32_t)s_test_off);
+    le_rt_set_kind_count(kind, (uint16_t)count);
     s_test_off += (uint32_t)size * (uint32_t)count;
 }
 
@@ -393,23 +399,30 @@ void test_protection_relays(void)
     float amp = 10.0f;
     float phi = 30.0f * (float)M_PI / 180.0f;
 
+    /* The phasor extractor is a variable-arity BLOCK builtin
+     * (LE_FUNC_PHASOR_1P): args = [sample, sync_cplx, out_cplx] (2-in/1-out). */
     le_instruction_t inst_phasor = {
-        .opcode = LE_OP_PHASOR_1P,
-        .modifier = 0, /* phasor index 0 */
-        .in_a = LE_ADDR_MAKE_FLOAT(0),
+        .opcode = LE_OP_BLOCK,
+        .modifier = LE_FUNC_PHASOR_1P,
+        .in_a = 0, /* block descriptor index 0 */
         .in_b = LE_ADDR_UNUSED,
-        .out = LE_ADDR_MAKE_FLOAT(1)
+        .out = LE_ADDR_UNUSED
     };
+    b.d.in_count = 2; b.d.out_count = 1;
+    b.a[0] = LE_ADDR_MAKE_FLOAT(0);       /* raw sample */
+    b.a[1] = LE_CONST_ZERO_C;             /* sync phasor (0+0j -> no normalization) */
+    b.a[2] = LE_ADDR_MAKE_CMPLX(4);       /* out phasor (writable complex register) */
 
     /* Feed 16 sequential samples through the DFT filter */
     for (uint16_t k = 0; k < N; k++) {
         float t_angle = 2.0f * (float)M_PI * (float)k / (float)N;
         float sample = amp * cosf(t_angle + phi);
         le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), sample);
-        le_exec_instruction(&inst_phasor, &img, k * 1);
+        TEST_ASSERT(le_exec_instruction_ex(&inst_phasor, &img, (uint32_t)k * 1u, &b.d, 1) == LE_OK,
+                    "1P phasor block executes");
     }
 
-    float extracted_mag = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(1));
+    float extracted_mag = ph->magnitude;
     TEST_ASSERT(fabsf(extracted_mag - amp) < 0.2f, "1P Phasor magnitude ~ 10.0");
     TEST_ASSERT(fabsf(ph->angle_rad - phi) < 0.1f, "1P Phasor angle ~ 30 deg (0.52 rad)");
 
@@ -1442,27 +1455,46 @@ void test_block_call(void)
 
 void test_phasor_shift(void)
 {
-    printf("Running test_phasor_shift...\n");
+    printf("Running test_phasor_shift (block builtin)...\n");
     le_process_image_t img;
     test_img_init(&img);
 
+    /* PHASOR_SHIFT is a variable-arity BLOCK builtin (LE_FUNC_PHASOR_SHIFT):
+     * args = [real, imag, delta_rad, out_real, out_imag] (3-in/2-out). */
+    struct { le_block_desc_t d; uint16_t a[8]; } b;
+    b.d.in_count = 3; b.d.out_count = 2;
+    b.a[0] = LE_ADDR_MAKE_FLOAT(0);
+    b.a[1] = LE_ADDR_MAKE_FLOAT(1);
+    b.a[2] = LE_ADDR_MAKE_FLOAT(2); /* delta_rad */
+    b.a[3] = LE_ADDR_MAKE_FLOAT(3); /* out real */
+    b.a[4] = LE_ADDR_MAKE_FLOAT(4); /* out imag */
+    le_instruction_t inst = { LE_OP_BLOCK, LE_FUNC_PHASOR_SHIFT, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+
     /* Rotate phasor (1 + i0) by 90 degrees CCW -> real component = 0. */
-    le_instruction_t inst = { LE_OP_PHASOR_SHIFT, 90,
-                              LE_ADDR_MAKE_FLOAT(0), LE_ADDR_MAKE_FLOAT(1), LE_ADDR_MAKE_FLOAT(2) };
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 1.0f);
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), 0.0f);
-    TEST_ASSERT(le_exec_instruction(&inst, &img, 0) == LE_OK, "PHASOR_SHIFT executes with LE_OK");
-    float real = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(2));
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(2), (float)M_PI / 2.0f);
+    TEST_ASSERT(le_exec_instruction_ex(&inst, &img, 0, &b.d, 1) == LE_OK, "PHASOR_SHIFT block executes");
+    float real = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(3));
     TEST_ASSERT(fabsf(real) < 1e-4f, "PHASOR_SHIFT (1+i0) rotated 90deg -> real=0");
 
-    /* Rotate (0 + i1) by 180 degrees -> real component = 0*cos(180) - 1*sin(180) = 0. */
+    /* Rotate (0 + i1) by 180 degrees -> real = 0*cos(180) - 1*sin(180) = 0. */
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 0.0f);
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), 1.0f);
-    le_instruction_t inst180 = { LE_OP_PHASOR_SHIFT, 180,
-                                 LE_ADDR_MAKE_FLOAT(0), LE_ADDR_MAKE_FLOAT(1), LE_ADDR_MAKE_FLOAT(2) };
-    TEST_ASSERT(le_exec_instruction(&inst180, &img, 0) == LE_OK, "PHASOR_SHIFT 180 executes");
-    float real180 = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(2));
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(2), (float)M_PI);
+    TEST_ASSERT(le_exec_instruction_ex(&inst, &img, 0, &b.d, 1) == LE_OK, "PHASOR_SHIFT 180 executes");
+    float real180 = le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(3));
     TEST_ASSERT(fabsf(real180) < 1e-4f, "PHASOR_SHIFT (i) rotated 180deg -> real=0");
+
+    /* Full rotation: (2 + 0i) by 45deg -> real = 2*cos(45) ~ 1.414, imag ~ 1.414. */
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 2.0f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), 0.0f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(2), (float)M_PI / 4.0f);
+    TEST_ASSERT(le_exec_instruction_ex(&inst, &img, 0, &b.d, 1) == LE_OK, "PHASOR_SHIFT 45 executes");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(3)) - sqrtf(2.0f)) < 1e-4f,
+                "PHASOR_SHIFT real = 2*cos(45) ~ 1.414");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(4)) - sqrtf(2.0f)) < 1e-4f,
+                "PHASOR_SHIFT imag = 2*sin(45) ~ 1.414");
 }
 
 void test_phasor_block_builtins(void)
@@ -1673,6 +1705,7 @@ void test_heap_allocator(void)
     t.preset_ms = 100;
     memcpy(le_rt_workspace(), &t, sizeof(t));
     le_rt_set_kind_base(LE_BLK_TIMER, 0);
+    le_rt_set_kind_count(LE_BLK_TIMER, 1);
     le_timer_state_t* ts = le_process_image_timer(NULL, 0);
     TEST_ASSERT(ts != NULL, "timer resolved from the workspace");
     TEST_ASSERT(ts->preset_ms == 100, "state written into the workspace is readable");
@@ -1680,6 +1713,7 @@ void test_heap_allocator(void)
     /* Blocks of different kinds sit at distinct offsets. */
     uint16_t toff = le_rt_kind_base(LE_BLK_TIMER);
     le_rt_set_kind_base(LE_BLK_COUNTER, toff + sizeof(le_timer_state_t));
+    le_rt_set_kind_count(LE_BLK_COUNTER, 1);
     le_counter_state_t* cs = le_process_image_counter(NULL, 0);
     TEST_ASSERT(cs != NULL && (uint8_t*)cs > (uint8_t*)ts, "counter block offset differs from timer");
     TEST_ASSERT(le_rt_kind_base(LE_BLK_TIMER) != le_rt_kind_base(LE_BLK_COUNTER),
@@ -1722,6 +1756,697 @@ void test_overcurrent(void)
     TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "OVERCURRENT: clears after trip");
 }
 
+/* ========================================================================== */
+/* P0: Loader / CRC / pulse-semantics test bench                              */
+/* ========================================================================== */
+
+/* Packs a complete .lebin from a header + payload, computing the payload CRC32
+ * exactly as the compiler does. Returns the total byte length. */
+static size_t test_make_blob(const le_header_t h, const uint8_t* payload, size_t plen,
+                             uint8_t* out, size_t cap)
+{
+    size_t total = sizeof(le_header_t) + plen;
+    if (!out || cap < total) return total;
+    le_header_t hh = h;
+    memset(out, 0xFF, cap);
+    memcpy(out, &hh, sizeof(hh));
+    if (plen > 0) memcpy(out + sizeof(hh), payload, plen);
+    hh.crc32 = le_crc32(out + sizeof(hh), plen);
+    memcpy(out, &hh, sizeof(hh));
+    return total;
+}
+
+void test_crc32_known_answers(void)
+{
+    printf("Running test_crc32_known_answers...\n");
+    uint8_t d[16];
+    memcpy(d, "123456789", 9);
+    TEST_ASSERT(le_crc32(d, 9) == 0xCBF43926u, "CRC32(\"123456789\") == 0xCBF43926 (IEEE 802.3)");
+    TEST_ASSERT(le_crc32(d, 0) == 0, "CRC32(empty) == 0");
+    TEST_ASSERT(le_crc32(NULL, 0) == 0, "CRC32(NULL) == 0");
+    TEST_ASSERT(le_crc32(d, 8) != le_crc32(d, 9), "CRC32 is length-sensitive");
+    uint8_t flip[9];
+    memcpy(flip, d, 9);
+    flip[0] ^= 0x01;
+    TEST_ASSERT(le_crc32(flip, 9) != le_crc32(d, 9), "CRC32 detects a single-bit flip");
+}
+
+void test_loader_negative_paths(void)
+{
+    printf("Running test_loader_negative_paths (CRC, truncation, OOB, capacity)...\n");
+    uint8_t buf[sizeof(le_default_program)];
+    le_header_t h;
+
+    /* NULL / short buffers */
+    TEST_ASSERT(le_loader_validate(NULL, sizeof(buf), &h) == LE_ERR_NULL_PTR, "NULL buffer rejected");
+    TEST_ASSERT(le_loader_validate(buf, 0, &h) == LE_ERR_NULL_PTR, "zero-length buffer rejected");
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t) - 1, &h) == LE_ERR_NULL_PTR,
+                "sub-header buffer rejected");
+
+    /* Corrupt magic */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[0] ^= 0xFF;
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_INVALID_MAGIC, "corrupt magic rejected");
+
+    /* Old version (v7 must be rejected by the v8 loader) */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[4] = 7; buf[5] = 0;
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_INVALID_VERSION, "old version rejected");
+
+    /* Truncated payloads */
+    memcpy(buf, le_default_program, sizeof(buf));
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t), &h) == LE_ERR_OUT_OF_BOUNDS,
+                "header-only binary rejected (instruction payload missing)");
+    memcpy(buf, le_default_program, sizeof(buf));
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t) + 16, &h) == LE_ERR_OUT_OF_BOUNDS,
+                "mid-instruction truncation rejected");
+
+    /* Block-table walk past end of buffer */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[0x18] = 1; /* block_count = 1 but no block table is appended */
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
+                "block descriptor walk past end of buffer rejected");
+
+    /* State-desc table past end of buffer */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[0x1A] = 1; /* state_desc_count = 1 but no state table is appended */
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
+                "state-desc table past end of buffer rejected");
+
+    /* Alias table past end of buffer */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[0x20] = 1; /* alias_count = 1 but no alias table is appended */
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
+                "alias table past end of buffer rejected");
+
+    /* Single payload bit flip -> CRC mismatch */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[sizeof(buf) - 1] ^= 0x01;
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CRC_MISMATCH,
+                "payload bit flip detected by CRC32");
+
+    /* Capacity: register count beyond the board budget (check precedes CRC) */
+    memcpy(buf, le_default_program, sizeof(buf));
+    buf[0x0E] = 0x01; buf[0x0F] = 0x01; /* bool_reg_count = 257 > LE_MAX_BOOL_REGS */
+    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CAPACITY,
+                "register count beyond board budget rejected");
+}
+void test_loader_state_desc_edges(void)
+{
+    printf("Running test_loader_state_desc_edges (skip rows + real bake-in)...\n");
+
+    /* Case A: kind=NONE / count=0 state-desc rows must be skipped; the binary
+     * still loads cleanly with no state bound. */
+    {
+        uint8_t desc[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_NONE, 0, 0, 0 };
+        uint8_t blob[128];
+        le_header_t h;
+        memset(&h, 0, sizeof(h));
+        h.magic = LE_BIN_MAGIC; h.version = LE_BIN_VERSION; h.flags = 0;
+        h.state_desc_count = 1;
+        size_t total = test_make_blob(h, desc, sizeof(desc), blob, sizeof(blob));
+
+        le_vm_t vm;
+        le_vm_init(&vm);
+        TEST_ASSERT(le_loader_load(&vm, blob, total) == LE_OK, "NONE/count0 state-desc loads cleanly");
+        TEST_ASSERT(le_process_image_timer(&vm.image, 0) == NULL, "no timer state bound");
+        TEST_ASSERT(!vm.running, "no autostart flag -> VM remains stopped");
+    }
+
+    /* Case B: a real 1-instance timer state image must bind through the loader,
+     * revealing the baked preset at index 0 and NULL at index 1. */
+    {
+        uint8_t desc[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_TIMER, 1, 0, 0 };
+        desc[2] = (uint8_t)(sizeof(le_timer_state_t) & 0xFF);
+        desc[3] = (uint8_t)((sizeof(le_timer_state_t) >> 8) & 0xFF);
+        uint8_t img[sizeof(le_timer_state_t)];
+        memset(img, 0, sizeof(img));
+        img[4] = 0x88; img[5] = 0x13; img[6] = 0x00; img[7] = 0x00; /* preset_ms = 5000 LE */
+
+        uint8_t payload[LE_STATE_DESC_BYTES + sizeof(le_timer_state_t)];
+        memcpy(payload, desc, sizeof(desc));
+        memcpy(payload + sizeof(desc), img, sizeof(img));
+
+        le_header_t h;
+        memset(&h, 0, sizeof(h));
+        h.magic = LE_BIN_MAGIC; h.version = LE_BIN_VERSION;
+        h.state_desc_count = 1;
+        h.state_img_len = (uint32_t)sizeof(le_timer_state_t);
+        uint8_t blob[160];
+        size_t total = test_make_blob(h, payload, sizeof(payload), blob, sizeof(blob));
+
+        le_vm_t vm;
+        le_vm_init(&vm);
+        TEST_ASSERT(le_loader_load(&vm, blob, total) == LE_OK, "timer state image loads");
+        le_timer_state_t* t = le_process_image_timer(&vm.image, 0);
+        TEST_ASSERT(t != NULL, "timer 0 state resolves from the loaded workspace");
+        TEST_ASSERT(t != NULL && t->preset_ms == 5000u, "baked preset survives the load");
+        TEST_ASSERT(le_process_image_timer(&vm.image, 1) == NULL, "timer 1 (beyond count) is NULL");
+    }
+}
+
+void test_pulse_duration_expiry(void)
+{
+    printf("Running test_pulse_duration_expiry (arm, anchor, clear, refill, exhaust)...\n");
+    le_vm_t vm;
+    le_vm_init(&vm);
+    test_img_init(&vm.image); /* bind the register arena so pulse writes land */
+
+    uint16_t addr = LE_ADDR_MAKE_BOOL_REG(0);
+
+    /* Unsupported targets */
+    TEST_ASSERT(le_vm_pulse(&vm, LE_ADDR_UNUSED, 1000) == LE_ERR_OUT_OF_BOUNDS, "pulse on LE_ADDR_UNUSED rejected");
+    TEST_ASSERT(le_vm_pulse(&vm, LE_CONST_TRUE, 1000) == LE_ERR_OUT_OF_BOUNDS, "pulse on constant region rejected");
+
+    /* 0 duration defaults to 1 second, sets the register active immediately */
+    TEST_ASSERT(le_vm_pulse(&vm, addr, 0) == LE_OK, "pulse accepts a 0 duration (defaults to 1 s)");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "register active immediately on arm");
+    le_process_image_set_bool(&vm.image, addr, false);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, addr), "manual clear works");
+
+    /* Full arm -> anchor -> clear lifecycle */
+    TEST_ASSERT(le_vm_pulse(&vm, addr, 1000) == LE_OK, "pulse armed (1000 ms)");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "active right after arming");
+    le_vm_step(&vm, 0);    /* sweep anchors clear_after = 0 + 1000 */
+    le_vm_step(&vm, 500);  /* mid-duration */
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "still active before expiry");
+    le_vm_step(&vm, 1000); /* at expiry */
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, addr), "cleared exactly at expiry");
+    TEST_ASSERT(vm.pulse_count == 0, "pulse slot released after expiry");
+
+    /* Re-pulse prolongs: refreshing the same address cancels the old deadline */
+    TEST_ASSERT(le_vm_pulse(&vm, addr, 1000) == LE_OK, "re-pulse armed (1000 ms)");
+    le_vm_step(&vm, 0);    /* anchor = 0 + 1000 */
+    TEST_ASSERT(le_vm_pulse(&vm, addr, 3000) == LE_OK, "same-slot refresh (3000 ms)");
+    le_vm_step(&vm, 1500); /* past the old deadline; new anchor = 1500 + 3000 */
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "refresh prolonged past the old deadline");
+    le_vm_step(&vm, 4500); /* at the new deadline */
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, addr), "cleared after prolongation");
+
+    /* Slot exhaustion -> LE_ERR_CAPACITY */
+    for (uint8_t i = 0; i < LE_MAX_PULSES; i++) {
+        TEST_ASSERT(le_vm_pulse(&vm, LE_ADDR_MAKE_BOOL_REG(10 + i), 5000) == LE_OK,
+                    "pulse fills a fresh slot");
+    }
+    TEST_ASSERT(le_vm_pulse(&vm, LE_ADDR_MAKE_BOOL_REG(200), 5000) == LE_ERR_CAPACITY,
+                "all pulse slots busy -> LE_ERR_CAPACITY");
+}
+
+/* True if the captured comms TX stream contains a response frame with `cmd`. */
+static bool test_tx_has_cmd(uint8_t cmd)
+{
+    uint8_t tx[2048];
+    size_t n = le_sim_capture_tx_len();
+    if (n > sizeof(tx)) n = sizeof(tx);
+    le_sim_capture_tx_get(tx, n);
+    for (size_t i = 0; i + 1 < n; i++) {
+        if (tx[i] == LE_COMMS_SYNC_BYTE && tx[i + 1] == cmd) return true;
+    }
+    return false;
+}
+
+void test_comms_pulse_command(void)
+{
+    printf("Running test_comms_pulse_command (LE_CMD_PULSE 0x41)...\n");
+    le_hal_set(le_hal_get_sim());
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    test_img_init(&vm.image); /* bind arena so pulse writes land */
+
+    le_comms_t comms;
+    le_comms_init(&comms, &vm);
+
+    uint16_t addr = LE_ADDR_MAKE_BOOL_REG(0);
+    uint32_t dur = 1500;
+    uint8_t payload[6] = {
+        (uint8_t)(addr & 0xFF), (uint8_t)(addr >> 8),
+        (uint8_t)(dur & 0xFF), (uint8_t)((dur >> 8) & 0xFF),
+        (uint8_t)((dur >> 16) & 0xFF), (uint8_t)((dur >> 24) & 0xFF)
+    };
+
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, LE_CMD_PULSE, 7, payload, 6);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "wire PULSE armed the register immediately");
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_ACK), "wire PULSE acknowledged");
+
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, addr), "pulse survives the anchor scan");
+    le_vm_step(&vm, 1500);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, addr), "pulse cleared at expiry on the wire path");
+
+    /* Short payload (< 6) is silently ignored (no ACK/NACK emitted). */
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, LE_CMD_PULSE, 8, payload, 4);
+    TEST_ASSERT(!test_tx_has_cmd(LE_CMD_ACK) && !test_tx_has_cmd(LE_CMD_NACK),
+                "short PULSE payload ignored (no response)");
+
+    /* Pulsing a constant region is NACKed (code 0x04). */
+    uint16_t caddr = LE_CONST_TRUE;
+    uint8_t cpayload[6] = {
+        (uint8_t)(caddr & 0xFF), (uint8_t)(caddr >> 8), 0xE8, 0x03, 0x00, 0x00
+    };
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, LE_CMD_PULSE, 9, cpayload, 6);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "PULSE on constant region NACKed");
+}
+
+void test_comms_negative_paths(void)
+{
+    printf("Running test_comms_negative_paths (unknown cmd, oversize, OOB, bad prog)...\n");
+    le_hal_set(le_hal_get_sim());
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    le_comms_t comms;
+    le_comms_init(&comms, &vm);
+
+    /* Unknown command -> NACK 0xFF */
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, 0x7F, 1, NULL, 0);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "unknown command NACKed");
+
+    /* PROG_BEGIN larger than the staging buffer -> NACK 0x01 */
+    le_sim_capture_tx_reset();
+    uint8_t big[4] = { 0xFF, 0xFF, 0xFF, 0x7F };
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 2, big, 4);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "oversized PROG_BEGIN NACKed");
+
+    /* A valid PROG_BEGIN then a CHUNK writing past the staging buffer -> NACK 0x02 */
+    le_sim_capture_tx_reset();
+    uint32_t ok_size = (uint32_t)sizeof(le_default_program);
+    uint8_t begin_ok[4] = {
+        (uint8_t)(ok_size & 0xFF), (uint8_t)((ok_size >> 8) & 0xFF),
+        (uint8_t)((ok_size >> 16) & 0xFF), (uint8_t)((ok_size >> 24) & 0xFF)
+    };
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 3, begin_ok, 4);
+    uint8_t chunk_oob[4] = { 0xFF, 0xFF, 0x42, 0x42 }; /* offset 0xFFFF */
+    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 4, chunk_oob, 4);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "out-of-bounds PROG_CHUNK NACKed");
+
+    /* PROG_END with no valid program staged -> NACK 0x03 */
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 5, NULL, 0);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "PROG_END with no program NACKed");
+}
+
+/* ========================================================================== */
+/* P1: Runtime behavioral coverage                                            */
+/* ========================================================================== */
+
+void test_edge_latch_compare_opcodes(void)
+{
+    printf("Running test_edge_latch_compare_opcodes (RTRIG/FTRIG/SR/RS/MUX/XOR/NAND/NOR/CMP)...\n");
+    le_process_image_t img;
+    test_img_init(&img);
+
+    uint16_t sig   = LE_ADDR_MAKE_BOOL_REG(0);
+    uint16_t hist  = LE_ADDR_MAKE_BOOL_REG(1);
+    uint16_t pulse = LE_ADDR_MAKE_BOOL_REG(2);
+
+    /* -- RTRIG: one-shot pulse on rising edge only ---------------------------- */
+    le_instruction_t rt = { .opcode = LE_OP_RTRIG, .modifier = 0, .in_a = sig, .in_b = hist, .out = pulse };
+    le_process_image_set_bool(&img, sig, false);
+    le_exec_instruction(&rt, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "RTRIG: no pulse while input low");
+    le_process_image_set_bool(&img, sig, true);
+    le_exec_instruction(&rt, &img, 10);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "RTRIG: pulse on the rising edge");
+    TEST_ASSERT(le_process_image_get_bool(&img, hist), "RTRIG: history coil tracks input");
+    le_exec_instruction(&rt, &img, 20);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "RTRIG: no pulse while held high");
+    le_process_image_set_bool(&img, sig, false);
+    le_exec_instruction(&rt, &img, 30);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "RTRIG: no pulse on the falling edge");
+    le_process_image_set_bool(&img, sig, true);
+    le_exec_instruction(&rt, &img, 40);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "RTRIG: fresh rising edge pulses again");
+
+    /* -- FTRIG: one-shot pulse on falling edge ------------------------------- */
+    le_instruction_t ft = { .opcode = LE_OP_FTRIG, .modifier = 0, .in_a = sig, .in_b = hist, .out = pulse };
+    le_process_image_set_bool(&img, sig, true);
+    le_exec_instruction(&ft, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "FTRIG: no pulse while high");
+    le_process_image_set_bool(&img, sig, false);
+    le_exec_instruction(&ft, &img, 10);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "FTRIG: pulse on the falling edge");
+    le_exec_instruction(&ft, &img, 20);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "FTRIG: no pulse while held low");
+
+    /* -- SR latch: set-dominant ---------------------------------------------- */
+    le_instruction_t sr = { .opcode = LE_OP_SR, .modifier = 0, .in_a = sig, .in_b = hist, .out = pulse };
+    le_process_image_set_bool(&img, sig, true);  /* set */
+    le_process_image_set_bool(&img, hist, true); /* reset is ALSO active */
+    le_exec_instruction(&sr, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "SR: set-dominant wins when both asserted");
+    le_process_image_set_bool(&img, hist, false);
+    le_exec_instruction(&sr, &img, 10);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "SR: still high while set asserted");
+    le_process_image_set_bool(&img, sig, false);
+    le_exec_instruction(&sr, &img, 20);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "SR: latched high after set released");
+    le_process_image_set_bool(&img, hist, true);
+    le_exec_instruction(&sr, &img, 30);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "SR: reset clears the latch");
+
+    /* -- RS latch: reset-dominant -------------------------------------------- */
+    le_instruction_t rs = { .opcode = LE_OP_RS, .modifier = 0, .in_a = sig, .in_b = hist, .out = pulse };
+    le_process_image_set_bool(&img, sig, true);  /* set also active */
+    le_process_image_set_bool(&img, hist, true); /* reset */
+    le_exec_instruction(&rs, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, pulse), "RS: reset-dominant wins when both asserted");
+    le_process_image_set_bool(&img, hist, false);
+    le_process_image_set_bool(&img, sig, true);
+    le_exec_instruction(&rs, &img, 10);
+    TEST_ASSERT(le_process_image_get_bool(&img, pulse), "RS: set latches when reset is low");
+}
+
+void test_gates_mux_compare_opcodes(void)
+{
+    printf("Running test_gates_mux_compare_opcodes (XOR/NAND/NOR/MUX/CMP_*)...\n");
+    le_process_image_t img;
+    test_img_init(&img);
+
+    uint16_t x = LE_ADDR_MAKE_BOOL_REG(3);
+    uint16_t y = LE_ADDR_MAKE_BOOL_REG(4);
+    uint16_t z = LE_ADDR_MAKE_BOOL_REG(5);
+    le_instruction_t gx = { .opcode = LE_OP_XOR, .modifier = 0, .in_a = x, .in_b = y, .out = z };
+    le_instruction_t gn = { .opcode = LE_OP_NAND, .modifier = 0, .in_a = x, .in_b = y, .out = z };
+    le_instruction_t gr = { .opcode = LE_OP_NOR, .modifier = 0, .in_a = x, .in_b = y, .out = z };
+
+    le_process_image_set_bool(&img, x, false); le_process_image_set_bool(&img, y, false);
+    le_exec_instruction(&gx, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, z), "XOR: 0^0 = 0");
+    le_process_image_set_bool(&img, x, true);
+    le_exec_instruction(&gx, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, z), "XOR: 1^0 = 1");
+    le_process_image_set_bool(&img, y, true);
+    le_exec_instruction(&gx, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, z), "XOR: 1^1 = 0");
+
+    le_process_image_set_bool(&img, x, false); le_process_image_set_bool(&img, y, false);
+    le_exec_instruction(&gn, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, z), "NAND: 0 NAND 0 = 1");
+    le_process_image_set_bool(&img, x, true); le_process_image_set_bool(&img, y, true);
+    le_exec_instruction(&gn, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, z), "NAND: 1 NAND 1 = 0");
+
+    le_process_image_set_bool(&img, x, true); le_process_image_set_bool(&img, y, false);
+    le_exec_instruction(&gr, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, z), "NOR: 1 NOR 0 = 0");
+    le_process_image_set_bool(&img, x, false); le_process_image_set_bool(&img, y, false);
+    le_exec_instruction(&gr, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, z), "NOR: 0 NOR 0 = 1");
+
+    /* MUX (scalar opcode): documented behavior out = in_a */
+    le_instruction_t mx = { .opcode = LE_OP_MUX, .modifier = 0, .in_a = x, .in_b = y, .out = z };
+    le_process_image_set_bool(&img, x, true);  le_process_image_set_bool(&img, y, false);
+    le_exec_instruction(&mx, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, z), "MUX(scalar): out follows in_a when in_a=1");
+    le_process_image_set_bool(&img, x, false); le_process_image_set_bool(&img, y, true);
+    le_exec_instruction(&mx, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, z), "MUX(scalar): out follows in_a when in_a=0");
+
+    /* Float comparisons, incl. epsilon EQ and INVERT_OUT */
+    uint16_t f0 = LE_ADDR_MAKE_FLOAT(0);
+    uint16_t f1 = LE_ADDR_MAKE_FLOAT(1);
+    uint16_t zb = LE_ADDR_MAKE_BOOL_REG(6);
+    le_process_image_set_float(&img, f0, 1.000000f);
+    le_process_image_set_float(&img, f1, 1.000001f); /* |d| < 1e-6 -> equal */
+
+    le_instruction_t ce = { .opcode = LE_OP_CMP_EQ, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&ce, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, zb), "CMP_EQ: values within 1e-6 are equal");
+
+    le_instruction_t cn = { .opcode = LE_OP_CMP_NE, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cn, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, zb), "CMP_NE: near-equal values are NOT distinct");
+
+    le_process_image_set_float(&img, f1, 2.000000f);
+    le_instruction_t cg = { .opcode = LE_OP_CMP_GT, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cg, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, zb), "CMP_GT: 1 > 2 is false");
+    le_instruction_t cl = { .opcode = LE_OP_CMP_LT, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cl, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, zb), "CMP_LT: 1 < 2 is true");
+    le_instruction_t cge = { .opcode = LE_OP_CMP_GE, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cge, &img, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&img, zb), "CMP_GE: 1 >= 2 is false");
+    le_instruction_t cle = { .opcode = LE_OP_CMP_LE, .modifier = 0, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cle, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, zb), "CMP_LE: 1 <= 2 is true");
+
+    /* INVERT_OUT modifier flips the comparison result */
+    le_instruction_t cgi = { .opcode = LE_OP_CMP_GT, .modifier = LE_MOD_INVERT_OUT, .in_a = f0, .in_b = f1, .out = zb };
+    le_exec_instruction(&cgi, &img, 0);
+    TEST_ASSERT(le_process_image_get_bool(&img, zb), "CMP_GT with INVERT_OUT: !(1>2) is true");
+}
+
+void test_float_edge_cases(void)
+{
+    printf("Running test_float_edge_cases (DIV/0, NEG -0, ABS NaN, MIN/MAX, SCALE_F)...\n");
+    le_process_image_t img;
+    test_rt_reset();
+    test_img_init(&img);
+    test_bind_kind(LE_BLK_SCALER, 1, sizeof(le_scale_state_t));
+
+    uint16_t f0 = LE_ADDR_MAKE_FLOAT(0);
+    uint16_t f1 = LE_ADDR_MAKE_FLOAT(1);
+    uint16_t f2 = LE_ADDR_MAKE_FLOAT(2);
+
+    /* DIV by ~0 -> 0.0f (guarded) */
+    le_process_image_set_float(&img, f0, 1.0f);
+    le_process_image_set_float(&img, f1, 0.0f);
+    le_instruction_t dv = { .opcode = LE_OP_DIV_F, .modifier = 0, .in_a = f0, .in_b = f1, .out = f2 };
+    le_exec_instruction(&dv, &img, 0);
+    TEST_ASSERT(le_process_image_get_float(&img, f2) == 0.0f, "DIV_F by zero yields 0.0f (no inf/nan)");
+
+    le_process_image_set_float(&img, f1, 1e-10f);
+    le_exec_instruction(&dv, &img, 0);
+    TEST_ASSERT(le_process_image_get_float(&img, f2) == 0.0f, "DIV_F by sub-epsilon yields 0.0f");
+
+    /* NEG of -0.0 clears the sign bit */
+    le_process_image_set_float(&img, f0, -0.0f);
+    le_instruction_t ng = { .opcode = LE_OP_NEG_F, .modifier = 0, .in_a = f0, .in_b = LE_ADDR_UNUSED, .out = f2 };
+    le_exec_instruction(&ng, &img, 0);
+    TEST_ASSERT(le_process_image_get_float(&img, f2) == 0.0f && !signbit(le_process_image_get_float(&img, f2)),
+                "NEG_F(-0.0) is +0.0 (sign bit cleared)");
+
+    /* ABS of NaN remains NaN */
+    le_process_image_set_float(&img, f0, NAN);
+    le_instruction_t ab = { .opcode = LE_OP_ABS_F, .modifier = 0, .in_a = f0, .in_b = LE_ADDR_UNUSED, .out = f2 };
+    le_exec_instruction(&ab, &img, 0);
+    TEST_ASSERT(isnan(le_process_image_get_float(&img, f2)), "ABS_F(NaN) is NaN");
+
+    /* MIN/MAX select the correct operand */
+    le_process_image_set_float(&img, f0, 3.5f);
+    le_process_image_set_float(&img, f1, -2.5f);
+    le_instruction_t mn = { .opcode = LE_OP_MIN_F, .modifier = 0, .in_a = f0, .in_b = f1, .out = f2 };
+    le_exec_instruction(&mn, &img, 0);
+    TEST_ASSERT(le_process_image_get_float(&img, f2) == -2.5f, "MIN_F(3.5, -2.5) = -2.5");
+    le_instruction_t mx = { .opcode = LE_OP_MAX_F, .modifier = 0, .in_a = f0, .in_b = f1, .out = f2 };
+    le_exec_instruction(&mx, &img, 0);
+    TEST_ASSERT(le_process_image_get_float(&img, f2) == 3.5f, "MAX_F(3.5, -2.5) = 3.5");
+}
+
+void test_scale_opcode_with_state(void)
+{
+    printf("Running test_scale_opcode_with_state (SCALE_F linear remap + clamp)...\n");
+    le_process_image_t img;
+    test_rt_reset();
+    test_img_init(&img);
+    test_bind_kind(LE_BLK_SCALER, 1, sizeof(le_scale_state_t));
+
+    uint16_t f0 = LE_ADDR_MAKE_FLOAT(0);
+    uint16_t f2 = LE_ADDR_MAKE_FLOAT(2);
+    le_scale_state_t* ss = (le_scale_state_t*)le_process_image_kind_state(&img, LE_BLK_SCALER, 0);
+    TEST_ASSERT(ss != NULL, "scaler state bound for SCALE_F test");
+    if (ss != NULL) {
+        ss->raw_min = 0.0f;   ss->raw_max = 100.0f;
+        ss->scale_min = 0.0f; ss->scale_max = 10.0f;
+        ss->clamp = true;
+
+        le_instruction_t sc = { .opcode = LE_OP_SCALE_F, .modifier = 0, .in_a = f0, .in_b = LE_ADDR_UNUSED, .out = f2 };
+        le_process_image_set_float(&img, f0, 50.0f);
+        le_exec_instruction(&sc, &img, 0);
+        TEST_ASSERT(fabsf(le_process_image_get_float(&img, f2) - 5.0f) < 1e-4f, "SCALE_F: 50 of 0..100 -> 5.0");
+        le_process_image_set_float(&img, f0, 1000.0f);
+        le_exec_instruction(&sc, &img, 0);
+        TEST_ASSERT(le_process_image_get_float(&img, f2) == 10.0f, "SCALE_F: overload clamps to scale_max");
+        le_process_image_set_float(&img, f0, -1000.0f);
+        le_exec_instruction(&sc, &img, 0);
+        TEST_ASSERT(le_process_image_get_float(&img, f2) == 0.0f, "SCALE_F: under-range clamps to scale_min");
+    }
+}
+
+void test_arena_boundary_access(void)
+{
+    printf("Running test_arena_boundary_access (constants, OOB, AIN, round-trips)...\n");
+    le_process_image_t img;
+    test_img_init(&img); /* full compile-time maxima */
+
+    /* Constant region + unused fast paths */
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_CONST_FALSE), "BOOL const FALSE == false");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_CONST_TRUE), "BOOL const TRUE == true");
+    TEST_ASSERT(le_process_image_get_float(&img, LE_CONST_ZERO_F) == 0.0f, "FLOAT const 0.0 == 0");
+    TEST_ASSERT(le_process_image_get_float(&img, LE_CONST_ONE_F) == 1.0f, "FLOAT const 1.0 == 1");
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_UNUSED), "BOOL LE_ADDR_UNUSED == false");
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_UNUSED) == 0.0f, "FLOAT LE_ADDR_UNUSED == 0");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_UNUSED) == 0, "INT LE_ADDR_UNUSED == 0");
+
+    /* Out-of-range indices return the idle value, never crash */
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(LE_MAX_BOOL_REGS)),
+                "BOOL out-of-range reads false");
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(LE_MAX_FLOATS)) == 0.0f,
+                "FLOAT out-of-range reads 0");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(LE_MAX_INT_REGS)) == 0,
+                "INT out-of-range reads 0");
+#if LE_ENABLE_COMPLEX
+    {
+        le_complex_t z = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(LE_MAX_COMPLEX));
+        TEST_ASSERT(z.r == 0.0f && z.i == 0.0f, "CMPLX out-of-range reads 0+0j");
+        le_complex_t zc = le_process_image_get_complex(&img, LE_CONST_ZERO_C);
+        TEST_ASSERT(zc.r == 0.0f && zc.i == 0.0f, "CMPLX const ZERO_C == 0+0j");
+    }
+#endif
+#if LE_ENABLE_ANALOG
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_AIN(LE_MAX_ANALOG_IN)) == 0,
+                "AIN out-of-range reads 0");
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_AIN(LE_MAX_ANALOG_IN)) == 0.0f,
+                "AIN float out-of-range reads 0");
+#endif
+
+    /* Round-trips across the 4-byte buckets */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DOUT(3), true);
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(3)), "DOUT bit round-trip");
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(7), -42.125f);
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(7)) == -42.125f, "FLOAT round-trip");
+    le_process_image_set_int(&img, LE_ADDR_MAKE_INT_REG(9), -7000);
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(9)) == -7000, "INT round-trip");
+#if LE_ENABLE_COMPLEX
+    le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(2), le_c_make(1.5f, -2.5f));
+    {
+        le_complex_t z = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(2));
+        TEST_ASSERT(z.r == 1.5f && z.i == -2.5f, "CMPLX round-trip");
+    }
+#endif
+#if LE_ENABLE_ANALOG
+    le_process_image_set_float(&img, LE_ADDR_MAKE_AIN(2), 42.5f);
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_AIN(2)) == 42.5f, "AIN scaled round-trip");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_AIN(2)) == 42, "AIN raw mirrors the scaled value (truncated)");
+#endif
+}
+
+void test_arena_unaligned_reject(void)
+{
+    printf("Running test_arena_unaligned_reject (bind alignment)...\n");
+    le_header_t h;
+    memset(&h, 0, sizeof(h));
+    h.digital_in_count = 2; h.digital_out_count = 2; h.bool_reg_count = 4;
+    uint8_t buf[80];
+    le_process_image_t img;
+    TEST_ASSERT(le_process_image_bind(&img, buf, sizeof(buf), &h, NULL) == LE_OK,
+                "4-byte-aligned arena binds");
+    TEST_ASSERT(le_process_image_bind(&img, buf + 1, sizeof(buf) - 1, &h, NULL) == LE_ERR_CAPACITY,
+                "misaligned arena is rejected (typed-pointer safety)");
+}
+
+void test_storage_corrupt_slot(void)
+{
+    printf("Running test_storage_corrupt_slot (CRC detection, isolation)...\n");
+    const le_hal_t* sim = le_hal_get_sim();
+    sim->init();
+
+    le_storage_t storage;
+    le_storage_init(&storage, sim);
+    le_vm_t vm;
+    le_vm_init(&vm);
+
+    TEST_ASSERT(le_storage_write_chunk(&storage, 0, 0, le_default_program, sizeof(le_default_program)),
+                "slot 0 write ok");
+    TEST_ASSERT(le_storage_write_chunk(&storage, 1, 0, le_default_program, sizeof(le_default_program)),
+                "slot 1 write ok");
+
+    le_slot_info_t inf;
+    le_storage_get_slot_info(&storage, 0, &inf);
+    TEST_ASSERT(inf.valid, "slot 0 valid after write");
+
+    /* Corrupt one payload byte in the RAM partition. */
+    storage.ram_partitions[0][sizeof(le_header_t) + 10] ^= 0x55;
+    le_storage_get_slot_info(&storage, 0, &inf);
+    TEST_ASSERT(!inf.valid, "slot 0 invalid after payload corruption");
+    TEST_ASSERT(!le_storage_activate_slot(&storage, 0, &vm), "corrupt slot cannot be activated");
+
+    /* Sibling slots are unaffected. */
+    le_storage_get_slot_info(&storage, 1, &inf);
+    TEST_ASSERT(inf.valid, "slot 1 still valid (corruption is isolated)");
+    TEST_ASSERT(le_storage_activate_slot(&storage, 1, &vm), "slot 1 activates normally");
+    TEST_ASSERT(le_storage_get_active_slot(&storage) == 1, "active slot advanced to 1");
+    TEST_ASSERT(vm.instruction_count == 4, "VM loaded from the intact slot");
+}
+
+void test_cli_new_surface(void)
+{
+    printf("Running test_cli_new_surface (force mnemonics, pulse durations, junk)...\n");
+    const le_hal_t* sim = le_hal_get_sim();
+    sim->init();
+
+    le_storage_t storage;
+    le_storage_init(&storage, sim);
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, le_default_program, sizeof(le_default_program)) == LE_OK,
+                "default program loaded for CLI test");
+    /* Rebind a FULL register arena so pulse/force targets (BOOL 3..6) that the
+     * tiny example program does not declare are still writable test registers. */
+    test_img_init(&vm.image);
+
+    /* Attach a couple of program aliases so the `pulse` command has names. */
+    le_alias_t aliases[3] = {
+        { { 'P', 'U', 'L', 'S', 'E', '0', 0 }, 0, 0, LE_ADDR_MAKE_BOOL_REG(4) },
+        { { 'P', 'U', 'L', 'S', 'E', '1', 0 }, 0, 0, LE_ADDR_MAKE_BOOL_REG(5) },
+        { { 'F', 'O', 'R', 'C', 'E', 'B', 0 }, 0, 0, LE_ADDR_MAKE_BOOL_REG(6) }
+    };
+    le_vm_load_aliases(&vm, aliases, 3);
+
+    le_cli_t cli;
+    le_cli_init(&cli, &vm, &storage);
+
+    /* force with new mnemonics and the legacy spellings. */
+    feed_str_to_cli(&cli, "force %IN0 1\r\n");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "CLI 'force %IN0 1'");
+    feed_str_to_cli(&cli, "force din0 0\r\n");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "CLI legacy 'force din0 0'");
+    feed_str_to_cli(&cli, "force %B3 1\r\n");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(3)), "CLI 'force %B3 1'");
+    feed_str_to_cli(&cli, "force bool3 0\r\n");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(3)), "CLI legacy 'force bool3 0'");
+
+    /* pulse default (1 s) via alias */
+    feed_str_to_cli(&cli, "pulse PULSE0\r\n");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(4)), "CLI 'pulse PULSE0' armed (1 s)");
+    le_vm_step(&vm, 0);
+    le_vm_step(&vm, 1500);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(4)), "CLI default pulse expired after 1 s");
+
+    /* pulse with explicit duration (0.25 s) */
+    feed_str_to_cli(&cli, "pulse PULSE1 0.25\r\n");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(5)), "CLI 'pulse PULSE1 0.25' armed");
+    le_vm_step(&vm, 0);
+    le_vm_step(&vm, 250);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(5)), "CLI explicit pulse expired at 250 ms");
+
+    /* Unknown alias -> graceful "not found" (no state change, no crash) */
+    le_sim_capture_tx_reset();
+    feed_str_to_cli(&cli, "pulse NOPE\r\n");
+    TEST_ASSERT(vm.pulse_count == 0, "unknown alias leaves no pulse slots armed");
+
+    /* Junk command is tolerated. */
+    feed_str_to_cli(&cli, "zzz_unknown_cmd 1 2 3\r\n");
+    TEST_ASSERT(cli.mode == LE_CLI_MODE_NORMAL, "CLI stays in normal mode after junk input");
+}
+
 int main(void)
 {
     printf("============================================================\n");
@@ -1753,6 +2478,22 @@ int main(void)
     test_phasor_block_builtins();
     test_multi_block_conversions();
     test_overcurrent();
+
+    test_crc32_known_answers();
+    test_loader_negative_paths();
+    test_loader_state_desc_edges();
+    test_pulse_duration_expiry();
+    test_comms_pulse_command();
+    test_comms_negative_paths();
+
+    test_edge_latch_compare_opcodes();
+    test_gates_mux_compare_opcodes();
+    test_float_edge_cases();
+    test_scale_opcode_with_state();
+    test_arena_boundary_access();
+    test_arena_unaligned_reject();
+    test_storage_corrupt_slot();
+    test_cli_new_surface();
 
     printf("============================================================\n");
     printf(" RESULTS: %d PASSED, %d FAILED\n", g_tests_passed, g_tests_failed);

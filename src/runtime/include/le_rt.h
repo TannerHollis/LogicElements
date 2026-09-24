@@ -63,6 +63,17 @@ uint16_t le_rt_kind_size(uint8_t kind);
 void le_rt_set_kind_base(uint8_t kind, int32_t base);
 
 /**
+ * @brief Records how many instances of @p kind were declared in the loaded
+ * program. `le_rt_state` rejects indices at or past this count, hardening the
+ * resolver against malformed binaries that reference blocks the program never
+ * declared.
+ *
+ * @param kind Kind tag (see @ref le_status_t).
+ * @param count Declared instance count for the kind group (0 = none).
+ */
+void le_rt_set_kind_count(uint8_t kind, uint16_t count);
+
+/**
  * @brief Returns the workspace byte offset of the @p kind group, or -1 if no
  * state of that kind is present.
  */

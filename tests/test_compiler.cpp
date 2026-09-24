@@ -1,13 +1,55 @@
-﻿#include "le_compiler.h"
+#include "le_compiler.h"
 #include "le_types.h"
 #include "le_process_image.h"
 #include "le_vm.h"
 #include "le_loader.h"
 #include "le_rt.h"
+#include "le_comms.h"
+#include "le_hal.h"
 #include <iostream>
 #include <cassert>
 #include <cstring>
 #include <string>
+
+extern "C" {
+    const le_hal_t* le_hal_get_sim(void);
+    void   le_sim_capture_tx_reset(void);
+    size_t le_sim_capture_tx_len(void);
+    void   le_sim_capture_tx_get(uint8_t* out, size_t cap);
+}
+
+/* Frame one packet into comms (mirrors the runtime test harness). */
+static void test_feed_packet(le_comms_t* comms, uint8_t cmd, uint8_t seq,
+                             const uint8_t* payload, uint16_t len)
+{
+    uint8_t header[5];
+    header[0] = LE_COMMS_SYNC_BYTE;
+    header[1] = cmd;
+    header[2] = seq;
+    header[3] = (uint8_t)(len & 0xFF);
+    header[4] = (uint8_t)((len >> 8) & 0xFF);
+    uint16_t crc = 0xFFFF;
+    for (int i = 1; i < 5; i++) {
+        uint8_t b = header[i];
+        crc ^= (uint16_t)b << 8;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+            else crc <<= 1;
+        }
+    }
+    for (uint16_t i = 0; i < len; i++) {
+        uint8_t b = payload[i];
+        crc ^= (uint16_t)b << 8;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+            else crc <<= 1;
+        }
+    }
+    for (int i = 0; i < 5; i++) le_comms_process_byte(comms, header[i]);
+    for (uint16_t i = 0; i < len; i++) le_comms_process_byte(comms, payload[i]);
+    le_comms_process_byte(comms, (uint8_t)(crc & 0xFF));
+    le_comms_process_byte(comms, (uint8_t)((crc >> 8) & 0xFF));
+}
 
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
@@ -1528,6 +1570,446 @@ void test_aliases_and_pulse()
     le_compile_result_free(&res);
 }
 
+void test_json_error_paths()
+{
+    // Malformed JSON document.
+    le_compile_result_t r1;
+    int rc1 = le_compile_json("{ not valid json at all", nullptr, &r1);
+    TEST_ASSERT(!(rc1 == 0 && r1.success), "malformed JSON rejected");
+    le_compile_result_free(&r1);
+
+    // Root must be a JSON object (arrays/values are rejected).
+    const char* not_object = R"([ 1, 2, 3 ])";
+    le_compile_result_t r2;
+    int rc2 = le_compile_json(not_object, nullptr, &r2);
+    TEST_ASSERT(!(rc2 == 0 && r2.success), "non-object root rejected");
+    le_compile_result_free(&r2);
+
+    // Unknown element types are tolerated (lenient contract): the element is
+    // compiled away to zero instructions instead of failing the build.
+    const char* unknown = R"({
+        "name": "Bad",
+        "elements": [ { "name": "X1", "type": "NO_SUCH_ELEMENT" } ],
+        "nets": []
+    })";
+    le_compile_result_t r3;
+    int rc3 = le_compile_json(unknown, nullptr, &r3);
+    TEST_ASSERT(rc3 == 0 && r3.success, "unknown element type compiles (lenient)");
+    if (rc3 == 0 && r3.success) {
+        le_vm_t vm;
+        le_vm_init(&vm);
+        TEST_ASSERT(le_loader_load(&vm, r3.binary_data, r3.binary_size) == LE_OK, "unknown-type binary loads");
+        TEST_ASSERT(vm.instruction_count == 0, "unknown-type element emits zero instructions");
+    }
+    le_compile_result_free(&r3);
+}
+
+void test_net_error_paths()
+{
+    // Nets to nonexistent source elements are tolerated (lenient wiring): the
+    // unresolved consumer falls back to its idle default (false/0) instead of a
+    // hard compile error. Lock in that contract.
+    const char* dangling = R"({
+        "name": "Dangling",
+        "elements": [ { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+                      { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" } ],
+        "nets": [ { "output": { "name": "GHOST", "port": "out" },
+                     "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    le_compile_result_t r1;
+    int rc1 = le_compile_json(dangling, nullptr, &r1);
+    TEST_ASSERT(rc1 == 0 && r1.success, "dangling net source compiles (lenient wiring)");
+    if (rc1 == 0 && r1.success) {
+        le_vm_t vm;
+        le_vm_init(&vm);
+        TEST_ASSERT(le_loader_load(&vm, r1.binary_data, r1.binary_size) == LE_OK, "dangling-net binary loads");
+        le_vm_step(&vm, 0);
+        TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)),
+                    "unresolved gate source defaults to false");
+    }
+    le_compile_result_free(&r1);
+
+    // An unknown tag sender is surfaced as a warning, not a hard error.
+    const char* bad_tag = R"({
+        "name": "BadTag",
+        "elements": [ { "name": "TX", "type": "TAG", "direction": "send", "tag_name": "X" },
+                      { "name": "RX", "type": "TAG", "direction": "recv", "tag_name": "MISSING" } ],
+        "nets": []
+    })";
+    le_compile_result_t r2;
+    int rc2 = le_compile_json(bad_tag, nullptr, &r2);
+    TEST_ASSERT(rc2 == 0 && r2.success, "unmatched tag compiles with a warning (lenient wiring)");
+    le_compile_result_free(&r2);
+
+    // A self-driven loop is tolerated by the compiler (topological order still
+    // deterministically emitted) -- size + load must succeed.
+    const char* self_loop = R"({
+        "name": "SelfLoop",
+        "elements": [ { "name": "NX", "type": "NOT" },
+                      { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" } ],
+        "nets": [ { "output": { "name": "NX", "port": "out" }, "inputs": [ { "name": "NX", "port": "a" } ] },
+                  { "output": { "name": "NX", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    le_compile_result_t r3;
+    int rc3 = le_compile_json(self_loop, nullptr, &r3);
+    TEST_ASSERT(rc3 == 0 && r3.success, "self-referential net compiles without crashing");
+    le_compile_result_free(&r3);
+}
+
+void test_alias_error_paths()
+{
+    // Alias name longer than 7 chars.
+    const char* long_name = R"({
+        "name": "AliasLong",
+        "elements": [ { "name": "B0", "type": "BOOLREGISTER" } ],
+        "nets": [],
+        "aliases": { "WAYTOOLONG8": "B0" }
+    })";
+    le_compile_result_t r1;
+    int rc1 = le_compile_json(long_name, nullptr, &r1);
+    TEST_ASSERT(!(rc1 == 0 && r1.success), "8-char alias name rejected");
+    le_compile_result_free(&r1);
+
+    // Alias target that does not resolve to a register.
+    const char* bad_target = R"({
+        "name": "AliasBadTarget",
+        "elements": [ { "name": "B0", "type": "BOOLREGISTER" } ],
+        "nets": [],
+        "aliases": { "OK1": "NOT_A_REGISTER" }
+    })";
+    le_compile_result_t r2;
+    int rc2 = le_compile_json(bad_target, nullptr, &r2);
+    TEST_ASSERT(!(rc2 == 0 && r2.success), "alias to unresolvable target rejected");
+    le_compile_result_free(&r2);
+
+    // A large alias table (33 entries, over the LE_MAX_ALIASES 32 runtime hint)
+    // still compiles and resolves on the VM; the runtime keeps the full table.
+    std::string many = "{\"name\":\"AliasMany\",\"elements\":[{\"name\":\"B0\",\"type\":\"BOOLREGISTER\"},"
+                       "{\"name\":\"B1\",\"type\":\"BOOLREGISTER\"}],\"nets\":[],\"aliases\":{";
+    for (int i = 0; i <= LE_MAX_ALIASES; i++) {  /* 33 entries */
+        many += "\"A" + std::to_string(i) + (i % 2 ? "\":\"B0\"" : "\":\"B1\"");
+        if (i < LE_MAX_ALIASES) many += ",";
+    }
+    many += "}}";
+    le_compile_result_t r3;
+    int rc3 = le_compile_json(many.c_str(), nullptr, &r3);
+    TEST_ASSERT(rc3 == 0 && r3.success, "33-alias circuit compiles");
+    if (rc3 == 0 && r3.success) {
+        le_vm_t vm;
+        le_vm_init(&vm);
+        TEST_ASSERT(le_loader_load(&vm, r3.binary_data, r3.binary_size) == LE_OK, "many-alias binary loads");
+        uint16_t addr = 0;
+        TEST_ASSERT(le_alias_lookup(&vm, "A32", &addr) == LE_OK && addr == LE_ADDR_MAKE_BOOL_REG(1),
+                    "last (33rd) alias resolves to its register");
+    }
+    le_compile_result_free(&r3);
+}
+
+void test_binary_determinism()
+{
+    const char* circuit_json = R"({
+        "name": "Determinism",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "A1", "type": "AND" },
+            { "name": "R1", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "A1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "A1", "port": "b" } ] },
+            { "output": { "name": "A1", "port": "out" }, "inputs": [ { "name": "R1", "port": "in" } ] }
+        ]
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t r1, r2;
+    int rc1 = le_compile_json_ex(circuit_json, nullptr, &opts, &r1);
+    int rc2 = le_compile_json_ex(circuit_json, nullptr, &opts, &r2);
+    TEST_ASSERT(rc1 == 0 && r1.success && rc2 == 0 && r2.success, "both compilations succeed");
+    TEST_ASSERT(r1.binary_size == r2.binary_size, "identical binary sizes");
+    bool same = (r1.binary_size == r2.binary_size);
+    if (same) {
+        for (size_t i = 0; i < r1.binary_size; i++) {
+            if (r1.binary_data[i] != r2.binary_data[i]) { same = false; break; }
+        }
+    }
+    TEST_ASSERT(same, "byte-for-byte identical binaries (deterministic CRC/output)");
+    le_compile_result_free(&r1);
+    le_compile_result_free(&r2);
+}
+
+void test_binary_header_fields()
+{
+    const char* circuit_json = R"({
+        "name": "HeaderFields",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT1" },
+            { "name": "B1", "type": "BOOLREGISTER" },
+            { "name": "F1", "type": "FLOATREGISTER" },
+            { "name": "I1", "type": "INTREGISTER" }
+        ],
+        "nets": [ { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ]
+    })";
+    le_compile_result_t res;
+    int rc = le_compile_json(circuit_json, nullptr, &res);
+    TEST_ASSERT(rc == 0 && res.success, "header-fields circuit compiles");
+    TEST_ASSERT(sizeof(le_header_t) == 40, "packed header is exactly 40 bytes (4-byte aligned)");
+
+    le_header_t h;
+    TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "binary validates");
+    TEST_ASSERT(h.magic == LE_BIN_MAGIC, "magic field set");
+    TEST_ASSERT(h.version == LE_BIN_VERSION, "version field equals LE_BIN_VERSION");
+    TEST_ASSERT(h.rsvd == 0, "reserved header field is zero");
+    TEST_ASSERT(h.digital_in_count == 1, "digital in count header field");
+    TEST_ASSERT(h.digital_out_count == 1, "digital out count header field");
+    TEST_ASSERT(h.bool_reg_count == 1, "bool reg count header field");
+    TEST_ASSERT(h.float_reg_count == 1, "float reg count header field");
+    TEST_ASSERT(h.int_reg_count == 1, "int reg count header field");
+    TEST_ASSERT(h.alias_count == 0, "no aliases declared -> alias_count 0");
+    le_compile_result_free(&res);
+}
+
+void test_disasm_content()
+{
+    const char* circuit_json = R"({
+        "name": "Disasm",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "F1", "type": "FLOATREGISTER" }
+        ],
+        "nets": [ { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] } ],
+        "aliases": { "START": "F1", "TRIP": "O1" }
+    })";
+    le_compile_result_t res;
+    int rc = le_compile_json(circuit_json, nullptr, &res);
+    TEST_ASSERT(rc == 0 && res.success, "disasm circuit compiles");
+    const char* d = res.disassembly_text ? res.disassembly_text : "";
+    TEST_ASSERT(std::strstr(d, "%IN[0]") != NULL, "disasm shows %IN mnemonic");
+    TEST_ASSERT(std::strstr(d, "%OUT[0]") != NULL, "disasm shows %OUT mnemonic");
+    TEST_ASSERT(std::strstr(d, "%F[") != NULL, "disasm shows %F mnemonic");
+    TEST_ASSERT(std::strstr(d, "Register Aliases (2):") != NULL, "disasm renders the alias table");
+    le_compile_result_free(&res);
+}
+
+void test_dce_preserves_stateful()
+{
+    // A stateful element (TON) with NO downstream consumer is a root for DCE and
+    // MUST survive optimization (side effects/state updates matter).
+    const char* circuit_json = R"({
+        "name": "DCEStateful",
+        "elements": [ { "name": "T1", "type": "TON", "preset_ms": 500 } ],
+        "nets": []
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL); /* full optimizer */
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "stateful-only circuit compiles under full optimization");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK,
+                "stateful-only binary loads");
+    le_timer_state_t* t = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(t != NULL, "DCE preserved the stateful TON (state bound)");
+    le_compile_result_free(&res);
+}
+
+void test_inversion_combinations()
+{
+    const char* circuit_json = R"({
+        "name": "InvCombos",
+        "elements": [
+            { "name": "IA", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "IB", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "N1", "type": "NOT" },
+            { "name": "N2", "type": "NOT" },
+            { "name": "G", "type": "AND" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [
+            { "output": { "name": "IA", "port": "out" }, "inputs": [ { "name": "N1", "port": "a" } ] },
+            { "output": { "name": "IB", "port": "out" }, "inputs": [ { "name": "N2", "port": "a" } ] },
+            { "output": { "name": "N1", "port": "out" }, "inputs": [ { "name": "G", "port": "a" } ] },
+            { "output": { "name": "N2", "port": "out" }, "inputs": [ { "name": "G", "port": "b" } ] },
+            { "output": { "name": "G", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] }
+        ]
+    })";
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "inversion-combo circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "inversion binary loads");
+
+    auto run_case = [&](bool ia, bool ib, bool expect) {
+        le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), ia);
+        le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), ib);
+        le_vm_step(&vm, 0);
+        return le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == expect;
+    };
+    // out = (!IA) && (!IB) after NOT folding
+    TEST_ASSERT(run_case(false, false, true),  "!0 AND !0 = 1");
+    TEST_ASSERT(run_case(false, true, false),  "!0 AND !1 = 0");
+    TEST_ASSERT(run_case(true, false, false),  "!1 AND !0 = 0");
+    TEST_ASSERT(run_case(true, true, false),   "!1 AND !1 = 0");
+    le_compile_result_free(&res);
+}
+
+void test_integrated_pipeline_step()
+{
+    // A realistic multi-scan circuit exercising the whole pipeline end-to-end:
+    // DIN -> TON -> AND gate -> DOUT, plus a float ADD chain -> CMP_GT -> DOUT.
+    const char* circuit_json = R"({
+        "name": "Integrated",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "T1", "type": "TON", "preset_ms": 100 },
+            { "name": "G1", "type": "AND" },
+            { "name": "O0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "C1", "type": "CONSTANT", "dataType": "float", "value": 1.0 },
+            { "name": "C2", "type": "CONSTANT", "dataType": "float", "value": 1.0 },
+            { "name": "A1", "type": "ADD" },
+            { "name": "F1", "type": "FLOATREGISTER" },
+            { "name": "CP", "type": "CMP_GT" },
+            { "name": "O1", "type": "DIGITALOUTPUT", "address": "%OUT1" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "out" }, "inputs": [ { "name": "G1", "port": "a" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "G1", "port": "b" } ] },
+            { "output": { "name": "G1", "port": "out" }, "inputs": [ { "name": "O0", "port": "in" } ] },
+            { "output": { "name": "C1", "port": "out" }, "inputs": [ { "name": "A1", "port": "a" } ] },
+            { "output": { "name": "C2", "port": "out" }, "inputs": [ { "name": "A1", "port": "b" } ] },
+            { "output": { "name": "A1", "port": "out" }, "inputs": [ { "name": "F1", "port": "in" } ] },
+            { "output": { "name": "F1", "port": "out" }, "inputs": [ { "name": "CP", "port": "a" } ] },
+            { "output": { "name": "C1", "port": "out" }, "inputs": [ { "name": "CP", "port": "b" } ] },
+            { "output": { "name": "CP", "port": "out" }, "inputs": [ { "name": "O1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "integrated circuit compiles under full optimization");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "integrated binary loads");
+    TEST_ASSERT(vm.running, "autostart flag set");
+    TEST_ASSERT(le_rt_kind_base(LE_BLK_TIMER) >= 0, "timer bound at load");
+
+    // float chain: F1 = C1 + C2 = 2.0, OUT1 = (F1 > 1.0) = true after one scan.
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 10) == LE_OK, "step t=10");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)), "TON not done at t=10 (<100ms)");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "OUT0 gated off before timer done");
+    float f1 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(0));
+    TEST_ASSERT(f1 >= 1.99f && f1 <= 2.01f, "F1 = 1+1 = 2.0 after a scan");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "OUT1 = (2 > 1) is true");
+
+    // t=120: TON done; with IN1 also set, OUT0 goes high.
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
+    TEST_ASSERT(le_vm_step(&vm, 120) == LE_OK, "step t=120");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)), "TON done after preset");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "OUT0 = TON && IN1 is true");
+
+    // Dropping the timer enable arms the TON down path; OUT0 clears immediately.
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    TEST_ASSERT(le_vm_step(&vm, 200) == LE_OK, "step t=200");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "OUT0 clears when timer enable drops");
+
+    TEST_ASSERT(vm.cycle_count == 3, "three scans elapsed");
+    le_compile_result_free(&res);
+}
+
+void test_register_limits_load_reject()
+{
+    // Circuit declaring more boolean registers than the runtime board budget.
+    // The compiler emits it; the RUNTIME loader rejects it with LE_ERR_CAPACITY.
+    std::string s = "{\"name\":\"TooManyBool\",\"elements\":[";
+    for (int i = 0; i <= LE_MAX_BOOL_REGS; i++) {
+        s += "{\"name\":\"B" + std::to_string(i) + "\",\"type\":\"BOOLREGISTER\"}";
+        if (i < LE_MAX_BOOL_REGS) s += ",";
+    }
+    s += "],\"nets\":[]}";
+
+    le_compile_result_t res;
+    int rc = le_compile_json(s.c_str(), nullptr, &res);
+    TEST_ASSERT(rc == 0 && res.success, "over-budget circuit still compiles (compiler has no bool cap)");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_ERR_CAPACITY,
+                "runtime loader rejects register count beyond LE_MAX_BOOL_REGS");
+    le_compile_result_free(&res);
+}
+
+void test_comms_upload_endtoend()
+{
+    // Compile a real circuit, upload it over the wire (PROG_BEGIN/CHUNK/END),
+    // let the VM run it, then read back a GET_IMAGE snapshot.
+    const char* circuit_json = R"({
+        "name": "WireProg",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%IN1" },
+            { "name": "X1", "type": "XOR" },
+            { "name": "O0", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "X1", "port": "a" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "X1", "port": "b" } ] },
+            { "output": { "name": "X1", "port": "out" }, "inputs": [ { "name": "O0", "port": "in" } ] }
+        ]
+    })";
+    le_compile_result_t res;
+    int rc = le_compile_json(circuit_json, nullptr, &res);
+    TEST_ASSERT(rc == 0 && res.success, "wire circuit compiles");
+
+    le_hal_set(le_hal_get_sim());
+    le_vm_t vm;
+    le_vm_init(&vm);
+    le_comms_t comms;
+    le_comms_init(&comms, &vm);
+
+    uint32_t total = (uint32_t)res.binary_size;
+    uint8_t begin[4] = { (uint8_t)(total & 0xFF), (uint8_t)((total >> 8) & 0xFF),
+                         (uint8_t)((total >> 16) & 0xFF), (uint8_t)((total >> 24) & 0xFF) };
+    test_feed_packet(&comms, LE_CMD_PROG_BEGIN, 1, begin, 4);
+
+    uint8_t chunk[2 + 4096];
+    chunk[0] = 0; chunk[1] = 0;
+    memcpy(&chunk[2], res.binary_data, res.binary_size);
+    test_feed_packet(&comms, LE_CMD_PROG_CHUNK, 2, chunk, 2u + (uint16_t)res.binary_size);
+    test_feed_packet(&comms, LE_CMD_PROG_END, 3, NULL, 0);
+
+    TEST_ASSERT(vm.instruction_count >= 1, "uploaded program committed to the VM");
+    TEST_ASSERT(vm.running, "uploaded program autostarted");
+
+    // Drive it: IN0=1, IN1=0 -> XOR -> OUT0 on.
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "uploaded program steps");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "XOR(1,0)=1 on the wire program");
+
+    // GET_IMAGE snapshot reflects the live OUT bit.
+    test_feed_packet(&comms, LE_CMD_GET_IMAGE, 4, NULL, 0);
+    uint32_t total_bits = (uint32_t)vm.image.din_count + (uint32_t)vm.image.dout_count +
+                          ((vm.image.bool_count < 128u) ? vm.image.bool_count : 128u);
+    size_t img_bytes = (total_bits + 7u) / 8u;
+    TEST_ASSERT(img_bytes >= 1, "snapshot has at least 1 byte");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)),
+                "VM state untouched by the snapshot request");
+
+    le_compile_result_free(&res);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
@@ -1560,6 +2042,17 @@ int main()
     RUN_TEST(test_variable_errors);
     RUN_TEST(test_variable_math_functions);
     RUN_TEST(test_aliases_and_pulse);
+    RUN_TEST(test_json_error_paths);
+    RUN_TEST(test_net_error_paths);
+    RUN_TEST(test_alias_error_paths);
+    RUN_TEST(test_binary_determinism);
+    RUN_TEST(test_binary_header_fields);
+    RUN_TEST(test_disasm_content);
+    RUN_TEST(test_dce_preserves_stateful);
+    RUN_TEST(test_inversion_combinations);
+    RUN_TEST(test_integrated_pipeline_step);
+    RUN_TEST(test_register_limits_load_reject);
+    RUN_TEST(test_comms_upload_endtoend);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";

@@ -103,10 +103,28 @@ the way down to boolean-only):
 | Switch | Gated subsystem |
 | :--- | :--- |
 | `LE_ENABLE_PROTECTION` | Protection & control relays (phasor, overcurrent, diff87, dist21, …) |
-| `LE_ENABLE_COMPLEX` | Complex arithmetic + `%C` registers |
-| `LE_ENABLE_ANALOG` | Analog inputs `%AIN` |
+| `LE_ENABLE_COMPLEX` | Complex arithmetic, `%C` registers & complex conversions |
+| `LE_ENABLE_ANALOG` | Analog inputs `%AIN` and scaling |
 | `LE_ENABLE_SERIAL_BUS` | I2C / SPI blocks |
 | `LE_ENABLE_DSP` | DSP / filter blocks |
+
+**Prerequisites are forced on automatically** — a higher layer cannot be built without its
+lower layers, so enabling one turns its dependencies ON (the `le_types.h` config block
+re-asserts the prerequisites at compile time):
+
+```
+LE_ENABLE_PROTECTION  =>  LE_ENABLE_COMPLEX  =>  LE_ENABLE_ANALOG
+LE_ENABLE_DSP         =>  LE_ENABLE_ANALOG
+```
+
+- Complex phasors / `%C` require analog channels to acquire their signals → **complex implies analog**.
+- Protection relays operate on phasors → **protection implies complex** (hence analog).
+- DSP filters mix sampled (analog) channels → **dsp implies analog**.
+
+The higher-layer switch is the master control: set `LE_ENABLE_PROTECTION=1`
+(`LE_ENABLE_DSP=1`) and the complex/analog prerequisites are compiled in regardless of
+what the lower switches say; set it to `0` to drop the whole subtree. Reaching a
+**boolean-only** target still means setting *all five* switches to `0`.
 
 Example: the ATmega328P firmware build sets
 `-DLE_RAM_WORKSPACE_BYTES=512 -DLE_MAX_DIGITAL_IN=6 -DLE_MAX_DIGITAL_OUT=6
