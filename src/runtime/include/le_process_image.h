@@ -13,26 +13,76 @@ extern "C" {
 #endif
 
 typedef struct {
-    uint8_t                din[(LE_MAX_DIGITAL_IN + 7) / 8];
-    uint8_t                dout[(LE_MAX_DIGITAL_OUT + 7) / 8];
-    uint8_t                bool_regs[(LE_MAX_BOOL_REGS + 7) / 8];
-    float                  floats[LE_MAX_FLOATS];
-#if LE_ENABLE_COMPLEX
-    le_complex_t           cmplx[LE_MAX_COMPLEX];
-#endif
-    int32_t                int_regs[LE_MAX_INT_REGS];
-#if LE_ENABLE_ANALOG
-    int32_t                ain_raw[LE_MAX_ANALOG_IN];
-    float                  ain[LE_MAX_ANALOG_IN];
-#endif
+    /* Register arena: a packed slice of the shared RAM workspace sized from the
+     * loaded program's declared register counts (see le_process_image_bind).
+     * NULL until a program is bound; before that all register accessors return
+     * their idle/default value. The bit bucket always begins at byte 0 with the
+     * DIN bits, then DOUT, then BOOL, forming one contiguous bit stream. */
+    uint8_t*  regs;                /**< Caller-owned RAM base of the register arena (or NULL). */
+
+    /* Declared register counts (from the .lebin header; 0 before a program loads). */
+    uint16_t  din_count;           /**< Digital input bits allocated. */
+    uint16_t  dout_count;          /**< Digital output bits allocated. */
+    uint16_t  bool_count;          /**< Boolean register bits allocated. */
+    uint16_t  float_count;         /**< Float registers allocated. */
+    uint16_t  int_count;           /**< Int registers allocated. */
+    uint16_t  cmplx_count;         /**< Complex registers allocated. */
+    uint16_t  ain_count;           /**< Analog input channels allocated. */
+
+    /* Byte offsets of each packed bucket within regs (computed by bind). Each
+     * bucket is 4-byte aligned; the bit bucket starts at byte 0. */
+    uint16_t  floats_off;          /**< Float bucket byte offset. */
+    uint16_t  ints_off;            /**< Int bucket byte offset. */
+    uint16_t  cmplx_off;           /**< Complex bucket byte offset. */
+    uint16_t  ain_off;             /**< Analog bucket byte offset (raw int32, then float). */
+
+    /* Typed bucket pointers (regs + offset), set by bind. The arena base is
+     * required to be 4-byte aligned, and every offset is a multiple of 4, so
+     * these are naturally aligned and the hot accessors use direct loads/stores
+     * instead of memcpy. NULL when regs is NULL. */
+    float*          floats;        /**< == regs + floats_off. */
+    int32_t*        ints;          /**< == regs + ints_off. */
+    le_complex_t*   cmplx;         /**< == regs + cmplx_off. */
+    int32_t*        ain_raw;       /**< == regs + ain_off (raw int32 channels). */
+    float*          ain_vals;      /**< == regs + ain_off + ain_count*4 (scaled float channels). */
 } le_process_image_t;
 
 /**
- * @brief Initializes the process image table, clearing all bits, registers, and block states.
+ * @brief Initializes the process image descriptor (regs = NULL, all counts 0).
  *
  * @param img Pointer to the process image structure to initialize.
  */
 void le_process_image_init(le_process_image_t* img);
+
+/**
+ * @brief Computes the register-arena bytes a program with @p h's declared
+ * register counts needs (bit bucket + floats + ints + complex + analog, aligned).
+ *
+ * @param h Parsed .lebin header declaring the register counts.
+ * @return Total packed arena size in bytes.
+ */
+uint32_t le_process_image_regs_len(const le_header_t* h);
+
+/**
+ * @brief Binds a process image to the front of a shared RAM workspace, packing
+ * the register buckets from @p h's declared counts.
+ *
+ * Sizes the register arena from the actual declared counts (so RAM tracks what
+ * the program uses), 4-byte-aligns each bucket, and points @p img->regs at
+ * @p arena. @p arena_bytes is the RAM budget for the register slice (from the
+ * board's unified LE_RAM_WORKSPACE_BYTES pool). The calling program is rejected
+ * with @ref LE_ERR_CAPACITY when the arena would exceed the budget.
+ *
+ * @param img Pointer to the process image to (re)bind.
+ * @param arena Caller-owned byte buffer the register arena is packed into.
+ * @param arena_bytes Total bytes available at @p arena for the register slice.
+ * @param h Parsed .lebin header declaring the register counts.
+ * @param out_regs_len On success, receives the number of arena bytes used (may be NULL).
+ * @return @ref LE_OK on success, @ref LE_ERR_NULL_PTR if required pointers are
+ *         NULL, or @ref LE_ERR_CAPACITY if the packed arena exceeds @p arena_bytes.
+ */
+le_status_t le_process_image_bind(le_process_image_t* img, uint8_t* arena, uint32_t arena_bytes,
+                                  const le_header_t* h, uint32_t* out_regs_len);
 
 /**
  * @brief Reads a boolean value from the specified 16-bit process image address.

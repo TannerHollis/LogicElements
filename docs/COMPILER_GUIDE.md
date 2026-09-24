@@ -477,12 +477,16 @@ contiguous **8-byte instructions**, then the variable-arity block table, the
 declared — a **register-alias table**. All of it is covered by a trailing IEEE
 802.3 CRC32 over the whole payload.
 
-### Binary Header (34 Bytes)
+### Binary Header (40 Bytes)
+
+The header is padded to a multiple of 4 bytes so the zero-copy instruction array
+that follows starts at a 4-byte-aligned offset (important for in-flash
+execution).
 
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `6`). |
+| `0x04` | `version` | `uint16_t` | Format version (Current: `8`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
 | `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%IN). |
@@ -490,11 +494,14 @@ declared — a **register-alias table**. All of it is covered by a trailing IEEE
 | `0x0E` | `bool_reg_count` | `uint16_t` | Total internal boolean registers allocated (%B). |
 | `0x10` | `float_reg_count` | `uint16_t` | Total float registers allocated (%F). |
 | `0x12` | `complex_reg_count` | `uint16_t` | Total complex registers allocated (%C). |
-| `0x14` | `block_count` | `uint16_t` | Number of variable-arity block descriptors. |
-| `0x16` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
-| `0x18` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
-| `0x1C` | `alias_count` | `uint16_t` | Number of user-declared register aliases in the trailing alias table. |
-| `0x1E` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table). |
+| `0x14` | `int_reg_count` | `uint16_t` | Total int registers allocated (%I). |
+| `0x16` | `analog_in_count` | `uint16_t` | Total analog input channels allocated (%AIN). |
+| `0x18` | `block_count` | `uint16_t` | Number of variable-arity block descriptors. |
+| `0x1A` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
+| `0x1C` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
+| `0x20` | `alias_count` | `uint16_t` | Number of user-declared register aliases in the trailing alias table. |
+| `0x22` | `rsvd` | `uint16_t` | Reserved (0). Pads the header to 40 bytes so instructions are 4-byte aligned. |
+| `0x24` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table). |
 
 > State element instances are **not** enumerated per type in the header. The
 > compiler bakes each block's state (defaults + properties) as concrete bytes
@@ -524,11 +531,13 @@ families use the canonical user-facing names (`%IN`, `%OUT`, `%AIN`, `%B`, `%I`,
 | Digital Outputs | `0x1000 - 0x1FFF` | `%OUT[i]` | Read/write physical digital outputs (%OUT) |
 | Boolean Registers | `0x2000 - 0x3FFF` | `%B[i]` / `T_B[i]` | Bit-packed internal coils & scratchpads (%B) |
 | Float Registers | `0x4000 - 0x7FFF` | `%F[i]` / `T_F[i]` | 32-bit floating-point registers (%F) |
-| Timers | `0x8000 - 0x8FFF` | `TIMER[i]` | Hardware timer state blocks |
-| Counters | `0x9000 - 0x9FFF` | `COUNTER[i]` | Hardware counter state blocks |
+| Timers | `0x8000 - 0x8FFF` | `TIMER[i]` | Timer state blocks |
+| Counters | `0x9000 - 0x9FFF` | `COUNTER[i]` | Counter state blocks |
 | Integer Registers | `0xA000 - 0xAFFF` | `%I[i]` / `T_I[i]` | 32-bit integer registers (%I) |
 | Analog Inputs | `0xB000 - 0xBFFF` | `%AIN[i]` | Hardware ADC channels (%AIN) |
-| Constants / Special | `0xF000 - 0xFFFF` | `FALSE`, `TRUE`, `0.0f` | Immediate constants & unused ports |
+| Constants | `0xC000 - 0xDFFF` | `FALSE`, `TRUE`, `0.0f`, `0+0j` | Immediate constants (`LE_CONST_*`) |
+| Complex Registers | `0xD000 - 0xDFFF` | `%C[i]` / `T_C[i]` | Complex register pairs (real+imag) (%C) |
+| Reserved | `0xE000 - 0xFFFE` | — | Unused; `0xFFFF` is `LE_ADDR_UNUSED` (empty/fast-false) |
 
 > The legacy `%I` (digital input) / `%Q` / `%M` / `%R` spellings were renamed to
 > `%IN` / `%OUT` / `%B` / `%F` respectively in binary version `6`. Existing
@@ -623,7 +632,7 @@ LogicElements provides a suite of real-time digital signal processing blocks des
 
 To guarantee deterministic scan cycles and eliminate fragmentation risks on bare-metal microcontrollers, all DSP filter blocks adhere to a **zero-heap memory guarantee** (`malloc = 0`):
 - All filter internal states (delay lines, accumulators, sample buffers) are baked into the **preconfigured state image** and copied verbatim into the platform's state workspace at load — never allocated at runtime.
-- There are **no per-type instance caps**. Capacity is `state_img_len ≤ LE_STATE_WORKSPACE_BYTES` (the board's RAM workspace); the compiler validates the circuit's total state fits before it is ever loaded.
+- There are **no per-type instance caps**. Capacity is `register arena + state image ≤ LE_RAM_WORKSPACE_BYTES` (the board's unified RAM workspace): registers are packed from the .lebin's declared counts and the state image is copied verbatim after them; the compiler validates the circuit's total fits before it is ever loaded.
 - DSP state blocks persist across scan cycles and are re-initialized cleanly when switching configuration slots or issuing a system reset.
 - State blocks are enabled by default via `LE_ENABLE_DSP 1`.
 

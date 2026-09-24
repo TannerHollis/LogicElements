@@ -602,7 +602,7 @@ Adopters can fine-tune memory limits to match any microcontroller by setting def
 /* Zero-heap state workspace shared by ALL stateful elements: the compiler
    bakes each block state (defaults + properties) into a state image in the
    .lebin and the loader copies it into this RAM workspace at load. */
-#define LE_STATE_WORKSPACE_BYTES 2048    /* workspace bytes (board-tunable) */
+#define LE_RAM_WORKSPACE_BYTES 2048    /* unified RAM workspace (registers + state) */
 ```
 
 ### Typical footprint across architectures

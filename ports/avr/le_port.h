@@ -16,6 +16,15 @@
  * Include this header and the matching `le_port.c` in your MCU project.
  */
 
+/* ========================================================================== */
+/* Board build tuning — matches ports/avr/atmega328p.leconfig                 */
+/* --------------------------------------------------------------------------
+ * -DLE_RAM_WORKSPACE_BYTES=512      (2 KB total RAM; profile declares 512)
+ * -DLE_MAX_DIGITAL_IN=6  -DLE_MAX_DIGITAL_OUT=6   -DLE_MAX_BOOL_REGS=32
+ * -DLE_MAX_FLOATS=16     -DLE_MAX_INT_REGS=16     -DLE_MAX_ANALOG_IN=6
+ * -DLE_ENABLE_PROTECTION=0          (profile: "protection": false; saves RAM)
+ * feature switches complex/analog/dsp/serial_bus stay at their defaults (1).
+ * ========================================================================== */
 #ifndef LE_PORT_H
 #define LE_PORT_H
 

@@ -128,36 +128,50 @@ function ids `>= 0x80` are dispatched to the board HAL `ext_call`:
 
 ---
 
-## Zero-heap state workspace (`src/runtime/src/le_rt.c`)
+## Zero-heap unified RAM workspace (`src/runtime/src/le_rt.c`, `le_process_image.c`)
 
-All stateful "complex" elements (timers, counters, PID, phasors, scalers, DSP
-filters, protection) used to live in fixed arrays inside `le_process_image_t`.
-They now live in a **single contiguous RAM workspace** (`le_rt_workspace()`, sized
-`LE_STATE_WORKSPACE_BYTES`) that the loader fills by memcpy'ing a
-**preconfigured state image** carried in the `.lebin`. The compiler bakes every
-stateful block (defaults + all circuit properties as concrete bytes); the loader
-just copies it and records each kind group's byte offset.
+The runtime draws **all runtime state from one board-tunable RAM pool**
+(`LE_RAM_WORKSPACE_BYTES`, a fixed static buffer inside `le_vm_t`). At load the
+loader carves it into two contiguous slices:
+
+1. **Register arena** (front) — the packed process-image registers only, sized
+   from the `.lebin`'s declared register counts: a contiguous bit bucket (DIN
+   bits, then DOUT, then BOOL), followed by 4-byte-aligned float, int, complex,
+   and analog buckets. A 8-coil / 1-float program therefore uses a handful of
+   bytes, not fixed per-type arrays.
+2. **State workspace** (back) — `le_rt_workspace()`, a slice the loader fills by
+   memcpy'ing a **preconfigured state image** carried in the `.lebin`. The
+   compiler bakes every stateful block (defaults + all circuit properties) as
+   concrete bytes; the loader just copies it and records each kind group's byte
+   offset.
+
+Register accessors (`le_process_image_get/set_*`) compute offsets into the
+arena from the bound counts; stateful handlers resolve blocks via
+`le_rt_state(kind, idx)`.
 
 | Term | Meaning |
 | :--- | :--- |
-| `le_rt_workspace()` / `le_rt_workspace_bytes()` | The platform's RAM state workspace. |
+| `le_process_image_bind` / `le_process_image_regs_len` | Pack/locate the register arena from header counts. |
+| `le_rt_bind(base, len)` / `le_rt_workspace_bytes()` | The RAM slice reserved for state after the register arena. |
 | `le_rt_set_kind_base(kind, off)` / `le_rt_kind_base(kind)` | Byte offset of a kind group within the image. |
 | `le_rt_state(kind, idx)` | Resolves block `idx` of `kind` to `workspace + base + idx * sizeof`. |
 | `le_process_image_kind_state(kind, idx)` | Lookup used by handlers (delegates to `le_rt_state`). |
 
 At boot the loader:
 
-1. Reads the **state-directive table** (`{ kind, count, size }`).
-2. `memcpy`'s the **state image** into the workspace and records each kind
-   group's byte offset from the directives. No allocation and no config pass —
-   the image already contains defaults + every element's properties.
+1. Computes the register arena size from the header counts and binds the process
+   image to the FRONT of the pool.
+2. Reads the **state-directive table** (`{ kind, count, size }`), then `memcpy`'s
+   the **state image** into the remaining slice and records each kind group's
+   byte offset from the directives. No allocation and no config pass.
 
 During a scan, each stateful handler resolves its block via `le_rt_state(kind, idx)`.
-"Does it fit?" is checked at load (`state_img_len ≤ LE_STATE_WORKSPACE_BYTES`),
-not by any per-type element cap.
+"Does it fit?" is checked at load (`register arena + state image ≤
+LE_RAM_WORKSPACE_BYTES`), not by any per-type element cap.
 
-**Why:** RAM proportional to use rather than per-type maxima; cross-type budget
-sharing under one byte cap; still *zero heap* at runtime.
+**Why:** RAM proportional to use rather than per-type maxima; one shared budget
+across registers *and* state blocks (a register-heavy program leaves less room
+for state and vice versa); still *zero heap* at runtime.
 
 ---
 

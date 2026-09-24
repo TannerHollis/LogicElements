@@ -83,3 +83,33 @@ static const stm32_pin_t OUTPUT_PINS[] = {
 static const uint8_t INPUT_PINS[]  = { 14, 15, 16 }; // %I[0], %I[1], %I[2] on GP14, GP15, GP16
 static const uint8_t OUTPUT_PINS[] = { 25, 18, 19 }; // %Q[0] on Onboard LED, %Q[1], %Q[2] on Relays
 ```
+
+---
+
+## Runtime capacity & feature switches (matching your `.leconfig`)
+
+The runtime is sized by **build-time macros** (defaults in `src/runtime/include/le_types.h`).
+Your port build should pin them to the values the board profile (`*.leconfig`) declares, so
+the compiler and the loader agree:
+
+| Runtime macro | Meaning |
+| :--- | :--- |
+| `LE_RAM_WORKSPACE_BYTES` | The one board-tunable **unified RAM pool** the loader carves into a packed **register arena** (sized from the program's declared register counts) followed by the **state blocks**. A program is rejected at load when `register arena + state image > LE_RAM_WORKSPACE_BYTES`. |
+| `LE_MAX_DIGITAL_IN/OUT`, `LE_MAX_BOOL_REGS`, `LE_MAX_FLOATS`, `LE_MAX_INT_REGS`, `LE_MAX_ANALOG_IN` | Per-region ceilings. Must be **≥** the profile's `digital_inputs`, `digital_outputs`, `coils`, `floats`, `analog_inputs`. |
+
+Feature switches (each `0` removes the subsystem's state/opcodes — a board can be reduced all
+the way down to boolean-only):
+
+| Switch | Gated subsystem |
+| :--- | :--- |
+| `LE_ENABLE_PROTECTION` | Protection & control relays (phasor, overcurrent, diff87, dist21, …) |
+| `LE_ENABLE_COMPLEX` | Complex arithmetic + `%C` registers |
+| `LE_ENABLE_ANALOG` | Analog inputs `%AIN` |
+| `LE_ENABLE_SERIAL_BUS` | I2C / SPI blocks |
+| `LE_ENABLE_DSP` | DSP / filter blocks |
+
+Example: the ATmega328P firmware build sets
+`-DLE_RAM_WORKSPACE_BYTES=512 -DLE_MAX_DIGITAL_IN=6 -DLE_MAX_DIGITAL_OUT=6
+-DLE_MAX_BOOL_REGS=32 -DLE_MAX_FLOATS=16 -DLE_MAX_ANALOG_IN=6 -DLE_ENABLE_PROTECTION=0`
+to match `ports/avr/atmega328p.leconfig`. Each reference port documents its exact flag set at
+the top of its `le_port.h`.

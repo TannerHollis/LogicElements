@@ -546,6 +546,13 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
 
     out << "I/O Allocation:      DIN:" << h.digital_in_count << "  DOUT:" << h.digital_out_count
         << "  " << bool_summary << "  " << float_summary
+        << "  INT:" << h.int_reg_count
+#if LE_ENABLE_ANALOG
+        << "  AIN:" << h.analog_in_count
+#endif
+#if LE_ENABLE_COMPLEX
+        << "  CMPLX:" << h.complex_reg_count
+#endif
         << "  StateGroups:" << h.state_desc_count
         << "  StateImage:" << h.state_img_len << " bytes"
         << "  Aliases:" << h.alias_count << "\n";

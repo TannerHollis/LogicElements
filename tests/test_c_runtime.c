@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file test_c_runtime.c
  * @brief Comprehensive automated unit tests for LogicElements C Runtime.
  */
@@ -21,13 +21,13 @@ const le_hal_t* le_hal_get_sim(void);
  * previously shipped in example_configs/example_embedded.h. It is embedded here
  * so the runtime tests carry no external config dependency. */
 static const uint8_t le_default_program[] = {
-    0x31, 0x42, 0x45, 0x4c, 0x06, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
+    0x31, 0x42, 0x45, 0x4c, 0x08, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
     0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xde, 0x68, 0xbf, 0xc5, 0x03, 0x00,
-    0x00, 0x00, 0x01, 0x00, 0x00, 0x20, 0x04, 0x00, 0x00, 0x00, 0x01, 0x00,
-    0x01, 0x20, 0x01, 0x00, 0x01, 0x20, 0xff, 0xff, 0x00, 0x10, 0x01, 0x00,
-    0x00, 0x20, 0xff, 0xff, 0x01, 0x10
-}; /* 66 bytes, version 6 */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xde, 0x68, 0xbf, 0xc5, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x20,
+    0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x20, 0x01, 0x00, 0x01, 0x20,
+    0xff, 0xff, 0x00, 0x10, 0x01, 0x00, 0x00, 0x20, 0xff, 0xff, 0x01, 0x10
+}; /* 72 bytes, version 8 (40-byte 4-aligned header) */
 
 int g_tests_passed = 0;
 int g_tests_failed = 0;
@@ -42,9 +42,40 @@ int g_tests_failed = 0;
 } while (0)
 
 /* Manual-opcode tests bypass the loader, so they place state structs directly
- * into the state workspace and record the kind group's byte offset. */
+ * into the state workspace and record the kind group's byte offset. They bind
+ * a private state slice + register arena (le_rt_bind / le_process_image_bind)
+ * instead of relying on a static runtime buffer. */
 static uint32_t s_test_off = 0;
-static void test_rt_reset(void) { le_rt_reset(); s_test_off = 0; }
+static uint8_t  s_test_ws[LE_RAM_WORKSPACE_BYTES];
+/* The register arena is accessed through typed pointers (direct loads), so
+ * it must be 4-byte aligned; the union forces that. */
+static union {
+    uint8_t   b[LE_RAM_WORKSPACE_BYTES];
+    uint32_t  _align4[(LE_RAM_WORKSPACE_BYTES + 3) / 4];
+} s_test_reg_arena;
+static void test_rt_reset(void) { le_rt_bind(s_test_ws, sizeof(s_test_ws)); le_rt_reset(); s_test_off = 0; }
+
+/* Binds a standalone process image at the FULL compile-time maxima so manual
+ * opcode tests can exercise every register region without loading a program. */
+static void test_img_init(le_process_image_t* img)
+{
+    le_header_t full;
+    memset(&full, 0, sizeof(full));
+    full.digital_in_count  = LE_MAX_DIGITAL_IN;
+    full.digital_out_count = LE_MAX_DIGITAL_OUT;
+    full.bool_reg_count    = LE_MAX_BOOL_REGS;
+    full.float_reg_count   = LE_MAX_FLOATS;
+    full.int_reg_count     = LE_MAX_INT_REGS;
+#if LE_ENABLE_COMPLEX
+    full.complex_reg_count = LE_MAX_COMPLEX;
+#endif
+#if LE_ENABLE_ANALOG
+    full.analog_in_count   = LE_MAX_ANALOG_IN;
+#endif
+    le_process_image_init(img);
+    memset(s_test_reg_arena.b, 0, sizeof(s_test_reg_arena.b)); /* clear stale bits (old init zeroed the struct) */
+    le_process_image_bind(img, s_test_reg_arena.b, sizeof(s_test_reg_arena.b), &full, NULL);
+}
 
 /* Places `count` zeroed blocks of `size` bytes for `kind` into the workspace at
  * the current offset, so le_process_image_timer/counter/kind_state resolve. */
@@ -59,7 +90,7 @@ void test_process_image(void)
 {
     printf("Running test_process_image...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* Test digital inputs */
     TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DIN(0)), "DIN 0 initially false");
@@ -104,7 +135,7 @@ void test_basic_opcodes(void)
 {
     printf("Running test_basic_opcodes...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* Test AND gate */
     le_instruction_t inst_and = {
@@ -158,7 +189,7 @@ void test_timer_opcode(void)
 {
     printf("Running test_timer_opcode (TON)...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_TIMER, 2, sizeof(le_timer_state_t));
 
@@ -334,7 +365,7 @@ void test_protection_relays(void)
 {
     printf("Running test_protection_relays (Phasor 1P, SymComp, Diff 87, Dist 21)...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_PHASOR, 4, sizeof(le_phasor_state_t));
         test_bind_kind(LE_BLK_SYMCOMP, 1, sizeof(le_symcomp_state_t));
@@ -660,7 +691,7 @@ void test_serial_bus_i2c_spi(void)
     le_hal_set(sim);
 
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_I2C, 1, sizeof(le_i2c_device_state_t));
         test_bind_kind(LE_BLK_SPI, 1, sizeof(le_spi_device_state_t));
@@ -807,7 +838,7 @@ void test_board_capabilities_query(void)
     TEST_ASSERT(caps.max_analog_in == LE_MAX_ANALOG_IN, "Max AIN matches configuration");
     TEST_ASSERT(caps.max_bool_regs == LE_MAX_BOOL_REGS, "Max Bool Regs matches configuration");
     TEST_ASSERT(caps.max_floats == LE_MAX_FLOATS, "Max Floats matches configuration");
-    TEST_ASSERT(caps.workspace_bytes == LE_STATE_WORKSPACE_BYTES, "State workspace bytes matches configuration");
+    TEST_ASSERT(caps.workspace_bytes == LE_RAM_WORKSPACE_BYTES, "State workspace bytes matches configuration");
     TEST_ASSERT(caps.config_slots == LE_MAX_CONFIG_SLOTS, "Config slots matches LE_MAX_CONFIG_SLOTS");
     TEST_ASSERT(caps.slot_size_bytes == LE_SLOT_SIZE_BYTES, "Slot size matches LE_SLOT_SIZE_BYTES");
 
@@ -849,7 +880,7 @@ void test_custom_nodes_and_ext_call(void)
     le_hal_set(sim);
 
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* 1. Test LE_OP_EXT_CALL Function 1: Hardware Sqrt */
     le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 144.0f);
@@ -942,7 +973,7 @@ void test_analog_inputs_and_scaling(void)
     printf("Running test_analog_inputs_and_scaling...\n");
     test_rt_reset();
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
     test_rt_reset(); /* clean state arena for this test */
     test_bind_kind(LE_BLK_SCALER, 4, sizeof(le_scale_state_t));
 
@@ -1012,7 +1043,7 @@ void test_dsp_filters(void)
     printf("Running test_dsp_filters...\n");
     test_rt_reset();
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
     test_rt_reset(); /* clean state arena for this test */
     test_bind_kind(LE_BLK_LPF, 1, sizeof(le_lpf_state_t));
     test_bind_kind(LE_BLK_BIQUAD, 1, sizeof(le_biquad_state_t));
@@ -1374,7 +1405,7 @@ void test_block_call(void)
     le_hal_set(le_hal_get_sim());
 
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* N-arity custom node (sim func 0x84 = 2-of-3 majority) via a BLOCK
      * descriptor: header followed by [in0, in1, in2, out]. */
@@ -1413,7 +1444,7 @@ void test_phasor_shift(void)
 {
     printf("Running test_phasor_shift...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* Rotate phasor (1 + i0) by 90 degrees CCW -> real component = 0. */
     le_instruction_t inst = { LE_OP_PHASOR_SHIFT, 90,
@@ -1438,7 +1469,7 @@ void test_phasor_block_builtins(void)
 {
     printf("Running test_phasor_block_builtins...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_PHASOR, 1, sizeof(le_phasor_state_t));
 
@@ -1481,7 +1512,7 @@ void test_phasor_block_builtins(void)
      * args = [sample, sync_complex, out_complex]. The raw phasor has its angle
      * referenced to the sync phasor and magnitude normalized by the sync
      * magnitude, so the result stays stable relative to the sync phasor. */
-    le_process_image_init(&img); /* reset phasor state */
+    test_img_init(&img); /* reset phasor state */
     const uint16_t N = 16; float ampA = 10.0f;
     b.d.in_count = 2; b.d.out_count = 1;
     b.a[0] = LE_ADDR_MAKE_FLOAT(0);          /* sample wire */
@@ -1525,7 +1556,7 @@ void test_multi_block_conversions(void)
      * (a fixed-stride index previously corrupted blocks beyond the first). */
     printf("Running test_multi_block_conversions (RECT2COMPLEX/COMPLEX2RECT/POLAR2COMPLEX/CLAMP)...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
 
     /* Two blocks in one table, contiguous: blk0 = RECT2COMPLEX (2-in/1-out),
      * blk1 = POLAR2COMPLEX (2-in/1-out). */
@@ -1573,7 +1604,7 @@ void test_counter_opcode(void)
 {
     printf("Running test_counter_opcode (CTU/CTD/CTUD)...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_COUNTER, 3, sizeof(le_counter_state_t));
 
@@ -1603,7 +1634,7 @@ void test_counter_opcode(void)
     TEST_ASSERT(le_process_image_counter(&img, 0)->count == 0, "CTU reset clears count");
 
     /* ---- CTD: count down to 0 ---- */
-    le_process_image_init(&img);
+    test_img_init(&img);
     le_process_image_counter(&img, 1)->preset = 2;
     le_process_image_counter(&img, 1)->count = 2;
     le_instruction_t ctd = { LE_OP_CTD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_COUNTER(1) };
@@ -1618,7 +1649,7 @@ void test_counter_opcode(void)
     TEST_ASSERT(le_process_image_counter(&img, 1)->count == 0, "CTD count == 0");
 
     /* ---- CTUD: count up (in_a) / count down (in_b) ---- */
-    le_process_image_init(&img);
+    test_img_init(&img);
     le_process_image_counter(&img, 2)->preset = 1;
     le_instruction_t cud = { LE_OP_CTUD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_COUNTER(2) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);   /* cu rising -> count=1 */
@@ -1659,7 +1690,7 @@ void test_heap_allocator(void)
     TEST_ASSERT(le_rt_state(LE_BLK_TIMER, 0xFFFFu) == NULL, "out-of-workspace index is rejected");
 
     /* Workspace capacity is fixed by the platform. */
-    TEST_ASSERT(le_rt_workspace_bytes() == LE_STATE_WORKSPACE_BYTES, "workspace size matches config");
+    TEST_ASSERT(le_rt_workspace_bytes() == LE_RAM_WORKSPACE_BYTES, "workspace size matches config");
 
     /* le_rt_state rejects a kind that was never placed. */
     TEST_ASSERT(le_rt_state(LE_BLK_LPF, 0) == NULL, "unbound kind resolves to NULL");
@@ -1669,7 +1700,7 @@ void test_overcurrent(void)
 {
     printf("Running test_overcurrent (ANSI 51)...\n");
     le_process_image_t img;
-    le_process_image_init(&img);
+    test_img_init(&img);
         test_rt_reset(); /* clean state arena for this test */
         test_bind_kind(LE_BLK_OVERCURRENT, 1, sizeof(le_overcurrent_state_t));
 

@@ -91,7 +91,7 @@ extern "C" {
 #if LE_ENABLE_SERIAL_BUS
 /* No static device-count limits: serial-bus device state is baked into the
  * preconfigured state image and copied into the state workspace at load,
- * bounded only by LE_STATE_WORKSPACE_BYTES. */
+ * bounded only by LE_RAM_WORKSPACE_BYTES. */
 #endif
 
 /* ========================================================================== */
@@ -125,7 +125,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define LE_BIN_MAGIC            0x4C454231  /* ASCII "LEB1" */
-#define LE_BIN_VERSION          6
+#define LE_BIN_VERSION          8
 
 /* Alias table limits: an alias name is at most 7 characters (LE_ALIAS_NAME_MAX),
  * matching le_alias_t::name. Runtime pulse slots bound concurrent aliased pulses. */
@@ -310,8 +310,14 @@ typedef enum {
 /* A fixed byte arena (no malloc); blocks are bound to heap pointers at       */
 /* runtime start and instructions dereference those pointers each scan.       */
 /* ========================================================================== */
-#ifndef LE_STATE_WORKSPACE_BYTES
-#define LE_STATE_WORKSPACE_BYTES    4096    /* platform data workspace (RAM) the state image is copied into */
+#ifndef LE_RAM_WORKSPACE_BYTES
+#define LE_RAM_WORKSPACE_BYTES      2048    /* Total RAM reserved for the unified workspace: it is carved at
+                                             * load time into (a) the packed register arena (bits, floats,
+                                             * ints, complex, analog sized by the .lebin's declared register
+                                             * counts) and (b) the state workspace (the preconfigured state
+                                             * image copied verbatim). A program is rejected when its combined
+                                             * register arena + state image exceed this budget, so RAM usage
+                                             * tracks what a program declares, bounded by one board tunable. */
 #endif
 
 /** @brief Kind tag naming which state struct a runtime state block holds.
@@ -407,7 +413,7 @@ typedef struct {
  */
 typedef struct {
     uint32_t magic;             /**< Magic identifier: 0x4C454231 (ASCII "LEB1"). */
-    uint16_t version;           /**< Binary format version number (currently 5). */
+    uint16_t version;           /**< Binary format version number (currently 8). */
     uint16_t flags;             /**< Program execution flags (for example, LE_FLAG_AUTOSTART). */
     uint16_t instruction_count; /**< Total number of instructions in the bytecode payload. */
     uint16_t digital_in_count;  /**< Number of digital input channels (%I) required. */
@@ -415,10 +421,13 @@ typedef struct {
     uint16_t bool_reg_count;    /**< Number of internal boolean registers (%M) required. */
     uint16_t float_reg_count;   /**< Number of float registers (%R) required. */
     uint16_t complex_reg_count; /**< Number of complex registers (%C, real+imag pairs) required. */
+    uint16_t int_reg_count;     /**< Number of int registers (%I) required. */
+    uint16_t analog_in_count;   /**< Number of analog input channels (%AIN) required. */
     uint16_t block_count;       /**< Number of variable-arity block descriptors in the payload. */
     uint16_t state_desc_count;  /**< Number of state-group records (kinds present) in the payload. */
     uint32_t state_img_len;     /**< Bytes of the preconfigured state image (copied to RAM at load). */
     uint16_t alias_count;       /**< Number of user-declared register aliases (le_alias_t entries) appended after the state image. */
+uint16_t rsvd;               /**< Reserved (0). Pads the header to a multiple of 4 bytes so the zero-copy instruction array that follows is 4-byte aligned for in-flash execution. */
     uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + state image + aliases). */
 } le_header_t;
 
@@ -605,7 +614,8 @@ typedef struct {
  *
  * Implements the SEL-style proportional (dual-slope) differential restraint.
  * The "operate" current is the phasor vector sum of the N differential inputs;
- * the "restraint" current is their average magnitude (the through current).
+ * the "restraint" current is the SUM of phasor magnitudes (large-bus
+ * convention — no averaging).
  * The relay trips when the operate current exceeds a dual-slope ramp whose
  * slope changes at the restraint knee:
  *     threshold = o87p + slp1 * I_rt                 for I_rt <= irs1
@@ -619,7 +629,7 @@ typedef struct {
     float  slp2;   /**< Second slope (pu operate per pu restraint), I_rt > irs1. */
     /* Runtime measure / trip state. */
     float  operate;    /**< Measured operate current (|vector sum|), pu. */
-    float  restraint;  /**< Measured restraint current (avg magnitude), pu. */
+    float  restraint;  /**< Measured restraint current (sum of phasor magnitudes), pu. */
     bool   tripped;    /**< Differential (87) trip flag. */
 } le_diff87_state_t;
 

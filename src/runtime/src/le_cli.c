@@ -98,7 +98,7 @@ static void cmd_caps(le_cli_t* cli)
 #endif
     snprintf(buf, sizeof(buf), "    \"bool_regs\": %d,\r\n", LE_MAX_BOOL_REGS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"floats\": %d,\r\n", LE_MAX_FLOATS); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_STATE_WORKSPACE_BYTES); cli_print(buf);
+    snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_RAM_WORKSPACE_BYTES); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"config_slots\": %d,\r\n", LE_MAX_CONFIG_SLOTS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"slot_size_bytes\": %d\r\n", LE_SLOT_SIZE_BYTES); cli_print(buf);
     cli_print("  },\r\n");

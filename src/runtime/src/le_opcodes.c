@@ -25,6 +25,9 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     uint8_t op = inst->opcode;
     uint8_t mod = inst->modifier;
 
+    /* Fast path: NOP (emitted as padding/alignment) skips all dispatch. */
+    if (op == LE_OP_NOP) return LE_OK;
+
     /* ---------------------------------------------------------------------- */
     /* Digital Logic Gates                                                    */
     /* ---------------------------------------------------------------------- */
@@ -1404,11 +1407,6 @@ case LE_FUNC_PHASOR_SHIFT: {
             return g_le_hal->ext_call(mod, args, desc->in_count, desc->out_count, img);
         }
         return LE_OK; /* no board handler registered */
-    }
-
-    if (op == LE_OP_NOP)
-    {
-        return LE_OK;
     }
 
     return LE_ERR_UNKNOWN_OPCODE;

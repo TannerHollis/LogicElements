@@ -16,6 +16,14 @@
  * Include this header and the matching `le_port.c` in your MCU project.
  */
 
+/* ========================================================================== */
+/* Board build tuning — matches ports/stm32/stm32f401.leconfig                */
+/* --------------------------------------------------------------------------
+ * -DLE_RAM_WORKSPACE_BYTES=2048           (unified register + state budget)
+ * -DLE_MAX_DIGITAL_IN=16 -DLE_MAX_DIGITAL_OUT=16  -DLE_MAX_BOOL_REGS=128
+ * -DLE_MAX_FLOATS=64     -DLE_MAX_INT_REGS=64     -DLE_MAX_ANALOG_IN=16
+ * feature switches (protection/complex/analog/dsp/serial_bus) = defaults (1).
+ * ========================================================================== */
 #ifndef LE_PORT_H
 #define LE_PORT_H
 

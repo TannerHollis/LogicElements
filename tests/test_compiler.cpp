@@ -929,6 +929,156 @@ void test_diff_n_block()
 
     le_compile_result_free(&res);
 }
+void test_diff_87_ten_inputs()
+{
+    // A 10-bus differential (ANSI 87): ten complex phasors -> bool trip. Each
+    // bus is wired to its OWN DIFF_87 port (a..j) so the block genuinely reads
+    // ten distinct complex registers. Aligned phasors (operate=|sum| >> 0) trip;
+    // balanced anti-phase phasors cancel (operate ~ 0) and do NOT trip even
+    // with ten times the restraint.
+    const char* circuit_json = R"({
+        "name": "Diff87x10",
+        "elements": [
+            { "name": "P0", "type": "COMPLEXREGISTER" },
+            { "name": "P1", "type": "COMPLEXREGISTER" },
+            { "name": "P2", "type": "COMPLEXREGISTER" },
+            { "name": "P3", "type": "COMPLEXREGISTER" },
+            { "name": "P4", "type": "COMPLEXREGISTER" },
+            { "name": "P5", "type": "COMPLEXREGISTER" },
+            { "name": "P6", "type": "COMPLEXREGISTER" },
+            { "name": "P7", "type": "COMPLEXREGISTER" },
+            { "name": "P8", "type": "COMPLEXREGISTER" },
+            { "name": "P9", "type": "COMPLEXREGISTER" },
+            { "name": "DI", "type": "DIFF_87", "input_count": 10, "o87p": 0.3, "slp1": 0.25, "irs1": 1.5, "slp2": 0.6 },
+            { "name": "TRIP", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "P0", "port": "out" }, "inputs": [ { "name": "DI", "port": "a" } ] },
+            { "output": { "name": "P1", "port": "out" }, "inputs": [ { "name": "DI", "port": "b" } ] },
+            { "output": { "name": "P2", "port": "out" }, "inputs": [ { "name": "DI", "port": "c" } ] },
+            { "output": { "name": "P3", "port": "out" }, "inputs": [ { "name": "DI", "port": "d" } ] },
+            { "output": { "name": "P4", "port": "out" }, "inputs": [ { "name": "DI", "port": "e" } ] },
+            { "output": { "name": "P5", "port": "out" }, "inputs": [ { "name": "DI", "port": "f" } ] },
+            { "output": { "name": "P6", "port": "out" }, "inputs": [ { "name": "DI", "port": "g" } ] },
+            { "output": { "name": "P7", "port": "out" }, "inputs": [ { "name": "DI", "port": "h" } ] },
+            { "output": { "name": "P8", "port": "out" }, "inputs": [ { "name": "DI", "port": "i" } ] },
+            { "output": { "name": "P9", "port": "out" }, "inputs": [ { "name": "DI", "port": "j" } ] },
+            { "output": { "name": "DI", "port": "out" }, "inputs": [ { "name": "TRIP", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "DIFF_87 10-input circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "DIFF_87 10-input loads");
+
+    // All ten phasor registers are bound in the arena, and the block descriptor
+    // carries all ten distinct complex input addresses plus the bool output.
+    TEST_ASSERT(vm.image.cmplx_count == 10, "arena bound with 10 complex registers");
+    TEST_ASSERT(vm.blocks && vm.blocks[0].in_count == 10 && vm.blocks[0].out_count == 1,
+                "block descriptor declares 10 complex inputs -> 1 bool output");
+
+    le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(&vm.image, LE_BLK_DIFF_87, 0);
+    TEST_ASSERT(d87 != NULL && fabsf(d87->o87p - 0.3f) < 1e-5f && fabsf(d87->slp2 - 0.6f) < 1e-5f,
+                "DIFF_87 10-input dual-slope props baked");
+
+    // Balanced anti-phase: five +1 phasors cancel five -1 phasors -> operate ~ 0.
+    for (int k = 0; k < 10; k++)
+        le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX((uint16_t)k),
+                                     le_c_make((k % 2 == 0) ? 1.0f : -1.0f, 0.0f));
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "DIFF_87 10-input step (balanced)");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "10 phasors cancelling (op=0) do not trip despite restraint=10");
+    TEST_ASSERT(fabsf(d87->operate) < 1e-4f && fabsf(d87->restraint - 10.0f) < 1e-3f,
+                "measured operate ~0, restraint = 10");
+
+    // All ten aligned: operate = 10 >> dual-slope threshold (~5.775 at I_rt=10).
+    for (int k = 0; k < 10; k++)
+        le_process_image_set_complex(&vm.image, LE_ADDR_MAKE_CMPLX((uint16_t)k), le_c_make(1.0f, 0.0f));
+    TEST_ASSERT(le_vm_step(&vm, 10) == LE_OK, "DIFF_87 10-input step (aligned)");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)),
+                "10 aligned phasors (operate=10) trip the 87 relay");
+    TEST_ASSERT(fabsf(d87->operate - 10.0f) < 1e-3f && fabsf(d87->restraint - 10.0f) < 1e-3f,
+                "measured operate=10, restraint=10");
+
+    le_compile_result_free(&res);
+}
+
+void test_board_complex_limit()
+{
+    // A board that budgets only 8 complex registers must reject a 10-input
+    // DIFF_87 at COMPILE time (board validation), not surprise the designer at
+    // load on the MCU. A board with 16 complex registers accepts the same circuit.
+    const char* circuit_json = R"({
+        "name": "Diff87x10",
+        "elements": [
+            { "name": "P0", "type": "COMPLEXREGISTER" },
+            { "name": "P1", "type": "COMPLEXREGISTER" },
+            { "name": "P2", "type": "COMPLEXREGISTER" },
+            { "name": "P3", "type": "COMPLEXREGISTER" },
+            { "name": "P4", "type": "COMPLEXREGISTER" },
+            { "name": "P5", "type": "COMPLEXREGISTER" },
+            { "name": "P6", "type": "COMPLEXREGISTER" },
+            { "name": "P7", "type": "COMPLEXREGISTER" },
+            { "name": "P8", "type": "COMPLEXREGISTER" },
+            { "name": "P9", "type": "COMPLEXREGISTER" },
+            { "name": "DI", "type": "DIFF_87", "input_count": 10, "o87p": 0.3, "slp1": 0.25, "irs1": 1.5, "slp2": 0.6 },
+            { "name": "TRIP", "type": "BOOLREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "P0", "port": "out" }, "inputs": [ { "name": "DI", "port": "a" } ] },
+            { "output": { "name": "P1", "port": "out" }, "inputs": [ { "name": "DI", "port": "b" } ] },
+            { "output": { "name": "P2", "port": "out" }, "inputs": [ { "name": "DI", "port": "c" } ] },
+            { "output": { "name": "P3", "port": "out" }, "inputs": [ { "name": "DI", "port": "d" } ] },
+            { "output": { "name": "P4", "port": "out" }, "inputs": [ { "name": "DI", "port": "e" } ] },
+            { "output": { "name": "P5", "port": "out" }, "inputs": [ { "name": "DI", "port": "f" } ] },
+            { "output": { "name": "P6", "port": "out" }, "inputs": [ { "name": "DI", "port": "g" } ] },
+            { "output": { "name": "P7", "port": "out" }, "inputs": [ { "name": "DI", "port": "h" } ] },
+            { "output": { "name": "P8", "port": "out" }, "inputs": [ { "name": "DI", "port": "i" } ] },
+            { "output": { "name": "P9", "port": "out" }, "inputs": [ { "name": "DI", "port": "j" } ] },
+            { "output": { "name": "DI", "port": "out" }, "inputs": [ { "name": "TRIP", "port": "in" } ] }
+        ]
+    })";
+
+    const char* board_8 = R"({
+        "device": { "name": "EightComplexBoard", "firmware_version": "1.0", "protocol_version": 1 },
+        "limits": {
+            "digital_inputs": 16, "digital_outputs": 16,
+            "coils": 128, "floats": 64, "complex_registers": 8,
+            "workspace_bytes": 2048, "config_slots": 3, "slot_size_bytes": 2048
+        },
+        "features": { "protection": true, "complex": true, "analog": true, "dsp": true, "serial_bus": true }
+    })";
+
+    const char* board_16 = R"({
+        "device": { "name": "SixteenComplexBoard", "firmware_version": "1.0", "protocol_version": 1 },
+        "limits": {
+            "digital_inputs": 16, "digital_outputs": 16,
+            "coils": 128, "floats": 64, "complex_registers": 16,
+            "workspace_bytes": 2048, "config_slots": 3, "slot_size_bytes": 2048
+        },
+        "features": { "protection": true, "complex": true, "analog": true, "dsp": true, "serial_bus": true }
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+
+    int rc8 = le_compile_json_ex(circuit_json, board_8, &opts, &res);
+    TEST_ASSERT((rc8 != 0 || res.success == 0) && res.error_message &&
+                strstr(res.error_message, "complex registers") != nullptr,
+                "8-complex board rejects a 10-input DIFF_87 at compile time");
+    le_compile_result_free(&res);
+
+    int rc16 = le_compile_json_ex(circuit_json, board_16, &opts, &res);
+    TEST_ASSERT(rc16 == 0 && res.success, "16-complex board accepts a 10-input DIFF_87");
+    le_compile_result_free(&res);
+}
+
 void test_phase_comp_transform()
 {
     // PHASE_COMP (ANSI 87T transformer compensation): applies the SEL 3x3
@@ -1076,14 +1226,40 @@ void test_arena_capacity()
 
     // "Does it fit?": validate rejects a program whose declared state image
     // exceeds the platform workspace (LE_ERR_CAPACITY), before CRC check.
-    uint8_t big[LE_STATE_WORKSPACE_BYTES + sizeof(le_header_t) + 16] = {0};
+    uint8_t big[LE_RAM_WORKSPACE_BYTES + sizeof(le_header_t) + 16] = {0};
     le_header_t* bh = (le_header_t*)big;
     bh->magic = LE_BIN_MAGIC;
     bh->version = LE_BIN_VERSION;
-    bh->state_img_len = LE_STATE_WORKSPACE_BYTES + 1u;
+    bh->state_img_len = LE_RAM_WORKSPACE_BYTES + 1u;
     le_header_t out;
     TEST_ASSERT(le_loader_validate(big, sizeof(big), &out) == LE_ERR_CAPACITY,
                 "program whose state image exceeds the workspace is rejected");
+
+    // Register arena: the packed register footprint must fit the RAM budget, and
+    // a tiny program packs tightly (RAM ~ what it declares).
+    {
+        le_header_t rh;
+        memset(&rh, 0, sizeof(rh));
+        rh.digital_in_count = 16;  rh.digital_out_count = 16;
+        rh.bool_reg_count   = 256; rh.float_reg_count = 128;
+        rh.int_reg_count    = 64;  rh.complex_reg_count = 64;
+        rh.analog_in_count  = 16;
+        alignas(4) uint8_t small[64];
+        le_process_image_t pi;
+        uint32_t rlen = 0;
+        TEST_ASSERT(le_process_image_regs_len(&rh) > sizeof(small),
+                    "full register footprint exceeds a tiny RAM budget");
+        TEST_ASSERT(le_process_image_bind(&pi, small, sizeof(small), &rh, &rlen) == LE_ERR_CAPACITY,
+                    "bind rejects a register arena that exceeds the RAM budget");
+
+        le_header_t sh;
+        memset(&sh, 0, sizeof(sh));
+        sh.digital_in_count = 2; sh.digital_out_count = 2; sh.bool_reg_count = 2;
+        TEST_ASSERT(le_process_image_bind(&pi, small, sizeof(small), &sh, &rlen) == LE_OK,
+                    "tiny program binds into the same budget");
+        TEST_ASSERT(rlen == 4 && pi.din_count == 2 && pi.bool_count == 2 && pi.floats_off == 4,
+                    "tiny program packs into 4 arena bytes (bit bucket, 4-byte aligned)");
+    }
 
     le_compile_result_free(&res);
 }
@@ -1374,6 +1550,8 @@ int main()
     RUN_TEST(test_all_props_baked);
     RUN_TEST(test_complex_arithmetic);
     RUN_TEST(test_diff_n_block);
+    RUN_TEST(test_diff_87_ten_inputs);
+    RUN_TEST(test_board_complex_limit);
     RUN_TEST(test_phase_comp_transform);
     RUN_TEST(test_dist21_mho);
     RUN_TEST(test_arena_capacity);

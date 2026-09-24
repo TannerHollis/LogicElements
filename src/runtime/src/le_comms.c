@@ -89,7 +89,7 @@ static void handle_packet(le_comms_t* comms)
             pong[4] = (uint8_t)(LE_MAX_BOOL_REGS & 0xFF);
             pong[5] = (uint8_t)((LE_MAX_BOOL_REGS >> 8) & 0xFF);
             pong[6] = LE_MAX_FLOATS;
-            pong[7] = (uint8_t)(LE_STATE_WORKSPACE_BYTES & 0xFF); /* workspace bytes (low) */
+            pong[7] = (uint8_t)(LE_RAM_WORKSPACE_BYTES & 0xFF); /* unified RAM workspace (low byte) */
             send_packet(LE_CMD_PONG, seq, pong, sizeof(pong));
             break;
         }
@@ -114,7 +114,7 @@ static void handle_packet(le_comms_t* comms)
 #endif
             caps.max_bool_regs = LE_MAX_BOOL_REGS;
             caps.max_floats = LE_MAX_FLOATS;
-            caps.workspace_bytes = LE_STATE_WORKSPACE_BYTES;
+            caps.workspace_bytes = LE_RAM_WORKSPACE_BYTES;
             caps.config_slots = LE_MAX_CONFIG_SLOTS;
             caps.slot_size_bytes = LE_SLOT_SIZE_BYTES;
 
@@ -204,18 +204,23 @@ static void handle_packet(le_comms_t* comms)
         }
 
         case LE_CMD_GET_IMAGE: {
-            /* Send snapshot of process image (%I, %Q, %M) */
+            /* Send snapshot of the process-image bit regions (%IN, %OUT, %B).
+             * The bit bucket occupies the FRONT of the register arena (DIN bits,
+             * then DOUT, then BOOL), so a single truncating copy suffices. */
             if (comms->vm) {
                 uint8_t img_buf[32];
-                size_t din_bytes = (LE_MAX_DIGITAL_IN + 7) / 8;
-                size_t dout_bytes = (LE_MAX_DIGITAL_OUT + 7) / 8;
-                size_t bool_bytes = 16; /* first 128 bool regs */
-                size_t total = din_bytes + dout_bytes + bool_bytes;
+                uint32_t want_bool = (comms->vm->image.bool_count < 128u)
+                                     ? comms->vm->image.bool_count : 128u;
+                uint32_t total_bits = (uint32_t)comms->vm->image.din_count +
+                                      (uint32_t)comms->vm->image.dout_count + want_bool;
+                size_t total = (total_bits + 7u) / 8u;
                 if (total > sizeof(img_buf)) total = sizeof(img_buf);
 
-                memcpy(&img_buf[0], comms->vm->image.din, din_bytes);
-                memcpy(&img_buf[din_bytes], comms->vm->image.dout, dout_bytes);
-                memcpy(&img_buf[din_bytes + dout_bytes], comms->vm->image.bool_regs, bool_bytes);
+                if (comms->vm->image.regs) {
+                    memcpy(&img_buf[0], comms->vm->image.regs, total);
+                } else {
+                    memset(&img_buf[0], 0, total);
+                }
 
                 send_packet(LE_CMD_IMAGE_DATA, seq, img_buf, (uint16_t)total);
             }

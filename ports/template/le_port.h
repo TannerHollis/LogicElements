@@ -16,6 +16,25 @@
  * Include this header and the matching `le_port.c` in your MCU project.
  */
 
+/* ========================================================================== */
+/* Board build tuning — must match your .leconfig                             */
+/* --------------------------------------------------------------------------
+ * Define these at compile time so the runtime matches the board profile the
+ * compiler validates against (they override the defaults in le_types.h):
+ *
+ *   -DLE_RAM_WORKSPACE_BYTES=2048   unified RAM pool (packed register arena +
+ *                                   state blocks) the loader carves at load
+ *   -DLE_MAX_DIGITAL_IN=N -DLE_MAX_DIGITAL_OUT=N -DLE_MAX_BOOL_REGS=N
+ *   -DLE_MAX_FLOATS=N -DLE_MAX_INT_REGS=N -DLE_MAX_ANALOG_IN=N
+ *
+ * Optionally disable subsystems you do not need (smaller RAM + opcode space):
+ *   -DLE_ENABLE_PROTECTION=0 -DLE_ENABLE_COMPLEX=0 -DLE_ENABLE_ANALOG=0
+ *   -DLE_ENABLE_SERIAL_BUS=0 -DLE_ENABLE_DSP=0
+ *
+ * The reference ports ship with the exact flag set for their .leconfig;
+ * see ports/<board>/le_port.h. A program is rejected at load when its register
+ * arena + state image exceed LE_RAM_WORKSPACE_BYTES.
+ * ========================================================================== */
 #ifndef LE_PORT_H
 #define LE_PORT_H
 

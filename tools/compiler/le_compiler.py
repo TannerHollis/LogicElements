@@ -15,7 +15,7 @@ from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
 LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 6
+LE_BIN_VERSION = 7
 LE_FLAG_AUTOSTART = 0x0001
 
 # Address Regions

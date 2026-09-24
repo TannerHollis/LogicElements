@@ -17,7 +17,17 @@ extern "C" {
  * @brief Virtual machine instance managing process image state and bytecode execution.
  */
 typedef struct {
-    le_process_image_t        image;             /**< Statically allocated process image storage. */
+    le_process_image_t        image;             /**< Arena-backed process image descriptor (see le_process_image_bind). */
+
+    /* Unified RAM workspace: one board-tunable pool (LE_RAM_WORKSPACE_BYTES)
+     * carved at load time into the packed register arena (front) and the state
+     * workspace slice (back). A union forces 4-byte alignment so the float /
+     * complex buckets and state structs are naturally aligned. */
+    union {
+        uint8_t                ram_workspace[LE_RAM_WORKSPACE_BYTES];
+        uint32_t               _align4[(LE_RAM_WORKSPACE_BYTES + 3) / 4];
+    };
+
     const le_instruction_t*   instructions;      /**< Pointer to active instruction array in flash or RAM. */
     uint16_t                  instruction_count; /**< Number of valid instructions in the active program. */
     const le_block_desc_t*    blocks;            /**< Pointer to active variable-arity block table (or NULL). */

@@ -9,12 +9,17 @@
     "digital_outputs": 16,
     "coils": 128,
     "floats": 64,
+    "complex_registers": 64,
+    "analog_inputs": 3,
     "workspace_bytes": 4096,
     "config_slots": 4,
     "slot_size_bytes": 4096
   },
   "features": {
     "protection": true,
+    "complex": true,
+    "analog": true,
+    "dsp": true,
     "serial_bus": true
 },
   "pin_map": {

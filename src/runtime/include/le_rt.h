@@ -1,19 +1,20 @@
 /**
  * @file le_rt.h
- * @brief Runtime state workspace derived from the on-disk state image.
+ * @brief Runtime state workspace: a slice of the board's unified RAM workspace.
  *
  * Stateful "complex" elements (timers, counters, PID, phasors, DSP filters,
- * protection, scalers, I2C/SPI devices) live in a single contiguous RAM
- * workspace. The compiler bakes a preconfigured state image into the `.lebin`;
- * the loader memcpy's that image directly into the workspace at load time and
- * records the byte offset (kind base) of each kind group. An instruction then
- * reaches block `idx` of `kind` via:
+ * protection, scalers, I2C/SPI devices) live in a contiguous RAM slice carved
+ * out of the board's shared LE_RAM_WORKSPACE_BYTES pool (after the packed
+ * register arena). The compiler bakes a preconfigured state image into the
+ * `.lebin`; the loader memcpy's that image directly into the slice at load time
+ * and records the byte offset (kind base) of each kind group. An instruction
+ * then reaches block `idx` of `kind` via:
  *
  *     block = le_rt_workspace() + kind_base[kind] + idx * sizeof(kind-state)
  *
  * Offset arithmetic (not a heap/allocator) replaces any runtime allocation, and
- * the workspace is sized by the platform (LE_STATE_WORKSPACE_BYTES), not by a
- * per-program cap. There is never a malloc after boot.
+ * the slice is bounded by the part of the pool a program's state image consumes
+ * (loader-validated against LE_RAM_WORKSPACE_BYTES). No malloc ever after boot.
  */
 #ifndef LE_RT_H
 #define LE_RT_H
@@ -26,15 +27,27 @@ extern "C" {
 #endif
 
 /**
- * @brief (Re)initializes the state workspace: zeroes it and clears the kind-base
- * table. Idempotent; safe to call at every VM init.
+ * @brief Binds the state workspace to a slice of the unified RAM workspace.
+ *
+ * Called by the loader (and by test harnesses) after the register arena is
+ * carved out; @p base must be the slice start and @p len its size. Before any
+ * bind all workspace accessors return NULL / 0.
+ *
+ * @param base Caller-owned byte buffer the preconfigured state image is copied into (may be NULL to unbind).
+ * @param len  Number of bytes available at @p base.
+ */
+void le_rt_bind(uint8_t* base, uint32_t len);
+
+/**
+ * @brief (Re)initializes the state workspace: zeroes the bound slice and clears
+ * the kind-base table. Idempotent; safe to call at every VM init.
  */
 void le_rt_reset(void);
 
 /** @brief Returns the base of the state workspace (RAM the image is copied into). */
 uint8_t* le_rt_workspace(void);
 
-/** @brief Total workspace capacity in bytes (LE_STATE_WORKSPACE_BYTES). */
+/** @brief Byte size of the currently bound state slice (0 before a bind). */
 uint32_t le_rt_workspace_bytes(void);
 
 /**

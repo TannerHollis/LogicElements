@@ -78,16 +78,23 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
         return LE_ERR_OUT_OF_BOUNDS;
     }
 
-    /* Check MCU capacity limits (process-image register dimensions + the state
-     * workspace the preconfigured state image is copied into). */
+    /* Check MCU capacity limits: per-region maxima (board budgets) plus the
+     * unified RAM pool — the packed register arena (sized from the header's
+     * actual register counts) and the preconfigured state image must BOTH fit
+     * inside LE_RAM_WORKSPACE_BYTES, so RAM tracks what the program declares. */
     if (header->digital_in_count > LE_MAX_DIGITAL_IN ||
         header->digital_out_count > LE_MAX_DIGITAL_OUT ||
         header->bool_reg_count > LE_MAX_BOOL_REGS ||
         header->float_reg_count > LE_MAX_FLOATS ||
+        header->int_reg_count > LE_MAX_INT_REGS ||
+#if LE_ENABLE_ANALOG
+        header->analog_in_count > LE_MAX_ANALOG_IN ||
+#endif
 #if LE_ENABLE_COMPLEX
         header->complex_reg_count > LE_MAX_COMPLEX ||
 #endif
-        header->state_img_len > LE_STATE_WORKSPACE_BYTES)
+        (uint32_t)le_process_image_regs_len(header) +
+            (uint32_t)header->state_img_len > (uint32_t)LE_RAM_WORKSPACE_BYTES)
     {
         return LE_ERR_CAPACITY;
     }
@@ -153,12 +160,21 @@ le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size)
                         (size_t)header.instruction_count * sizeof(le_instruction_t) + bt_size;
     const uint8_t* img = st + (size_t)header.state_desc_count * LE_STATE_DESC_BYTES;
 
-    /* Copy the preconfigured state image verbatim into the state workspace and
-     * record each kind group's byte offset. No allocation or per-field config:
+    /* Carve the unified RAM workspace: the packed register arena lives at the
+     * FRONT of the pool (sized from the header's actual register counts via
+     * le_process_image_bind) and the preconfigured state image is copied
+     * verbatim into the remaining slice. No allocation or per-field config:
      * the compiler baked defaults + all element properties into the image. */
+    uint32_t regs_len = 0;
+    status = le_process_image_bind(&vm->image, (uint8_t*)vm->ram_workspace,
+                                   LE_RAM_WORKSPACE_BYTES, &header, &regs_len);
+    if (status != LE_OK) {
+        return status;
+    }
+    le_rt_bind((uint8_t*)vm->ram_workspace + regs_len, LE_RAM_WORKSPACE_BYTES - regs_len);
     le_rt_reset();
     if (header.state_img_len > 0) {
-        if (header.state_img_len > le_rt_workspace_bytes()) {
+        if ((uint32_t)header.state_img_len > le_rt_workspace_bytes()) {
             return LE_ERR_CAPACITY;
         }
         memcpy(le_rt_workspace(), img, header.state_img_len);

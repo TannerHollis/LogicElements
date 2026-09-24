@@ -16,6 +16,16 @@
  * Include this header and the matching `le_port.c` in your MCU project.
  */
 
+/* ========================================================================== */
+/* Board build tuning — matches ports/rp2040/rp2040_pico.leconfig             */
+/* --------------------------------------------------------------------------
+ * -DLE_RAM_WORKSPACE_BYTES=4096           (Pico has 264 KB RAM; profile
+ *                                         declares a 4096-byte workspace; the
+ *                                         runtime default is 2048 — RAISE it)
+ * -DLE_MAX_DIGITAL_IN=16 -DLE_MAX_DIGITAL_OUT=16  -DLE_MAX_BOOL_REGS=128
+ * -DLE_MAX_FLOATS=64     -DLE_MAX_INT_REGS=64     -DLE_MAX_ANALOG_IN=3
+ * feature switches (protection/complex/analog/dsp/serial_bus) = defaults (1).
+ * ========================================================================== */
 #ifndef LE_PORT_H
 #define LE_PORT_H
 

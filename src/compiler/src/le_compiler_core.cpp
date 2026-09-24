@@ -1501,8 +1501,21 @@ if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_D
             if (n_in > 30) n_in = 30;
             int n_added = 0;
             for (int k = 0; k < n_in; k++) {
-                std::vector<std::string> names = { "in", "a", "c", "complex", "in_a" };
-                if (k == 1) names = { "b", "in_b" };
+                /* Each input index prefers its own port so an N-bus differential
+                 * can wire N DISTINCT phasors: a/b/c/letters, or input_N / in_N.
+                 * Input 0 also accepts the short 'in'/'complex' spellings. */
+                std::vector<std::string> names;
+                if (k == 0) {
+                    names = { "in", "a", "input_0", "in_0", "complex", "in_a" };
+                } else if (k == 1) {
+                    names = { "b", "input_1", "in_1", "in_b" };
+                } else if (k == 2) {
+                    names = { "c", "input_2", "in_2" };
+                } else {
+                    if (k < 26) names.push_back(std::string(1, (char)('a' + k))); /* d..z */
+                    names.push_back("input_" + std::to_string(k));
+                    names.push_back("in_" + std::to_string(k));
+                }
                 std::string src = find_port(names);
                 args.push_back(block_src_addr(src, LE_CONST_ZERO_C));
                 consume_input(src);
@@ -2075,6 +2088,8 @@ if (opcode == LE_OP_PHASOR_1P) {
     header.bool_reg_count = static_cast<uint16_t>(total_bool_regs);
     header.float_reg_count = static_cast<uint16_t>(total_float_regs);
     header.complex_reg_count = static_cast<uint16_t>(total_complex_regs);
+    header.int_reg_count = static_cast<uint16_t>(total_int_regs);
+    header.analog_in_count = static_cast<uint16_t>(ain_map.size());
     header.block_count = static_cast<uint16_t>(block_calls.size());
     header.state_desc_count = static_cast<uint16_t>(state_records);
     header.state_img_len = static_cast<uint32_t>(state_image.size());
@@ -2132,7 +2147,14 @@ if (opcode == LE_OP_PHASOR_1P) {
                 " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
         }
 
-        int workspace_bytes = limits.get("workspace_bytes").as_int(LE_STATE_WORKSPACE_BYTES);
+        int max_complex = limits.get("complex_registers").as_int(64);
+        if (total_complex_regs > max_complex) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_complex_regs) +
+                " complex registers (%C), but target board '" + dev_name + "' only supports up to " + std::to_string(max_complex) + ".");
+        }
+
+        int workspace_bytes = limits.get("workspace_bytes").as_int(LE_RAM_WORKSPACE_BYTES);
         int total_state_bytes = 0;
         for (int k = 1; k < LE_BLK_LAST; k++) {
             auto sit = state_descs.find((uint8_t)k);

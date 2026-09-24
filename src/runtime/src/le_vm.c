@@ -15,7 +15,8 @@ le_status_t le_vm_init(le_vm_t* vm)
 
     memset(vm, 0, sizeof(le_vm_t));
     le_process_image_init(&vm->image);
-    le_rt_reset(); /* clear the state workspace + kind-base table */
+    le_rt_bind(NULL, 0); /* unbind until a program load carves the state slice */
+    le_rt_reset();       /* clear the state workspace + kind-base table */
     vm->running = false;
     vm->cycle_count = 0;
     return LE_OK;
@@ -92,7 +93,11 @@ void le_vm_stop(le_vm_t* vm)
 void le_vm_reset(le_vm_t* vm)
 {
     if (!vm) return;
+    /* Clear the shared RAM workspace (register arena + any bound state slice),
+     * the process image descriptor, and the runtime state tables. */
+    memset(vm->ram_workspace, 0, sizeof(vm->ram_workspace));
     le_process_image_init(&vm->image);
+    le_rt_reset(); /* zeroes bound slice (if any) + clears kind bases */
     vm->cycle_count = 0;
     vm->pulse_count = 0;
     for (uint8_t i = 0; i < LE_MAX_PULSES; i++) {

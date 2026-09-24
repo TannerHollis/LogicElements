@@ -5,21 +5,35 @@
 #include "le_rt.h"
 #include <string.h>
 
-/* The single, static RAM workspace. The loader copies the preconfigured state
- * image here at load time. Never heap-allocated; sized by the platform. */
-static uint8_t s_workspace[LE_STATE_WORKSPACE_BYTES];
+/* The state workspace is a SLICE of the board's unified RAM workspace
+ * (le_rt_bind). The loader carves it out after the register arena and memcpy's
+ * the preconfigured state image into it. Storage and bounds are caller-supplied;
+ * there is never a heap allocation. */
+static uint8_t* s_ws = NULL;
+static uint32_t s_ws_len = 0;
 
 /* Byte offset of each kind group within the workspace (-1 = kind absent). */
 static int32_t s_kind_base[LE_BLK_LAST];
 
+/* Memoized per-kind state struct sizes (filled at bind so the hot
+ * le_rt_state path is an array read instead of a per-access switch). */
+static uint16_t s_kind_size[LE_BLK_LAST];
+
+void le_rt_bind(uint8_t* base, uint32_t len)
+{
+    s_ws = base;
+    s_ws_len = len;
+    for (int k = 0; k < LE_BLK_LAST; k++) s_kind_size[k] = le_rt_kind_size((uint8_t)k);
+}
+
 void le_rt_reset(void)
 {
-    memset(s_workspace, 0, sizeof(s_workspace));
+    if (s_ws && s_ws_len > 0) memset(s_ws, 0, s_ws_len);
     for (int i = 0; i < LE_BLK_LAST; i++) s_kind_base[i] = -1;
 }
 
-uint8_t* le_rt_workspace(void) { return s_workspace; }
-uint32_t le_rt_workspace_bytes(void) { return LE_STATE_WORKSPACE_BYTES; }
+uint8_t* le_rt_workspace(void) { return s_ws; }
+uint32_t le_rt_workspace_bytes(void) { return s_ws_len; }
 
 uint16_t le_rt_kind_size(uint8_t kind)
 {
@@ -72,11 +86,12 @@ int32_t le_rt_kind_base(uint8_t kind)
 
 uint8_t* le_rt_state(uint8_t kind, uint16_t idx)
 {
+    if (!s_ws || s_ws_len == 0) return NULL;
     int32_t base = (kind < LE_BLK_LAST) ? s_kind_base[kind] : -1;
     if (base < 0) return NULL;
-    uint16_t sz = le_rt_kind_size(kind);
+    uint16_t sz = (kind < LE_BLK_LAST) ? s_kind_size[kind] : 0;  /* memoized at bind */
     if (sz == 0) return NULL;
     uint32_t off = (uint32_t)base + (uint32_t)idx * (uint32_t)sz;
-    if (off + (uint32_t)sz > LE_STATE_WORKSPACE_BYTES) return NULL;
-    return &s_workspace[off];
+    if (off + (uint32_t)sz > s_ws_len) return NULL;
+    return &s_ws[off];
 }
