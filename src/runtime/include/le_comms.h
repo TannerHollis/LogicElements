@@ -9,6 +9,7 @@
 #include "le_types.h"
 #include "le_vm.h"
 #include "le_hal.h"
+#include "le_storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +58,10 @@ extern "C" {
 /** @brief Query the timing / achievability report (le_timing_t bytes).
  *  Response: LE_CMD_IMAGE_DATA-style payload of sizeof(le_timing_t). */
 #define LE_CMD_GET_TIMING       0x42
+/** @brief Activate a stored configuration slot into the VM (payload [slot: u8]).
+ *  Device ACKs with the slot index on success, or NACKs if the slot is invalid
+ *  or fails to load. */
+#define LE_CMD_SELECT_SLOT      0x15
 
 /* ========================================================================== */
 /* Hardware feature flags                                                     */
@@ -74,6 +79,8 @@ extern "C" {
 #define LE_CAP_COMPLEX          (1U << 4)
 /** @brief Indicates analog input channels (%AIN) are compiled in. */
 #define LE_CAP_ANALOG           (1U << 5)
+/** @brief Indicates DSP and filter blocks are compiled and supported. */
+#define LE_CAP_DSP              (1U << 6)
 
 #pragma pack(push, 1)
 /**
@@ -102,16 +109,21 @@ typedef struct {
 /** @brief Maximum payload size in bytes per packet frame. */
 #define LE_COMMS_MAX_PAYLOAD    128
 
-/** @brief Size of the staging buffer for binary program uploads. */
-#define LE_STAGING_BUFFER_SIZE  4096
-
 /**
  * @brief Communications state machine instance.
+ *
+ * Program uploads (`LE_CMD_PROG_*`) are streamed directly into the storage
+ * layer's hidden phantom slot and only committed (with a full CRC-32 check) at
+ * `LE_CMD_PROG_END`, so a bad transmission can never overwrite a live config.
  */
 typedef struct {
-    uint8_t   staging_buffer[LE_STAGING_BUFFER_SIZE]; /**< Staging area for incoming program upload. */
-    size_t    program_size;                           /**< Declared incoming program size in bytes. */
-    size_t    bytes_received;                         /**< Total program bytes accumulated in staging buffer. */
+    le_storage_t* storage;                              /**< Phantom-backed storage for uploads (NULL => uploads rejected). */
+
+    /* Upload state (streams into the storage phantom slot) */
+    uint8_t   target_slot;                              /**< User slot being programmed (never the active slot). */
+    uint8_t   transfer_active;                          /**< A PROG_BEGIN successfully opened an upload. */
+    size_t    expected_size;                            /**< Declared incoming program size in bytes. */
+    size_t    bytes_received;                           /**< Total program payload bytes streamed into the phantom slot. */
 
     /* RX Packet Parser State */
     uint8_t   rx_state;                               /**< Internal parser state index. */
@@ -130,8 +142,10 @@ typedef struct {
  *
  * @param comms Pointer to the communications structure to initialize.
  * @param vm Pointer to the target virtual machine instance.
+ * @param storage Pointer to the phantom-backed storage manager used to stage
+ *        uploads (pass NULL to disable program upload).
  */
-void le_comms_init(le_comms_t* comms, le_vm_t* vm);
+void le_comms_init(le_comms_t* comms, le_vm_t* vm, le_storage_t* storage);
 
 /**
  * @brief Feeds a single received byte into the packet parser state machine.

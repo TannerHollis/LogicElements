@@ -22,7 +22,7 @@
 #endif
 
 #define LE_PORT_FLASH_BASE 0x08000000UL
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
 
 typedef struct { GPIO_TypeDef* port; uint16_t pin; } stm32_pin_t;
 static const stm32_pin_t INPUT_PINS[] = {

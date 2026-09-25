@@ -2,15 +2,11 @@
  * @file le_complex.h
  * @brief Zero-overhead pure C complex number definitions and inline operations.
  */
-
 #ifndef LE_COMPLEX_H
 #define LE_COMPLEX_H
 
-#include <math.h>
+#include "le_math.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846f
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,7 +31,7 @@ typedef struct {
  * @param imag Imaginary component.
  * @return Resulting complex number.
  */
-static inline le_complex_t le_c_make(float real, float imag)
+LE_ALWAYS_INLINE le_complex_t le_c_make(float real, float imag)
 {
     le_complex_t c = { real, imag };
     return c;
@@ -48,7 +44,7 @@ static inline le_complex_t le_c_make(float real, float imag)
  * @param b Second addend.
  * @return Result of `a + b`.
  */
-static inline le_complex_t le_c_add(le_complex_t a, le_complex_t b)
+LE_ALWAYS_INLINE le_complex_t le_c_add(le_complex_t a, le_complex_t b)
 {
     return le_c_make(a.r + b.r, a.i + b.i);
 }
@@ -60,7 +56,7 @@ static inline le_complex_t le_c_add(le_complex_t a, le_complex_t b)
  * @param b Subtrahend.
  * @return Result of `a - b`.
  */
-static inline le_complex_t le_c_sub(le_complex_t a, le_complex_t b)
+LE_ALWAYS_INLINE le_complex_t le_c_sub(le_complex_t a, le_complex_t b)
 {
     return le_c_make(a.r - b.r, a.i - b.i);
 }
@@ -72,7 +68,7 @@ static inline le_complex_t le_c_sub(le_complex_t a, le_complex_t b)
  * @param b Second factor.
  * @return Result of `a * b`.
  */
-static inline le_complex_t le_c_mul(le_complex_t a, le_complex_t b)
+LE_ALWAYS_INLINE le_complex_t le_c_mul(le_complex_t a, le_complex_t b)
 {
     return le_c_make(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
 }
@@ -84,7 +80,7 @@ static inline le_complex_t le_c_mul(le_complex_t a, le_complex_t b)
  * @param s Real scalar value.
  * @return Scaled complex number.
  */
-static inline le_complex_t le_c_scale(le_complex_t a, float s)
+LE_ALWAYS_INLINE le_complex_t le_c_scale(le_complex_t a, float s)
 {
     return le_c_make(a.r * s, a.i * s);
 }
@@ -99,7 +95,7 @@ static inline le_complex_t le_c_scale(le_complex_t a, float s)
  * @param b Divisor.
  * @return Result of `a / b`.
  */
-static inline le_complex_t le_c_div(le_complex_t a, le_complex_t b)
+LE_ALWAYS_INLINE le_complex_t le_c_div(le_complex_t a, le_complex_t b)
 {
     float denom = b.r * b.r + b.i * b.i;
     if (denom < 1e-12f) {
@@ -115,9 +111,9 @@ static inline le_complex_t le_c_div(le_complex_t a, le_complex_t b)
  * @param a Complex number.
  * @return Magnitude \f$|a| = \sqrt{r^2 + i^2}\f$.
  */
-static inline float le_c_mag(le_complex_t a)
+LE_ALWAYS_INLINE float le_c_mag(le_complex_t a)
 {
-    return sqrtf(a.r * a.r + a.i * a.i);
+    return le_fast_cmplx_mag(a.r, a.i);
 }
 
 /**
@@ -126,9 +122,9 @@ static inline float le_c_mag(le_complex_t a)
  * @param a Complex number.
  * @return Phase angle in radians within the interval \f$[-\pi, \pi]\f$.
  */
-static inline float le_c_ang(le_complex_t a)
+LE_ALWAYS_INLINE float le_c_ang(le_complex_t a)
 {
-    return atan2f(a.i, a.r);
+    return le_fast_atan2(a.i, a.r);
 }
 
 /**
@@ -138,9 +134,11 @@ static inline float le_c_ang(le_complex_t a)
  * @param angle_rad Angle in radians.
  * @return Resulting complex number.
  */
-static inline le_complex_t le_c_polar(float mag, float angle_rad)
+LE_ALWAYS_INLINE le_complex_t le_c_polar(float mag, float angle_rad)
 {
-    return le_c_make(mag * cosf(angle_rad), mag * sinf(angle_rad));
+    float s, c;
+    le_sincos(angle_rad, &s, &c);
+    return le_c_make(mag * c, mag * s);
 }
 
 /**
@@ -150,11 +148,11 @@ static inline le_complex_t le_c_polar(float mag, float angle_rad)
  * @param delta_rad Angle of rotation in radians.
  * @return Rotated complex number.
  */
-static inline le_complex_t le_c_rotate(le_complex_t a, float delta_rad)
+LE_ALWAYS_INLINE le_complex_t le_c_rotate(le_complex_t a, float delta_rad)
 {
-    float mag = le_c_mag(a);
-    float ang = le_c_ang(a) + delta_rad;
-    return le_c_polar(mag, ang);
+    float s, c;
+    le_sincos(delta_rad, &s, &c);
+    return le_c_make(a.r * c - a.i * s, a.r * s + a.i * c);
 }
 
 #ifdef __cplusplus

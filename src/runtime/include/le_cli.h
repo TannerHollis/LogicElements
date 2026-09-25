@@ -34,6 +34,7 @@ typedef struct {
     /* Line Editing Buffer */
     char           line_buf[128];           /**< Buffer storing the current line input. */
     uint16_t       line_len;                /**< Length in bytes of valid line input. */
+    bool           last_was_cr;             /**< Indicates previous byte was \r to collapse CRLF pairs. */
 
     /* Upload State */
     uint8_t        upload_slot;             /**< Target configuration slot for incoming program upload. */

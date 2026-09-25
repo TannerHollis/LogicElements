@@ -62,11 +62,12 @@ static void send_packet(uint8_t cmd, uint8_t seq, const uint8_t* payload, uint16
     g_le_hal->uart_write(crc_bytes, 2);
 }
 
-void le_comms_init(le_comms_t* comms, le_vm_t* vm)
+void le_comms_init(le_comms_t* comms, le_vm_t* vm, le_storage_t* storage)
 {
     if (!comms) return;
     memset(comms, 0, sizeof(le_comms_t));
     comms->vm = vm;
+    comms->storage = storage;
     comms->rx_state = RX_STATE_SYNC;
 }
 
@@ -114,7 +115,10 @@ static void handle_packet(le_comms_t* comms)
 #endif
             caps.max_bool_regs = LE_MAX_BOOL_REGS;
             caps.max_floats = LE_MAX_FLOATS;
-            caps.workspace_bytes = LE_RAM_WORKSPACE_BYTES;
+            /* The caps field is 16-bit; the Pico 2 W workspace (256 KB) exceeds it.
+             * Clamp the reported value - the authoritative capacity is in the
+             * board .leconfig (and the loader enforces the real LE_RAM_WORKSPACE_BYTES). */
+            caps.workspace_bytes = (LE_RAM_WORKSPACE_BYTES > 0xFFFFu) ? 0xFFFFu : (uint16_t)LE_RAM_WORKSPACE_BYTES;
             caps.config_slots = LE_MAX_CONFIG_SLOTS;
             caps.slot_size_bytes = LE_SLOT_SIZE_BYTES;
 
@@ -124,6 +128,9 @@ static void handle_packet(le_comms_t* comms)
 #endif
 #if LE_ENABLE_ANALOG
             flags |= LE_CAP_ANALOG;
+#endif
+#if LE_ENABLE_DSP
+            flags |= LE_CAP_DSP;
 #endif
 #if LE_ENABLE_PROTECTION
             flags |= LE_CAP_PROTECTION;
@@ -151,53 +158,89 @@ static void handle_packet(le_comms_t* comms)
         }
 
         case LE_CMD_PROG_BEGIN: {
-            /* Payload: [total_size: uint32_t] */
-            if (len >= 4) {
-                comms->program_size = (size_t)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
-                comms->bytes_received = 0;
-                if (comms->program_size <= LE_STAGING_BUFFER_SIZE) {
-                    uint8_t ack[1] = {0x00};
-                    send_packet(LE_CMD_ACK, seq, ack, 1);
-                } else {
-                    uint8_t nack[1] = {0x01}; /* too large */
-                    send_packet(LE_CMD_NACK, seq, nack, 1);
-                }
+            /* Payload: [total_size: uint32_t][target_slot: uint8_t] */
+            if (len < 5 || !comms->storage) {
+                uint8_t nack[1] = {0x01}; /* no storage / malformed */
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
             }
+            uint32_t total = (uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+            uint8_t  tslot = p[4];
+            uint8_t  err = 0x00;
+            if (tslot >= LE_MAX_CONFIG_SLOTS) {
+                err = 0x07; /* invalid target slot */
+            } else if (tslot == le_storage_get_active_slot(comms->storage)) {
+                err = 0x06; /* cannot program the active slot */
+            } else if (total > LE_SLOT_SIZE_BYTES) {
+                err = 0x01; /* too large */
+            }
+            if (err != 0x00) {
+                uint8_t nack[1] = {err};
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
+            }
+            comms->target_slot = tslot;
+            comms->expected_size = (size_t)total;
+            comms->bytes_received = 0;
+            comms->transfer_active = 1;
+            uint8_t ack[1] = {0x00};
+            send_packet(LE_CMD_ACK, seq, ack, 1);
             break;
         }
 
         case LE_CMD_PROG_CHUNK: {
-            /* Payload: [offset: uint16_t] [data...] */
-            if (len >= 2) {
-                uint16_t offset = (uint16_t)(p[0] | (p[1] << 8));
-                uint16_t data_len = len - 2;
-                if (offset + data_len <= LE_STAGING_BUFFER_SIZE) {
-                    memcpy(&comms->staging_buffer[offset], &p[2], data_len);
-                    if (offset + data_len > comms->bytes_received) {
-                        comms->bytes_received = offset + data_len;
-                    }
-                    uint8_t ack[1] = {0x00};
-                    send_packet(LE_CMD_ACK, seq, ack, 1);
-                } else {
-                    uint8_t nack[1] = {0x02}; /* out of bounds */
-                    send_packet(LE_CMD_NACK, seq, nack, 1);
-                }
+            /* Payload: [offset: uint16_t] [data...] — streamed into the phantom slot. */
+            if (!comms->transfer_active || !comms->storage) {
+                uint8_t nack[1] = {0x03}; /* no active transfer */
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
             }
+            if (len < 2) {
+                break;
+            }
+            uint16_t offset = (uint16_t)(p[0] | (p[1] << 8));
+            uint16_t data_len = (uint16_t)(len - 2);
+            bool ok = false;
+            if ((uint32_t)offset + data_len <= LE_SLOT_SIZE_BYTES) {
+                ok = le_storage_write_chunk(comms->storage,
+                                            le_storage_get_phantom_slot(comms->storage),
+                                            offset, &p[2], data_len);
+            }
+            if (!ok) {
+                uint8_t nack[1] = {0x02}; /* out of bounds */
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
+            }
+            if (offset + data_len > comms->bytes_received) {
+                comms->bytes_received = offset + data_len;
+            }
+            uint8_t ack[1] = {0x00};
+            send_packet(LE_CMD_ACK, seq, ack, 1);
             break;
         }
 
         case LE_CMD_PROG_END: {
-            /* Validate program and commit to VM / Storage */
-            le_status_t status = le_loader_load(comms->vm, comms->staging_buffer, comms->bytes_received);
+            /* Validate the staged phantom (full CRC32) and atomically commit to
+             * the target slot. A bad or truncated transmission never touches the
+             * target config. Activation remains a separate, explicit step. */
+            if (!comms->transfer_active || !comms->storage) {
+                uint8_t nack[1] = {0x03}; /* no program staged */
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
+            }
+            uint8_t tslot = comms->target_slot;
+            comms->transfer_active = 0; /* one-shot transfer */
+            if (comms->bytes_received != comms->expected_size) {
+                uint8_t nack[1] = {0x04}; /* truncated transfer */
+                send_packet(LE_CMD_NACK, seq, nack, 1);
+                break;
+            }
+            le_status_t status = le_storage_commit_upload(comms->storage, tslot, comms->expected_size);
             if (status == LE_OK) {
-                /* Optionally write to persistent storage */
-                if (g_le_hal && g_le_hal->storage_write) {
-                    g_le_hal->storage_write(0, comms->staging_buffer, comms->bytes_received);
-                }
-                uint8_t ack[1] = {0x00};
+                uint8_t ack[1] = {tslot};
                 send_packet(LE_CMD_ACK, seq, ack, 1);
             } else {
-                uint8_t nack[2] = {0x03, (uint8_t)(-status)};
+                uint8_t nack[2] = {0x05, (uint8_t)(-status)}; /* validation/commit failed */
                 send_packet(LE_CMD_NACK, seq, nack, 2);
             }
             break;
@@ -280,6 +323,22 @@ static void handle_packet(le_comms_t* comms)
             } else {
                 uint8_t nack[1] = {0x01};
                 send_packet(LE_CMD_NACK, seq, nack, 1);
+            }
+            break;
+        }
+
+        case LE_CMD_SELECT_SLOT: {
+            /* Payload: [slot: uint8_t] — activate a stored config slot into the VM. */
+            if (len >= 1 && comms->storage && comms->vm) {
+                uint8_t slot = p[0];
+                if (slot < LE_MAX_CONFIG_SLOTS &&
+                    le_storage_activate_slot(comms->storage, slot, comms->vm)) {
+                    uint8_t ack[1] = {slot};
+                    send_packet(LE_CMD_ACK, seq, ack, 1);
+                } else {
+                    uint8_t nack[1] = {0x01}; /* invalid slot / load failed */
+                    send_packet(LE_CMD_NACK, seq, nack, 1);
+                }
             }
             break;
         }
@@ -381,3 +440,4 @@ void le_comms_poll(le_comms_t* comms)
         avail = g_le_hal->uart_available();
     }
 }
+

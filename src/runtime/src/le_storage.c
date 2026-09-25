@@ -16,11 +16,17 @@ void le_storage_init(le_storage_t* storage, const le_hal_t* hal)
 
     /* If HAL storage is available, populate RAM partitions from Flash */
     if (hal && hal->storage_read) {
-        for (uint8_t s = 0; s < LE_MAX_CONFIG_SLOTS; s++) {
+        for (uint8_t s = 0; s < LE_PHYSICAL_SLOT_COUNT; s++) {
             uint32_t flash_offset = (uint32_t)s * LE_SLOT_SIZE_BYTES;
             hal->storage_read(flash_offset, storage->ram_partitions[s], LE_SLOT_SIZE_BYTES);
         }
     }
+}
+
+uint8_t le_storage_get_phantom_slot(const le_storage_t* storage)
+{
+    (void)storage;
+    return LE_MAX_CONFIG_SLOTS;
 }
 
 uint8_t le_storage_get_slot_count(const le_storage_t* storage)
@@ -31,7 +37,9 @@ uint8_t le_storage_get_slot_count(const le_storage_t* storage)
 
 bool le_storage_write_chunk(le_storage_t* storage, uint8_t slot, uint32_t offset, const uint8_t* data, size_t len)
 {
-    if (!storage || !data || slot >= LE_MAX_CONFIG_SLOTS) return false;
+    /* Physical slots include the hidden phantom (index LE_MAX_CONFIG_SLOTS) so
+     * uploads can stream into it; user slots are [0, LE_MAX_CONFIG_SLOTS). */
+    if (!storage || !data || slot >= LE_PHYSICAL_SLOT_COUNT) return false;
     if (offset + len > LE_SLOT_SIZE_BYTES) return false;
 
     /* Write to RAM partition */
@@ -48,7 +56,7 @@ bool le_storage_write_chunk(le_storage_t* storage, uint8_t slot, uint32_t offset
 
 bool le_storage_read_chunk(const le_storage_t* storage, uint8_t slot, uint32_t offset, uint8_t* buffer, size_t len)
 {
-    if (!storage || !buffer || slot >= LE_MAX_CONFIG_SLOTS) return false;
+    if (!storage || !buffer || slot >= LE_PHYSICAL_SLOT_COUNT) return false;
     if (offset + len > LE_SLOT_SIZE_BYTES) return false;
 
     memcpy(buffer, &storage->ram_partitions[slot][offset], len);
@@ -89,6 +97,39 @@ uint8_t le_storage_get_active_slot(const le_storage_t* storage)
 {
     if (!storage) return 0;
     return storage->active_slot;
+}
+
+le_status_t le_storage_commit_upload(le_storage_t* storage, uint8_t target_slot, size_t expected_size)
+{
+    if (!storage) return LE_ERR_NULL_PTR;
+    if (target_slot >= LE_MAX_CONFIG_SLOTS) return LE_ERR_OUT_OF_BOUNDS;
+    if (target_slot == storage->active_slot) return LE_ERR_ACTIVE_SLOT;
+    if (expected_size > LE_SLOT_SIZE_BYTES) return LE_ERR_CAPACITY;
+
+    const uint8_t phantom = LE_MAX_CONFIG_SLOTS;
+
+    /* Full structural + CRC32 validation of the staged phantom image. Only a
+     * fully-valid image is ever allowed to overwrite the target slot. A bad or
+     * truncated transmission fails here and leaves the target untouched. */
+    le_status_t status = le_loader_validate(storage->ram_partitions[phantom], LE_SLOT_SIZE_BYTES, NULL);
+    if (status != LE_OK) {
+        return status;
+    }
+
+    /* Commit: phantom -> target, in RAM ... */
+    memcpy(storage->ram_partitions[target_slot], storage->ram_partitions[phantom], LE_SLOT_SIZE_BYTES);
+
+    /* ... and in non-volatile storage when available. The phantom flash region
+     * already holds the streamed bytes (stream-to-flash during upload), so the
+     * target flash region is only ever written here, after validation. */
+    if (storage->hal && storage->hal->storage_write) {
+        uint32_t flash_dst = (uint32_t)target_slot * LE_SLOT_SIZE_BYTES;
+        if (!storage->hal->storage_write(flash_dst, storage->ram_partitions[phantom], LE_SLOT_SIZE_BYTES)) {
+            return LE_ERR_STORAGE;
+        }
+    }
+
+    return LE_OK;
 }
 
 bool le_storage_activate_slot(le_storage_t* storage, uint8_t slot, le_vm_t* vm)

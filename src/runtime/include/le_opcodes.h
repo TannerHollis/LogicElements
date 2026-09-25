@@ -40,6 +40,24 @@ le_status_t le_exec_instruction(const le_instruction_t* inst, le_process_image_t
 le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_image_t* img, uint32_t now_ms,
                                    const le_block_desc_t* blocks, uint16_t block_count);
 
+/**
+ * @brief Batch executes a sequence of instructions against the process image.
+ *
+ * Loops internally over the instruction stream, keeping register allocations
+ * and stack frame setup amortized once per scan instead of per instruction.
+ *
+ * @param instructions Pointer to array of instructions to execute.
+ * @param count Number of instructions to execute.
+ * @param img Pointer to the process image storage.
+ * @param now_ms Current system timestamp in milliseconds.
+ * @param blocks Pointer to the block descriptor table.
+ * @param block_count Number of block descriptors.
+ * @return Returns LE_OK on success, or an error code on failure.
+ */
+le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count,
+                            le_process_image_t* img, uint32_t now_ms,
+                            const le_block_desc_t* blocks, uint16_t block_count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,17 +22,25 @@ LogicElements provides a low-overhead binary framing protocol:
 | `0x82` | `LE_CMD_CAPS_DATA` | Microcontroller capabilities payload response |
 | `0x03` | `LE_CMD_GET_CUSTOM_NODES` | Query board custom node JSON definitions |
 | `0x83` | `LE_CMD_CUSTOM_NODES_DATA` | Custom node JSON definitions payload response |
-| `0x10` | `LE_CMD_PROG_BEGIN` | Announces incoming `.lebin` upload size; resets staging cursor |
-| `0x11` | `LE_CMD_PROG_CHUNK` | Sends 32–128 byte chunk of binary program |
-| `0x12` | `LE_CMD_PROG_END` | Verifies CRC32, commits to flash/EEPROM, reloads VM |
+| `0x10` | `LE_CMD_PROG_BEGIN` | Announces `.lebin` size + target slot; opens a phantom-staged upload |
+| `0x11` | `LE_CMD_PROG_CHUNK` | Streams a 32–128 byte chunk into the phantom slot |
+| `0x12` | `LE_CMD_PROG_END` | Full CRC32-validates the phantom, atomically commits it to the target slot |
+| `0x15` | `LE_CMD_SELECT_SLOT` | Activate a stored config slot into the VM — payload `[slot:u8]` |
 | `0x20` | `LE_CMD_GET_IMAGE` | Requests snapshot of `%IN`, `%OUT`, `%B` for live UI watch window |
 | `0x30` | `LE_CMD_CONTROL` | START (1), STOP (2), RESET (3) execution |
 | `0x40` | `LE_CMD_FORCE_IO` | Force digital input/output high/low for testing |
 | `0x41` | `LE_CMD_PULSE` | Pulse a register for a duration — payload `[addr:u16][duration_ms:u32]` |
 
-Program upload (`LE_CMD_PROG_*`) streams `.lebin` payload in bounded chunks;
-the loader verifies the IEEE 802.3 CRC32 and header integrity before
-committing to flash.
+Program upload (`LE_CMD_PROG_*`) streams `.lebin` chunks directly into the
+storage layer's hidden **phantom** slot. `LE_CMD_PROG_END` runs the full IEEE
+802.3 CRC32 + header validation on the phantom and only then commits it to the
+requested target slot — so a bad, truncated, or interrupted transmission can
+never overwrite a live config. `LE_CMD_PROG_BEGIN` carries
+`[size : u32][target_slot : u8]`; the target must be a valid user slot that is
+**not** the currently active slot. Activation is a separate, explicit step —
+switch the running config with `LE_CMD_SELECT_SLOT` (or the on-device CLI
+`select` command). Every upload channel (framed packet, CLI XMODEM-CRC, CLI hex
+paste) stages into the phantom and only commits after full CRC-32 validation.
 
 ---
 

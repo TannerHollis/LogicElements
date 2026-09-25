@@ -318,30 +318,37 @@ static void feed_packet_to_comms(le_comms_t* comms, uint8_t cmd, uint8_t seq, co
 void test_comms_protocol(void)
 {
     printf("Running test_comms_protocol (UART Upload & Control)...\n");
-    le_hal_set(le_hal_get_sim());
+    const le_hal_t* sim = le_hal_get_sim();
+    sim->init();
+    le_hal_set(sim);
+
+    le_storage_t storage;
+    le_storage_init(&storage, sim);
 
     le_vm_t vm;
     le_vm_init(&vm);
 
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, &storage);
 
     /* 1. Send PING */
     feed_packet_to_comms(&comms, LE_CMD_PING, 1, NULL, 0);
     TEST_ASSERT(true, "Comms handled PING without error");
 
-    /* 2. Send PROG_BEGIN */
+    /* 2. Send PROG_BEGIN: payload is [total_size: u32][target_slot: u8] to slot 1
+     * (active slot is 0). The upload streams into the hidden phantom slot. */
     uint32_t total_size = sizeof(le_default_program);
-    uint8_t begin_payload[4] = {
+    uint8_t begin_payload[5] = {
         (uint8_t)(total_size & 0xFF),
         (uint8_t)((total_size >> 8) & 0xFF),
         (uint8_t)((total_size >> 16) & 0xFF),
-        (uint8_t)((total_size >> 24) & 0xFF)
+        (uint8_t)((total_size >> 24) & 0xFF),
+        0x01 /* target slot 1 */
     };
-    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 2, begin_payload, 4);
-    TEST_ASSERT(comms.program_size == total_size, "Comms PROG_BEGIN recorded expected size");
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 2, begin_payload, 5);
+    TEST_ASSERT(comms.expected_size == total_size, "Comms PROG_BEGIN recorded expected size");
 
-    /* 3. Send PROG_CHUNK with entire program */
+    /* 3. Send PROG_CHUNK with entire program (streams into the phantom slot) */
     uint8_t chunk_payload[2 + sizeof(le_default_program)];
     chunk_payload[0] = 0x00; /* offset 0 */
     chunk_payload[1] = 0x00;
@@ -349,9 +356,18 @@ void test_comms_protocol(void)
     feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 3, chunk_payload, sizeof(chunk_payload));
     TEST_ASSERT(comms.bytes_received == total_size, "Comms received entire program chunk");
 
-    /* 4. Send PROG_END */
+    /* 4. Send PROG_END — full CRC32 validate the phantom, then commit to slot 1 */
     feed_packet_to_comms(&comms, LE_CMD_PROG_END, 4, NULL, 0);
-    TEST_ASSERT(vm.instruction_count == 4, "Comms PROG_END committed and loaded VM with 4 instructions");
+    le_slot_info_t info1;
+    le_storage_get_slot_info(&storage, 1, &info1);
+    TEST_ASSERT(info1.valid && info1.instruction_count == 4, "PROG_END committed a 4-instruction program to slot 1");
+
+    /* Upload only stores to the slot; activation is a separate, explicit step
+     * driven over the wire with LE_CMD_SELECT_SLOT. */
+    uint8_t sel_payload[1] = {0x01};
+    feed_packet_to_comms(&comms, LE_CMD_SELECT_SLOT, 5, sel_payload, 1);
+    TEST_ASSERT(le_storage_get_active_slot(&storage) == 1, "SELECT_SLOT activated slot 1");
+    TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions from slot 1");
     TEST_ASSERT(vm.running, "VM autostarted from uploaded program");
 
     /* 5. Force I/O via UART: Force IN0=true */
@@ -360,7 +376,7 @@ void test_comms_protocol(void)
         (uint8_t)((LE_ADDR_MAKE_DIN(0) >> 8) & 0xFF),
         0x01 /* value = true */
     };
-    feed_packet_to_comms(&comms, LE_CMD_FORCE_IO, 5, force_payload, 3);
+    feed_packet_to_comms(&comms, LE_CMD_FORCE_IO, 6, force_payload, 3);
     TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "Force IO set DIN 0 to true");
 
     /* Run VM step -> OUT0 (OR) should become true */
@@ -374,21 +390,12 @@ void test_protection_relays(void)
     printf("Running test_protection_relays (Phasor 1P, SymComp, Diff 87, Dist 21)...\n");
     le_process_image_t img;
     test_img_init(&img);
-        test_rt_reset(); /* clean state arena for this test */
-        test_bind_kind(LE_BLK_PHASOR, 4, sizeof(le_phasor_state_t));
-        test_bind_kind(LE_BLK_PHASOR3, 1, sizeof(le_phasor3_state_t));
-        test_bind_kind(LE_BLK_FREQ_EST, 1, sizeof(le_freq_est_state_t));
-        test_bind_kind(LE_BLK_SYMCOMP, 1, sizeof(le_symcomp_state_t));
-        test_bind_kind(LE_BLK_21, 1, sizeof(le_dist21_state_t));
-        test_bind_kind(LE_BLK_DIFF_87, 1, sizeof(le_diff87_state_t));
-        test_bind_kind(LE_BLK_PHASE_COMP, 1, sizeof(le_comp33_state_t));
+    test_rt_reset(); /* clean state arena for section 1 */
+    test_bind_kind(LE_BLK_PHASOR, 1, sizeof(le_phasor_state_t));
+    test_bind_kind(LE_BLK_PHASOR3, 1, sizeof(le_phasor3_state_t));
+    test_bind_kind(LE_BLK_FREQ_EST, 1, sizeof(le_freq_est_state_t));
 
     le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
-    le_phasor_state_t* ph1 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 1);
-    le_phasor_state_t* ph2 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 2);
-    le_phasor_state_t* ph3 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 3);
-    le_symcomp_state_t* sc = (le_symcomp_state_t*)le_process_image_kind_state(&img, LE_BLK_SYMCOMP, 0);
-    le_dist21_state_t* d21 = (le_dist21_state_t*)le_process_image_kind_state(&img, LE_BLK_21, 0);
 
     /* Local block descriptor + args (2-in/1-out max needed here). */
     struct { le_block_desc_t d; uint16_t a[4]; } b;
@@ -400,9 +407,8 @@ void test_protection_relays(void)
     /* x(t) = A * cos(omega*t + phi) */
     uint16_t N = 16;
     ph->samples_per_cycle = N;
-    /* The handler derives the DFT window from sample_rate_hz / freq_hz, so
-     * sample_rate_hz = N * 60 gives exactly a 16-sample window at 60 Hz. */
-    ph->sample_rate_hz = (float)N * 60.0f; /* 960 Hz board rate */
+    /* Cadence is derived strictly from le_rt_scan_dt(): */
+    le_rt_set_scan_dt(1.0f / ((float)N * 60.0f)); /* 960 Hz board rate -> 16 samples @ 60 Hz */
     float amp = 10.0f;
     float phi = 30.0f * (float)M_PI / 180.0f;
 
@@ -443,8 +449,8 @@ void test_protection_relays(void)
      *   [sa, sb, sc, sync_cplx, freq_hz, out_a, out_b, out_c] (5-in/3-out). */
     le_phasor3_state_t* ph3s = (le_phasor3_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR3, 0);
     TEST_ASSERT(ph3s != NULL, "3P phasor state bound");
-    ph3s->sample_rate_hz = (float)N * 60.0f; /* 960 Hz board rate (16 samples @ 60 Hz) */
     ph3s->samples_per_cycle = N;
+    le_rt_set_scan_dt(1.0f / ((float)N * 60.0f)); /* 960 Hz board rate (16 samples @ 60 Hz) */
 
     struct { le_block_desc_t d; uint16_t a[8]; } ph3b;
     ph3b.d.in_count = 5; ph3b.d.out_count = 3;
@@ -549,6 +555,19 @@ void test_protection_relays(void)
     /* ---------------------------------------------------------------------- */
     /* 2. Symmetrical Components (Fortescue Transformation)                   */
     /* ---------------------------------------------------------------------- */
+    test_rt_reset(); /* clean state arena for section 2 */
+    test_bind_kind(LE_BLK_PHASOR, 4, sizeof(le_phasor_state_t));
+    test_bind_kind(LE_BLK_SYMCOMP, 1, sizeof(le_symcomp_state_t));
+    test_bind_kind(LE_BLK_21, 1, sizeof(le_dist21_state_t));
+    test_bind_kind(LE_BLK_DIFF_87, 1, sizeof(le_diff87_state_t));
+    test_bind_kind(LE_BLK_PHASE_COMP, 1, sizeof(le_comp33_state_t));
+
+    le_phasor_state_t* ph1 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 1);
+    le_phasor_state_t* ph2 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 2);
+    le_phasor_state_t* ph3 = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 3);
+    le_symcomp_state_t* sc = (le_symcomp_state_t*)le_process_image_kind_state(&img, LE_BLK_SYMCOMP, 0);
+    le_dist21_state_t* d21 = (le_dist21_state_t*)le_process_image_kind_state(&img, LE_BLK_21, 0);
+
     /* Balanced 3-phase set: A = 10 < 0, B = 10 < -120, C = 10 < +120 */
     ph1->phasor = le_c_polar(10.0f, 0.0f);
     ph2->phasor = le_c_polar(10.0f, -120.0f * (float)M_PI / 180.0f);
@@ -732,6 +751,39 @@ void test_storage_and_terminal_cli(void)
     TEST_ASSERT(ok, "Slot 0 activated and loaded into VM");
     TEST_ASSERT(vm.instruction_count == 4, "VM has 4 instructions from Slot 0");
     TEST_ASSERT(le_storage_get_active_slot(&storage) == 0, "Active slot is 0");
+
+    /* 1b. Phantom (hidden scratch) slot */
+    TEST_ASSERT(le_storage_get_phantom_slot(&storage) == LE_MAX_CONFIG_SLOTS,
+                "phantom slot is the hidden index LE_MAX_CONFIG_SLOTS");
+    le_slot_info_t phantom_probe;
+    TEST_ASSERT(!le_storage_get_slot_info(&storage, LE_MAX_CONFIG_SLOTS, &phantom_probe),
+                "phantom slot is not exposed as a user slot");
+
+    /* A fully-validated phantom commits to a non-active slot. */
+    ok = le_storage_write_chunk(&storage, le_storage_get_phantom_slot(&storage), 0,
+                                le_default_program, sizeof(le_default_program));
+    TEST_ASSERT(ok, "Staged the default program into the phantom slot");
+    le_status_t commit_status = le_storage_commit_upload(&storage, 1, sizeof(le_default_program));
+    TEST_ASSERT(commit_status == LE_OK, "commit of a valid phantom to slot 1 succeeds");
+    le_storage_get_slot_info(&storage, 1, &info0);
+    TEST_ASSERT(info0.valid, "slot 1 valid after phantom commit");
+
+    /* Committing to the active slot is rejected. */
+    commit_status = le_storage_commit_upload(&storage, 0, sizeof(le_default_program));
+    TEST_ASSERT(commit_status == LE_ERR_ACTIVE_SLOT, "commit to the active slot rejected");
+
+    /* A corrupt phantom is rejected by full validation and leaves slot 2 untouched. */
+    memset(storage.ram_partitions[le_storage_get_phantom_slot(&storage)], 0xAB, LE_SLOT_SIZE_BYTES);
+    commit_status = le_storage_commit_upload(&storage, 2, sizeof(le_default_program));
+    TEST_ASSERT(commit_status != LE_OK, "corrupt phantom rejected by full validation");
+    le_slot_info_t info2_probe;
+    le_storage_get_slot_info(&storage, 2, &info2_probe);
+    TEST_ASSERT(!info2_probe.valid, "slot 2 untouched after a failed phantom commit");
+
+    /* Uploading into the active slot (0) is rejected by the CLI. */
+    feed_str_to_cli(&cli, "upload 0 hex\r\n");
+    TEST_ASSERT(cli.mode == LE_CLI_MODE_NORMAL, "CLI rejects upload into the active slot");
+    TEST_ASSERT(le_storage_get_active_slot(&storage) == 0, "active slot unchanged after rejected upload");
 
     /* 2. Interactive Terminal Commands */
     feed_str_to_cli(&cli, "help\r\n");
@@ -947,7 +999,7 @@ void test_board_capabilities_query(void)
     le_vm_init(&vm);
 
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, NULL);
 
     /* 1. Test binary capabilities packet (LE_CMD_GET_CAPS -> LE_CMD_CAPS_DATA) */
     s_captured_uart_len = 0;
@@ -975,6 +1027,9 @@ void test_board_capabilities_query(void)
     TEST_ASSERT(caps.config_slots == LE_MAX_CONFIG_SLOTS, "Config slots matches LE_MAX_CONFIG_SLOTS");
     TEST_ASSERT(caps.slot_size_bytes == LE_SLOT_SIZE_BYTES, "Slot size matches LE_SLOT_SIZE_BYTES");
 
+#if LE_ENABLE_DSP
+    TEST_ASSERT((caps.feature_flags & LE_CAP_DSP) != 0, "LE_CAP_DSP flag set");
+#endif
 #if LE_ENABLE_PROTECTION
     TEST_ASSERT((caps.feature_flags & LE_CAP_PROTECTION) != 0, "LE_CAP_PROTECTION flag set");
 #endif
@@ -1066,7 +1121,7 @@ void test_custom_nodes_and_ext_call(void)
     le_vm_t vm;
     le_vm_init(&vm);
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, NULL);
 
     s_captured_uart_len = 0;
     feed_packet_to_comms(&comms, LE_CMD_GET_CUSTOM_NODES, 42, NULL, 0);
@@ -1432,8 +1487,8 @@ void test_dsp_filters(void)
     TEST_ASSERT(fabsf(deriv_out - 0.0f) < 1e-3f, "Derivative is 0.0 on steady input");
 
     /* 11. Test Zero-Crossing Detector (ZERO_CROSSING) */
-    le_rt_set_scan_dt(1.0f / 1000.0f); /* 1000 Hz cadence; sample_rate_hz property is deprecated */
-    le_process_image_set_zero_crossing(&img, 0, 0.5f, 0.0f); /* Hysteresis = 0.5 */
+    le_rt_set_scan_dt(1.0f / 1000.0f); /* 1000 Hz cadence */
+    le_process_image_set_zero_crossing(&img, 0, 0.5f); /* Hysteresis = 0.5 */
     le_instruction_t inst_zc = {
         .opcode = LE_OP_ZERO_CROSSING,
         .modifier = 0,
@@ -1491,8 +1546,8 @@ void test_dsp_filters(void)
     TEST_ASSERT(fabsf(lut_out - 150.0f) < 1e-4f, "LUT_1D clamps upper bound to 150.0");
 
     /* 13. Test Totalizer (TOTALIZER) */
-    le_rt_set_scan_dt(0.1f); /* dt = 0.1s cadence; sample_time_sec property is deprecated */
-    le_process_image_set_totalizer(&img, 0, 1.0f, 1.0f, 0.0f, 1000.0f); /* Time base 1s */
+    le_rt_set_scan_dt(0.1f); /* dt = 0.1s cadence */
+    le_process_image_set_totalizer(&img, 0, 1.0f, 1.0f, 1000.0f); /* Time base 1s, scale 1.0, max 1000 */
     le_instruction_t inst_tot = {
         .opcode = LE_OP_TOTALIZER,
         .modifier = 0,
@@ -1675,10 +1730,10 @@ void test_phasor_block_builtins(void)
     b.a[1] = LE_ADDR_MAKE_CMPLX(0);          /* sync phasor */
     b.a[2] = LE_CONST_60_F;                  /* freq_hz (60 Hz) */
     b.a[3] = LE_ADDR_MAKE_CMPLX(1);          /* out phasor */
+    le_rt_set_scan_dt(1.0f / ((float)N * 60.0f));
     {
         le_phasor_state_t* pst = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
         pst->samples_per_cycle = N;
-        pst->sample_rate_hz = (float)N * 60.0f; /* 960 Hz -> 16-sample DFT window at 60 Hz */
     }
     /* Sync phasor = 10<30deg (matches raw phasor), so mag normalizes to ~1 and
      * relative angle ~0. */
@@ -1714,6 +1769,7 @@ void test_phasor_block_builtins(void)
     test_img_init(&img);
     test_rt_reset();
     test_bind_kind(LE_BLK_PHASOR, 1, sizeof(le_phasor_state_t));
+    le_rt_set_scan_dt(1.0f / ((float)N * 60.0f));
     b.d.in_count = 2; b.d.out_count = 1;
     b.a[0] = LE_ADDR_MAKE_FLOAT(0);
     b.a[1] = LE_ADDR_MAKE_CMPLX(0);
@@ -1721,7 +1777,6 @@ void test_phasor_block_builtins(void)
     {
         le_phasor_state_t* pst = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
         pst->samples_per_cycle = N;
-        pst->sample_rate_hz = (float)N * 60.0f;
     }
     le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0),
         le_c_polar(ampA, 60.0f * (float)M_PI / 180.0f));
@@ -1741,7 +1796,6 @@ void test_phasor_block_builtins(void)
     {
         le_phasor_state_t* pst = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
         pst->samples_per_cycle = N;
-        pst->sample_rate_hz = 0.0f; /* 0 -> dynamic derivation from le_rt_scan_dt() */
     }
     le_process_image_set_complex(&img, LE_ADDR_MAKE_CMPLX(0),
         le_c_polar(ampA, phi));
@@ -2200,7 +2254,7 @@ void test_comms_pulse_command(void)
     test_img_init(&vm.image); /* bind arena so pulse writes land */
 
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, NULL);
 
     uint16_t addr = LE_ADDR_MAKE_BOOL_REG(0);
     uint32_t dur = 1500;
@@ -2238,41 +2292,77 @@ void test_comms_pulse_command(void)
 
 void test_comms_negative_paths(void)
 {
-    printf("Running test_comms_negative_paths (unknown cmd, oversize, OOB, bad prog)...\n");
-    le_hal_set(le_hal_get_sim());
+    printf("Running test_comms_negative_paths (unknown cmd, active-slot, oversize, OOB, truncated)...\n");
+    const le_hal_t* sim = le_hal_get_sim();
+    sim->init();
+    le_hal_set(sim);
+
+    le_storage_t storage;
+    le_storage_init(&storage, sim);
 
     le_vm_t vm;
     le_vm_init(&vm);
+
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, &storage);
 
     /* Unknown command -> NACK 0xFF */
     le_sim_capture_tx_reset();
     feed_packet_to_comms(&comms, 0x7F, 1, NULL, 0);
     TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "unknown command NACKed");
 
-    /* PROG_BEGIN larger than the staging buffer -> NACK 0x01 */
+    /* PROG_END with no transfer open -> NACK 0x03 */
     le_sim_capture_tx_reset();
-    uint8_t big[4] = { 0xFF, 0xFF, 0xFF, 0x7F };
-    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 2, big, 4);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 2, NULL, 0);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "PROG_END with no program staged NACKed");
+
+    uint32_t ok_size = (uint32_t)sizeof(le_default_program);
+
+    /* PROG_BEGIN targeting the active slot (0) -> NACK 0x06 (never clobber running config) */
+    le_sim_capture_tx_reset();
+    uint8_t begin_active[5] = {
+        (uint8_t)(ok_size & 0xFF), (uint8_t)((ok_size >> 8) & 0xFF),
+        (uint8_t)((ok_size >> 16) & 0xFF), (uint8_t)((ok_size >> 24) & 0xFF),
+        0x00 /* active slot */
+    };
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 3, begin_active, 5);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "PROG_BEGIN on the active slot NACKed");
+
+    /* The rejected BEGIN must leave the active slot untouched. */
+    le_slot_info_t info0;
+    le_storage_get_slot_info(&storage, 0, &info0);
+    TEST_ASSERT(!info0.valid, "active slot unchanged after a rejected upload");
+
+    /* PROG_BEGIN larger than a slot -> NACK 0x01 */
+    le_sim_capture_tx_reset();
+    uint8_t big[5] = { 0xFF, 0xFF, 0xFF, 0x7F, 0x01 };
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 4, big, 5);
     TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "oversized PROG_BEGIN NACKed");
 
-    /* A valid PROG_BEGIN then a CHUNK writing past the staging buffer -> NACK 0x02 */
+    /* A valid PROG_BEGIN (slot 1) then a CHUNK writing past the slot -> NACK 0x02 */
     le_sim_capture_tx_reset();
-    uint32_t ok_size = (uint32_t)sizeof(le_default_program);
-    uint8_t begin_ok[4] = {
+    uint8_t begin_ok[5] = {
         (uint8_t)(ok_size & 0xFF), (uint8_t)((ok_size >> 8) & 0xFF),
-        (uint8_t)((ok_size >> 16) & 0xFF), (uint8_t)((ok_size >> 24) & 0xFF)
+        (uint8_t)((ok_size >> 16) & 0xFF), (uint8_t)((ok_size >> 24) & 0xFF),
+        0x01
     };
-    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 3, begin_ok, 4);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 5, begin_ok, 5);
     uint8_t chunk_oob[4] = { 0xFF, 0xFF, 0x42, 0x42 }; /* offset 0xFFFF */
-    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 4, chunk_oob, 4);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 6, chunk_oob, 4);
     TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "out-of-bounds PROG_CHUNK NACKed");
 
-    /* PROG_END with no valid program staged -> NACK 0x03 */
+    /* SELECT_SLOT with an out-of-range slot -> NACK */
     le_sim_capture_tx_reset();
-    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 5, NULL, 0);
-    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "PROG_END with no program NACKed");
+    {
+        uint8_t sel_bad[1] = { (uint8_t)LE_MAX_CONFIG_SLOTS }; /* phantom index is not a user slot */
+        feed_packet_to_comms(&comms, LE_CMD_SELECT_SLOT, 7, sel_bad, 1);
+        TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "SELECT_SLOT with an invalid slot NACKed");
+    }
+
+    /* A truncated transfer (PROG_END before all bytes arrived) -> NACK 0x04 */
+    le_sim_capture_tx_reset();
+    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 8, NULL, 0);
+    TEST_ASSERT(test_tx_has_cmd(LE_CMD_NACK), "truncated PROG_END NACKed");
 }
 
 /* ========================================================================== */

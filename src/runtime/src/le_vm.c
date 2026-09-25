@@ -81,13 +81,11 @@ le_status_t le_vm_step_us(le_vm_t* vm, uint32_t now_us)
         return LE_OK;
     }
 
-    for (uint16_t i = 0; i < vm->instruction_count; i++)
-    {
-        le_status_t status = le_exec_instruction_ex(&vm->instructions[i], &vm->image, now_ms,
-                                                 vm->blocks, vm->block_count);
-        if (status != LE_OK) {
-            return status;
-        }
+    le_status_t status = le_exec_program(vm->instructions, vm->instruction_count,
+                                         &vm->image, now_ms,
+                                         vm->blocks, vm->block_count);
+    if (status != LE_OK) {
+        return status;
     }
 
     vm->cycle_count++;

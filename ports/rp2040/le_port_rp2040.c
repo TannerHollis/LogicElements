@@ -12,7 +12,7 @@
 #include "hardware/uart.h"
 
 #define LE_PORT_FLASH_BASE 0x08000000UL
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
 
 /* %I[0..n] -> Pico GPIO numbers */
 static const uint8_t INPUT_PINS[] = { 14, 15, 16, 17 };

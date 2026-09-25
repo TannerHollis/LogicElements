@@ -4,6 +4,7 @@
  */
 
 #include "le_hal.h"
+#include "le_storage.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -26,7 +27,7 @@ void le_hal_set(const le_hal_t* hal)
 static bool s_sim_gpio[64] = {0};
 static float s_sim_adc[16] = {0.0f};
 static uint32_t s_sim_adc_raw[16] = {0};
-static uint8_t s_sim_flash[4096] = {0};
+static uint8_t s_sim_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
 
 #if LE_ENABLE_SERIAL_BUS
 static uint8_t s_sim_i2c_last_startup[16] = {0};

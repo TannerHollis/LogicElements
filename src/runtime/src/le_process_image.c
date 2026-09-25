@@ -596,16 +596,14 @@ void le_process_image_set_derivative(le_process_image_t* img, uint8_t idx, float
     st->initialized = false;
 }
 
-void le_process_image_set_zero_crossing(le_process_image_t* img, uint8_t idx, float hysteresis, float sample_rate_hz)
+void le_process_image_set_zero_crossing(le_process_image_t* img, uint8_t idx, float hysteresis)
 {
     if (!img) return;
     le_zero_crossing_state_t* st = (le_zero_crossing_state_t*)le_process_image_kind_state(img, LE_BLK_ZERO_CROSSING, idx);
     if (!st) return;
 
     if (hysteresis < 0.0f) hysteresis = -hysteresis;
-    if (sample_rate_hz <= 0.0f) sample_rate_hz = 1000.0f;
     st->hysteresis = hysteresis;
-    st->sample_rate_hz = sample_rate_hz;
     st->frequency_hz = 0.0f;
     st->samples_since_cross = 0;
     st->last_state = 0;
@@ -628,18 +626,17 @@ void le_process_image_set_lut_1d(le_process_image_t* img, uint8_t idx, const flo
 
 void le_process_image_set_totalizer(le_process_image_t* img, uint8_t idx,
                                     float time_base_sec, float scale_factor,
-                                    float sample_time_sec, float max_limit)
+                                    float max_limit)
 {
     if (!img) return;
     le_totalizer_state_t* st = (le_totalizer_state_t*)le_process_image_kind_state(img, LE_BLK_TOTALIZER, idx);
     if (!st) return;
 
     if (time_base_sec <= 0.0f) time_base_sec = 60.0f;
-    if (sample_time_sec <= 0.0f) sample_time_sec = 0.001f;
-    st->accumulator = 0.0;
+    st->accumulator = 0.0f;
+    st->compensation = 0.0f;
     st->time_base_sec = time_base_sec;
     st->scale_factor = scale_factor;
-    st->sample_time_sec = sample_time_sec;
     st->max_limit = max_limit;
     st->prev_x = 0.0f;
     st->initialized = false;

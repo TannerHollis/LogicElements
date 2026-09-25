@@ -267,10 +267,37 @@ def generate_template(filepath: str):
     }
     save_board_profile(template, filepath)
 
+import subprocess
+
+def find_le_executable() -> Optional[str]:
+    """Locates the canonical LogicElements native CLI executable (le/le.exe)."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
+    candidates = [
+        os.path.join(root_dir, "build", "Release", "le.exe"),
+        os.path.join(root_dir, "build", "Debug", "le.exe"),
+        os.path.join(root_dir, "build", "le.exe"),
+        os.path.join(root_dir, "build", "Release", "le"),
+        os.path.join(root_dir, "build", "Debug", "le"),
+        os.path.join(root_dir, "build", "le"),
+        os.path.join(root_dir, "bin", "le.exe"),
+        os.path.join(root_dir, "bin", "le"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
 def main():
     """Command-line interface entry point for board discovery."""
+    le_bin = find_le_executable()
+    if le_bin and len(sys.argv) > 1:
+        res = subprocess.run([le_bin, "board"] + sys.argv[1:])
+        sys.exit(res.returncode)
+
     parser = argparse.ArgumentParser(description="LogicElements Board Discovery & Profile Utility")
     parser.add_argument("--info", "-i", type=str, help="Display capabilities of an .leconfig file")
+    parser.add_argument("--scan", action="store_true", help="Scan and list available serial ports")
     parser.add_argument("--port", "-p", type=str, help="Serial port to query live device (e.g. COM3 or /dev/ttyUSB0)")
     parser.add_argument("--baud", "-b", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("--output", "-o", type=str, help="Output .leconfig destination file")

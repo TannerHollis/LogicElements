@@ -174,6 +174,25 @@ extern "C" {
 #define LE_DEFAULT_SCAN_DT_SEC  0.01f  /* Historic fallback dt (seconds) when no scan rate is configured */
 #endif
 
+/* ========================================================================== */
+/* Execution Mode (board build-time policy)                                  */
+/* The BOARD designer selects how a loaded program executes from the storage  */
+/* image. Both modes produce identical .lebin; the pick only changes the      */
+/* runtime memory policy. Because every shipped LogicElements MCU (STM32,     */
+/* AVR, RP2040/RP2350) supports execute-in-place (XIP) with negligible flash  */
+/* latency, the default is IN_PLACE. A large-RAM microprocessor may opt into  */
+/* LE_EXEC_IN_RAM (copy the whole image into RAM before binding).             */
+/* ========================================================================== */
+#ifndef LE_EXEC_IN_PLACE
+#define LE_EXEC_IN_PLACE        0
+#endif
+#ifndef LE_EXEC_IN_RAM
+#define LE_EXEC_IN_RAM          1
+#endif
+#ifndef LE_EXEC_MODE
+#define LE_EXEC_MODE            LE_EXEC_IN_PLACE
+#endif
+
 /* Program Header Flags */
 #define LE_FLAG_AUTOSTART       (1U << 0)
 #define LE_FLAG_WATCHDOG_EN     (1U << 1)
@@ -985,12 +1004,10 @@ typedef struct {
  * - The freq_hz input determines which subset of samples to use for the DFT
  * - Self-sync mode allows output angle to be 0-degree referenced
  * - Sample rate derives dynamically from the enforced scan period (le_rt_scan_dt)
- *   unless explicitly overridden in sample_rate_hz
  */
 typedef struct {
     uint16_t     samples_per_cycle;                  /**< Default samples per cycle (config) */
     bool         self_sync;                          /**< true=0-degree reference, false=sync-referenced */
-    float        sample_rate_hz;                     /**< Board scan rate (samples/sec, 0=derive from scan dt) */
     le_complex_t phasor;                             /**< Filtered fundamental complex phasor */
     float        magnitude;                          /**< RMS magnitude of extracted phasor */
     float        angle_rad;                          /**< Phase angle in radians (-pi to +pi) */
@@ -1004,12 +1021,11 @@ typedef struct {
  * Banks three independent single-phase phasor extractors (a, b, c) against a
  * single bus reference phasor (sync) and a single system frequency input.
  * Each phase maintains its own high-rate sample buffer and DFT accumulator,
- * sharing the samples_per_cycle / sample_rate_hz / self_sync properties.
+ * sharing the samples_per_cycle / self_sync properties.
  */
 typedef struct {
     /* Shared configuration (baked by the compiler). */
     uint16_t     samples_per_cycle;    /**< Default samples per cycle (config) */
-    float        sample_rate_hz;       /**< Board scan rate (samples/second) */
     bool         self_sync;            /**< true=0-degree reference, false=sync-referenced */
 
     /* Phase A extractor state. */
@@ -1094,6 +1110,13 @@ typedef struct {
     float  r_meas;               /**< Measured apparent resistance (R). */
     float  x_meas;               /**< Measured apparent reactance (X). */
     bool   tripped;              /**< Distance zone trip flag. */
+    /* Precomputed geometry cache (eliminates runtime trig in scanning loop) */
+    float  r_center_norm;        /**< Cached normal center R. */
+    float  x_center_norm;        /**< Cached normal center X. */
+    float  r_center_off;         /**< Cached offset center R. */
+    float  x_center_off;         /**< Cached offset center X. */
+    float  radius_sq;            /**< Cached radius squared. */
+    bool   geom_cached;          /**< True if geometry has been computed. */
 } le_dist21_state_t;
 
 /**
@@ -1292,7 +1315,6 @@ typedef struct {
  */
 typedef struct {
     float    hysteresis;               /**< Half-width noise band around zero. */
-    float    sample_rate_hz;           /**< PLC scan sampling rate (Hz). */
     float    frequency_hz;             /**< Most recently measured frequency (Hz). */
     uint32_t samples_since_cross;      /**< Accumulated sample counter since last crossing. */
     int8_t   last_state;               /**< Previous sign state (-1 = neg, +1 = pos, 0 = init). */
@@ -1311,10 +1333,10 @@ typedef struct {
  * @brief Totalizer / numerical integrator element state.
  */
 typedef struct {
-    double   accumulator;              /**< High-precision running sum. */
+    float    accumulator;              /**< High-precision running sum (Kahan-compensated). */
+    float    compensation;             /**< Lost low-order bits accumulator for 48-bit equivalent precision. */
     float    time_base_sec;            /**< Time base divisor (1=sec, 60=min, 3600=hr). */
     float    scale_factor;             /**< Output scaling multiplier. */
-    float    sample_time_sec;          /**< Scan step delta time (seconds). */
     float    max_limit;                /**< Clamping upper limit (0 = unlimited). */
     float    prev_x;                   /**< Previous input rate sample for trapezoidal integration. */
     bool     initialized;              /**< Set to true after first cycle. */
@@ -1348,7 +1370,9 @@ typedef enum {
     LE_ERR_NOT_FOUND        = -8,  /**< Named alias/register not found. */
     LE_ERR_SCAN_JITTER      = -9,  /**< Fixed-rate scan boundary missed (non-uniform cadence). */
     LE_ERR_TIMING_BUDGET    = -10, /**< Program worst-case scan exceeds the configured scan period. */
-    LE_ERR_SCAN_OVERFLOW    = -11  /**< A measured scan overran the fixed period. */
+    LE_ERR_SCAN_OVERFLOW    = -11, /**< A measured scan overran the fixed period. */
+    LE_ERR_ACTIVE_SLOT      = -12, /**< Upload/catalog operation targeted the currently active slot. */
+    LE_ERR_STORAGE          = -13  /**< Non-volatile storage read/write failed. */
 } le_status_t;
 
 #ifdef __cplusplus

@@ -1402,7 +1402,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             case LE_OP_DEADBAND: { le_deadband_state_t st{}; st.threshold = prop(el, "threshold", 0.0f); st.center = prop(el, "center", 0.0f); append_state(LE_BLK_DEADBAND, &st, sizeof(st)); break; }
             case LE_OP_WASHOUT: { le_washout_state_t st{}; st.alpha = prop(el, "alpha", 0.95f); append_state(LE_BLK_WASHOUT, &st, sizeof(st)); break; }
             case LE_OP_DERIVATIVE: { le_derivative_state_t st{}; st.alpha = prop(el, "alpha", 0.8f); st.gain = prop(el, "gain", 1.0f); append_state(LE_BLK_DERIVATIVE, &st, sizeof(st)); break; }
-            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = prop(el, "hysteresis", 0.05f); /* sample_rate_hz deprecated: cadence derives from le_rt_scan_dt() */ append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
+            case LE_OP_ZERO_CROSSING: { le_zero_crossing_state_t st{}; st.hysteresis = prop(el, "hysteresis", 0.05f); append_state(LE_BLK_ZERO_CROSSING, &st, sizeof(st)); break; }
             case LE_OP_LUT_1D: { le_lut_1d_state_t st{}; st.num_points = (uint16_t)prop(el, "num_points", 2.0f); const auto& xarr = el.get("x").arr_val; const auto& yarr = el.get("y").arr_val; for (size_t k = 0; k < xarr.size() && k < LE_MAX_LUT_POINTS; k++) st.x[k] = (float)xarr[k].as_float(0.0f); for (size_t k = 0; k < yarr.size() && k < LE_MAX_LUT_POINTS; k++) st.y[k] = (float)yarr[k].as_float(0.0f); if (st.num_points < 2) st.num_points = 2; if (st.num_points > LE_MAX_LUT_POINTS) st.num_points = LE_MAX_LUT_POINTS; append_state(LE_BLK_LUT_1D, &st, sizeof(st)); break; }
             case LE_OP_TOTALIZER: { le_totalizer_state_t st{}; st.time_base_sec = prop(el, "time_base_sec", 60.0f); st.scale_factor = prop(el, "scale_factor", 1.0f); st.max_limit = prop(el, "max_limit", 0.0f); append_state(LE_BLK_TOTALIZER, &st, sizeof(st)); break; }
             case LE_OP_MIN_MAX_HOLD: { le_min_max_hold_state_t st{}; st.mode = (uint8_t)prop(el, "mode", 0.0f); append_state(LE_BLK_MIN_MAX_HOLD, &st, sizeof(st)); break; }
@@ -1856,9 +1856,6 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
                 ph.samples_per_cycle = 16;
             phasor_samples_est = ph.samples_per_cycle;
             
-            // Initialize sample_rate_hz: circuit scan rate if declared, or element override (0 = derive from dt at runtime)
-            ph.sample_rate_hz = (float)((design_scan_hz > 0.0) ? design_scan_hz : 0.0); /* circuit cadence; element override removed */
-            
             // Initialize self_sync property (default: false = sync-referenced)
             ph.self_sync = prop(el, "self_sync", false);
             
@@ -1901,9 +1898,6 @@ if (type == "PHASOR_3P" || type == "LE_PHASOR_3P") {
             if (ph3.samples_per_cycle == 0 || ph3.samples_per_cycle > LE_MAX_RAW_SAMPLES)
                 ph3.samples_per_cycle = 16;
             phasor_samples_est = ph3.samples_per_cycle;
-
-            // Initialize sample_rate_hz: circuit scan rate if declared, or element override (0 = derive from dt at runtime)
-            ph3.sample_rate_hz = (float)((design_scan_hz > 0.0) ? design_scan_hz : 0.0); /* circuit cadence; element override removed */
 
             // Initialize self_sync property (default: false = sync-referenced)
             ph3.self_sync = prop(el, "self_sync", false);

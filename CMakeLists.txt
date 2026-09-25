@@ -80,6 +80,54 @@ target_include_directories(le_compile PRIVATE
 )
 
 # ==============================================================================
+# Host Communications Library (Zero-Qt Serial & Framed Packet Protocol)
+# ==============================================================================
+if(WIN32)
+    set(LE_SERIAL_SOURCE src/cli/comms/src/le_serial_win.c)
+else()
+    set(LE_SERIAL_SOURCE src/cli/comms/src/le_serial_posix.c)
+endif()
+
+set(LE_HOST_COMMS_SOURCES
+    src/cli/comms/src/le_host_comms.c
+    ${LE_SERIAL_SOURCE}
+)
+
+add_library(le_host_comms STATIC ${LE_HOST_COMMS_SOURCES})
+target_include_directories(le_host_comms PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
+)
+
+# ==============================================================================
+# Unified Host CLI Toolsuite (`le`)
+# ==============================================================================
+set(LE_CLI_SOURCES
+    src/cli/main.cpp
+    src/cli/commands/cmd_compile.cpp
+    src/cli/commands/cmd_disasm.cpp
+    src/cli/commands/cmd_board.cpp
+    src/cli/commands/cmd_upload.cpp
+    src/cli/commands/cmd_control.cpp
+    src/cli/commands/cmd_monitor.cpp
+    src/cli/commands/cmd_term.cpp
+    src/cli/commands/cmd_sim.cpp
+)
+
+add_executable(le ${LE_CLI_SOURCES})
+target_include_directories(le PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/commands
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hal
+)
+target_link_libraries(le PRIVATE le_compiler_static le_host_comms LogicElements)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(le PRIVATE m)
+endif()
+
+# ==============================================================================
 # Automated Test Suite
 # ==============================================================================
 enable_testing()
@@ -91,6 +139,15 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(test_c_runtime PRIVATE m)
 endif()
 add_test(NAME CRuntimeTests COMMAND test_c_runtime)
+
+# Host Comms unit tests
+add_executable(test_host_comms tests/test_host_comms.c)
+target_link_libraries(test_host_comms PRIVATE le_host_comms LogicElements)
+target_include_directories(test_host_comms PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
+)
+add_test(NAME HostCommsTests COMMAND test_host_comms)
 
 # Compiler C++ unit tests
 add_executable(test_compiler tests/test_compiler.cpp)

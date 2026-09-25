@@ -25,7 +25,7 @@
 
 /* Example static RAM flash mirror so the template is self-contained without a
  * real storage driver. On real hardware, back this array with flash/EEPROM. */
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
 
 /* ========================================================================== */
 /* Pin mapping configuration                                                  */

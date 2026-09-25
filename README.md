@@ -20,13 +20,19 @@ zero-heap state workspace, and UART/telemetry support.
 
 ```bash
 # Compile a circuit into bytecode (with board validation):
-le_compile my_circuit.json -b ports/stm32/stm32f401.leconfig -o my_circuit.lebin
-
-# Or via the Python ctypes SDK:
-py tools/compiler/le_compiler.py my_circuit.json -b my_board.leconfig -o my_circuit.lebin
+le compile my_circuit.json -b ports/stm32/stm32f401.leconfig -o my_circuit.lebin
 
 # Inspect a compiled program:
-py tools/compiler/le_disasm.py my_circuit.lebin
+le disasm my_circuit.lebin
+
+# Flash program to hardware and start PLC execution:
+le upload my_circuit.lebin --port COM3 --run
+
+# Stream live process image telemetry:
+le monitor --port COM3
+
+# Run local desktop simulation:
+le sim my_circuit.lebin
 ```
 
 ---
@@ -76,10 +82,11 @@ build_element_assembly.bat   # Windows per-element assembly test build
 docs/                        # all documentation
 examples/custom_nodes/       # custom node example (circuit, board, HAL, runner)
 ports/                       # board profiles + HAL ports (stm32, rp2040, avr, template)
-src/compiler/                # C++17 compiler engine + C API + CLI
+src/cli/                     # Unified host CLI toolsuite (`le`) & portable comms engine (`le_host_comms`)
+src/compiler/                # C++17 compiler engine + C API
 src/hal/                     # simulator HAL
 src/runtime/                 # ANSI C runtime (VM, process image, opcodes, loader, storage, comms, cli, le_rt)
-tests/                       # C runtime tests, compiler tests, per-element assembly tests
+tests/                       # C runtime tests, host comms tests, compiler tests, per-element assembly tests
 tools/                       # Python compiler/board/disasm SDK + simulator main
 ```
 

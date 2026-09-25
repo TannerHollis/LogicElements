@@ -1,0 +1,76 @@
+{
+  "device": {
+    "name": "Raspberry Pi Pico 2 W RP2350",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
+  "limits": {
+    "digital_inputs": 24,
+    "digital_outputs": 24,
+    "coils": 256,
+    "floats": 128,
+    "complex_registers": 128,
+    "analog_inputs": 4,
+    "workspace_bytes": 262144,
+    "config_slots": 2,
+    "slot_size_bytes": 4096,
+    "ns_per_abstract_cycle": 250
+  },
+  "features": {
+    "protection": true,
+    "complex": true,
+    "analog": true,
+    "dsp": true,
+    "serial_bus": true
+  },
+  "pin_map": {
+    "inputs": {
+      "%I0": {"alias": "BTN_A", "pin": "GP14", "desc": "Pushbutton A (Pull-up)"},
+      "%I1": {"alias": "BTN_B", "pin": "GP15", "desc": "Pushbutton B (Pull-up)"},
+      "%I2": {"alias": "SENSOR_1", "pin": "GP22", "desc": "Digital Proximity Sensor 1"},
+      "%I3": {"alias": "SENSOR_2", "pin": "GP13", "desc": "Digital Proximity Sensor 2"}
+    },
+    "outputs": {
+      "%Q0": {"alias": "LED_0", "pin": "GP2", "desc": "External LED / Relay 0 (onboard LED on wireless chip when LE_PORT_CYW43_LED)"},
+      "%Q1": {"alias": "RELAY_1", "pin": "GP3", "desc": "External Relay Channel 1"},
+      "%Q2": {"alias": "RELAY_2", "pin": "GP7", "desc": "External Relay Channel 2"}
+    },
+    "analog": {
+      "%AIN0": {"alias": "ADC0", "pin": "GP26", "desc": "Analog channel 0 (12-bit)"},
+      "%AIN1": {"alias": "ADC1", "pin": "GP27", "desc": "Analog channel 1 (12-bit)"},
+      "%AIN2": {"alias": "ADC2", "pin": "GP28", "desc": "Analog channel 2 (12-bit)"},
+      "%AIN3": {"alias": "ADC3", "pin": "GP29", "desc": "Analog channel 3 (12-bit)"}
+    },
+    "i2c": {
+      "sda": "GP4",
+      "scl": "GP5"
+    },
+    "spi": {
+      "sck": "GP18",
+      "mosi": "GP19",
+      "miso": "GP16",
+      "cs": ["GP17"]
+    }
+  },
+  "custom_nodes": [
+    {
+      "type_id": "RP2350_PIO_Stepper",
+      "display_name": "PIO Stepper Driver",
+      "category": "RP2350 Peripherals",
+      "description": "Deterministic PIO state machine step/dir generator",
+      "function_id": 1,
+      "color": "#E91E63",
+      "inputs": [
+        {"name": "StepEnable", "type": "bool", "default": false},
+        {"name": "Direction", "type": "bool", "default": true}
+      ],
+      "outputs": [
+        {"name": "StepActive", "type": "bool"}
+      ],
+      "properties": [
+        {"key": "step_rate_hz", "label": "Step Rate (Hz)", "type": "int", "default": 5000, "min": 100, "max": 100000}
+      ]
+    }
+  ]
+}
+

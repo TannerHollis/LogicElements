@@ -10,12 +10,12 @@ import json
 import ctypes
 import ctypes.util
 import argparse
-from ctypes import c_int, c_char_p, c_uint8, c_size_t, c_uint32, POINTER, Structure
+from ctypes import c_int, c_char_p, c_uint8, c_size_t, c_uint32, c_double, POINTER, Structure
 from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
 LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 7
+LE_BIN_VERSION = 11
 LE_FLAG_AUTOSTART = 0x0001
 
 # Address Regions
@@ -115,7 +115,7 @@ class _LeCompileResult(Structure):
         ("temp_complex_count", c_int),
         ("user_int_count", c_int),
         ("temp_int_count", c_int),
-        (\"eliminated_instructions\", c_int),
+        ("eliminated_instructions", c_int),
         ("eliminated_registers", c_int),
         ("abstract_cycles", c_uint32),
         ("estimated_exec_us", c_double),

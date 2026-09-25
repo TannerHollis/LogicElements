@@ -79,7 +79,7 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
 static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 {
     uint32_t rel = offset - 0x08000000UL;
-    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
     if (rel + (uint32_t)len > sizeof(flash)) return false;
     memcpy(buf, &flash[rel], len);
     return true;
@@ -87,7 +87,7 @@ static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
     uint32_t rel = offset - 0x08000000UL;
-    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
     if (rel + (uint32_t)len > sizeof(flash)) return false;
     memcpy(&flash[rel], buf, len);
     return true;
@@ -215,7 +215,7 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
 static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 {
     uint32_t rel = offset - 0x08000000UL;
-    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
     if (rel + (uint32_t)len > sizeof(flash)) return false;
     memcpy(buf, &flash[rel], len);
     return true;
@@ -223,7 +223,7 @@ static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
     uint32_t rel = offset - 0x08000000UL;
-    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_MAX_CONFIG_SLOTS] = {0};
+    static uint8_t flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
     if (rel + (uint32_t)len > sizeof(flash)) return false;
     memcpy(&flash[rel], buf, len);
     return true;

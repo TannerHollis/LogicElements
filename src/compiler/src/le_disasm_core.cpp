@@ -253,7 +253,6 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
         case LE_BLK_PHASOR: {
             const le_phasor_state_t* s = (const le_phasor_state_t*)p;
             row("samples_per_cycle", std::to_string(s->samples_per_cycle));
-            row("sample_rate_hz", std::to_string(s->sample_rate_hz));
             row("self_sync", s->self_sync ? "true" : "false");
             row("phasor", fmt_cx(s->phasor));
             rows("magnitude", s->magnitude); rows("angle_rad", s->angle_rad);
@@ -262,7 +261,6 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
         case LE_BLK_PHASOR3: {
             const le_phasor3_state_t* s = (const le_phasor3_state_t*)p;
             row("samples_per_cycle", std::to_string(s->samples_per_cycle));
-            row("sample_rate_hz", std::to_string(s->sample_rate_hz));
             row("self_sync", s->self_sync ? "true" : "false");
             row("phasor_a", fmt_cx(s->phasor_a)); row("phasor_b", fmt_cx(s->phasor_b)); row("phasor_c", fmt_cx(s->phasor_c));
             rows("magnitude_a", s->magnitude_a); rows("angle_rad_a", s->angle_rad_a);
@@ -378,7 +376,7 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
         }
         case LE_BLK_ZERO_CROSSING: {
             const le_zero_crossing_state_t* s = (const le_zero_crossing_state_t*)p;
-            rows("hysteresis", s->hysteresis); rows("sample_rate_hz", s->sample_rate_hz);
+            rows("hysteresis", s->hysteresis);
             break;
         }
         case LE_BLK_LUT_1D: {
@@ -393,7 +391,7 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
             const le_totalizer_state_t* s = (const le_totalizer_state_t*)p;
             rowd("accumulator", s->accumulator);
             rows("time_base_sec", s->time_base_sec); rows("scale_factor", s->scale_factor);
-            rows("sample_time_sec", s->sample_time_sec); rows("max_limit", s->max_limit);
+            rows("max_limit", s->max_limit);
             break;
         }
         case LE_BLK_MIN_MAX_HOLD: {

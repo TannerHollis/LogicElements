@@ -282,7 +282,7 @@ void le_process_image_set_derivative(le_process_image_t* img, uint8_t idx, float
 /**
  * @brief Configures zero-crossing detector and frequency counter.
  */
-void le_process_image_set_zero_crossing(le_process_image_t* img, uint8_t idx, float hysteresis, float sample_rate_hz);
+void le_process_image_set_zero_crossing(le_process_image_t* img, uint8_t idx, float hysteresis);
 
 /**
  * @brief Configures 1D lookup table breakpoints.
@@ -294,7 +294,7 @@ void le_process_image_set_lut_1d(le_process_image_t* img, uint8_t idx, const flo
  */
 void le_process_image_set_totalizer(le_process_image_t* img, uint8_t idx,
                                     float time_base_sec, float scale_factor,
-                                    float sample_time_sec, float max_limit);
+                                    float max_limit);
 
 /**
  * @brief Configures min/max peak hold output mode.
@@ -334,6 +334,123 @@ le_counter_state_t* le_process_image_counter(const le_process_image_t* img, uint
  * out of range for the bound rows or the fixed array.
  */
 uint8_t* le_process_image_kind_state(const le_process_image_t* img, uint8_t kind, uint16_t idx);
+
+/**
+ * @brief Fast inline float getter for hot execution paths.
+ * Directly resolves standard %F registers and constants; falls back to full resolver otherwise.
+ */
+LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint16_t addr)
+{
+    if ((addr & 0xF000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->floats && idx < img->float_count) return img->floats[idx];
+    }
+    if (addr == LE_CONST_ZERO_F) return 0.0f;
+    if (addr == LE_CONST_ONE_F)  return 1.0f;
+    return le_process_image_get_float(img, addr);
+}
+
+/**
+ * @brief Fast inline float setter for hot execution paths.
+ */
+LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t addr, float val)
+{
+    if ((addr & 0xF000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->floats && idx < img->float_count) {
+            img->floats[idx] = val;
+            return;
+        }
+    }
+    le_process_image_set_float(img, addr, val);
+}
+
+/**
+ * @brief Fast inline bool getter for hot execution paths.
+ */
+LE_ALWAYS_INLINE bool le_pi_get_bool_fast(const le_process_image_t* img, uint16_t addr)
+{
+    uint16_t reg = addr & LE_ADDR_REGION_MASK;
+    if (reg == LE_REGION_BOOL_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->regs && idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
+            return (img->regs[bit >> 3] & (1U << (bit & 7))) != 0;
+        }
+    } else if (reg == LE_REGION_DIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->din_count) {
+            return (img->regs[idx >> 3] & (1U << (idx & 7))) != 0;
+        }
+    } else if (reg == LE_REGION_DOUT) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->dout_count) {
+            uint32_t bit = (uint32_t)img->din_count + idx;
+            return (img->regs[bit >> 3] & (1U << (bit & 7))) != 0;
+        }
+    } else if (addr == LE_CONST_TRUE) {
+        return true;
+    } else if (addr == LE_CONST_FALSE) {
+        return false;
+    }
+    return le_process_image_get_bool(img, addr);
+}
+
+/**
+ * @brief Fast inline bool setter for hot execution paths.
+ */
+LE_ALWAYS_INLINE void le_pi_set_bool_fast(le_process_image_t* img, uint16_t addr, bool val)
+{
+    uint16_t reg = addr & LE_ADDR_REGION_MASK;
+    if (reg == LE_REGION_BOOL_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->regs && idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
+            if (val) img->regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
+            return;
+        }
+    } else if (reg == LE_REGION_DOUT) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->dout_count) {
+            uint32_t bit = (uint32_t)img->din_count + idx;
+            if (val) img->regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
+            return;
+        }
+    }
+    le_process_image_set_bool(img, addr, val);
+}
+
+#if LE_ENABLE_COMPLEX
+/**
+ * @brief Fast inline complex getter for hot execution paths.
+ */
+LE_ALWAYS_INLINE le_complex_t le_pi_get_complex_fast(const le_process_image_t* img, uint16_t addr)
+{
+    if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_CMPLX) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->cmplx && idx < img->cmplx_count) return img->cmplx[idx];
+    }
+    if (addr == LE_CONST_ZERO_C) return le_c_make(0.0f, 0.0f);
+    return le_process_image_get_complex(img, addr);
+}
+
+/**
+ * @brief Fast inline complex setter for hot execution paths.
+ */
+LE_ALWAYS_INLINE void le_pi_set_complex_fast(le_process_image_t* img, uint16_t addr, le_complex_t val)
+{
+    if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_CMPLX) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->cmplx && idx < img->cmplx_count) {
+            img->cmplx[idx] = val;
+            return;
+        }
+    }
+    le_process_image_set_complex(img, addr, val);
+}
+#endif
 
 #ifdef __cplusplus
 }

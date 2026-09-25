@@ -11,6 +11,7 @@
 #include <cassert>
 #include <cstring>
 #include <string>
+#include <vector>
 
 extern "C" {
     const le_hal_t* le_hal_get_sim(void);
@@ -2374,23 +2375,35 @@ void test_comms_upload_endtoend()
     int rc = le_compile_json(circuit_json, nullptr, &res);
     TEST_ASSERT(rc == 0 && res.success, "wire circuit compiles");
 
-    le_hal_set(le_hal_get_sim());
+    const le_hal_t* sim = le_hal_get_sim();
+    sim->init();
+    le_hal_set(sim);
+
+    le_storage_t storage;
+    le_storage_init(&storage, sim);
+
     le_vm_t vm;
     le_vm_init(&vm);
     le_comms_t comms;
-    le_comms_init(&comms, &vm);
+    le_comms_init(&comms, &vm, &storage);
 
+    // Upload targets slot 1 (active slot is 0 by default).
     uint32_t total = (uint32_t)res.binary_size;
-    uint8_t begin[4] = { (uint8_t)(total & 0xFF), (uint8_t)((total >> 8) & 0xFF),
-                         (uint8_t)((total >> 16) & 0xFF), (uint8_t)((total >> 24) & 0xFF) };
-    test_feed_packet(&comms, LE_CMD_PROG_BEGIN, 1, begin, 4);
+    uint8_t begin[5] = {
+        (uint8_t)(total & 0xFF), (uint8_t)((total >> 8) & 0xFF),
+        (uint8_t)((total >> 16) & 0xFF), (uint8_t)((total >> 24) & 0xFF),
+        0x01 /* target slot 1 */
+    };
+    test_feed_packet(&comms, LE_CMD_PROG_BEGIN, 1, begin, 5);
 
-    uint8_t chunk[2 + 4096];
+    std::vector<uint8_t> chunk(2u + res.binary_size);
     chunk[0] = 0; chunk[1] = 0;
-    memcpy(&chunk[2], res.binary_data, res.binary_size);
-    test_feed_packet(&comms, LE_CMD_PROG_CHUNK, 2, chunk, 2u + (uint16_t)res.binary_size);
+    memcpy(chunk.data() + 2, res.binary_data, res.binary_size);
+    test_feed_packet(&comms, LE_CMD_PROG_CHUNK, 2, chunk.data(), (uint16_t)chunk.size());
     test_feed_packet(&comms, LE_CMD_PROG_END, 3, NULL, 0);
 
+    // Upload stores to the slot; activation is an explicit, separate step.
+    TEST_ASSERT(le_storage_activate_slot(&storage, 1, &vm), "uploaded slot 1 activates");
     TEST_ASSERT(vm.instruction_count >= 1, "uploaded program committed to the VM");
     TEST_ASSERT(vm.running, "uploaded program autostarted");
 

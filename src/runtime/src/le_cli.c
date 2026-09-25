@@ -60,7 +60,7 @@ static void cli_show_prompt(void)
 
 static void cmd_help(void)
 {
-    cli_print("\r\n=== LogicElements Terminal Commands ===\r\n");
+    cli_print("=== LogicElements Terminal Commands ===\r\n");
     cli_print("  help                    Show this menu\r\n");
     cli_print("  info                    Target MCU info & capacity limits\r\n");
     cli_print("  caps                    Dump machine-readable .leconfig profile (JSON)\r\n");
@@ -469,6 +469,8 @@ static void handle_command(le_cli_t* cli, char* line)
         uint8_t slot = (uint8_t)atoi(arg1);
         if (slot >= LE_MAX_CONFIG_SLOTS) {
             cli_print("Error: Invalid slot number.\r\n");
+        } else if (cli->storage && slot == cli->storage->active_slot) {
+            cli_print("Error: Cannot upload into the active slot. Switch slots first.\r\n");
         } else {
             if (strcmp(arg2, "hex") == 0) {
                 start_hex_upload(cli, slot);
@@ -489,23 +491,19 @@ static void handle_xmodem_char(le_cli_t* cli, uint8_t ch)
 {
     if (cli->xmodem_idx == 0) {
         if (ch == XMODEM_EOT) {
-            /* End of transmission */
+            /* End of transmission: validate the fully-staged phantom and only
+             * then atomically commit it to the target slot. */
             cli_putc(XMODEM_ACK);
             cli->mode = LE_CLI_MODE_NORMAL;
 
-            /* Verify uploaded program */
-            le_header_t hdr;
-            le_status_t st = le_storage_verify_slot(cli->storage, cli->upload_slot, &hdr);
+            le_status_t st = le_storage_commit_upload(cli->storage, cli->upload_slot, cli->upload_offset);
             if (st == LE_OK) {
+                le_header_t hdr;
+                le_storage_verify_slot(cli->storage, cli->upload_slot, &hdr);
                 char buf[128];
                 snprintf(buf, sizeof(buf), "\r\n[OK] XMODEM Transfer Complete! Verified %d instructions in Slot %d.\r\n",
                          hdr.instruction_count, cli->upload_slot);
                 cli_print(buf);
-
-                /* Auto reload if active slot */
-                if (cli->storage->active_slot == cli->upload_slot) {
-                    le_storage_activate_slot(cli->storage, cli->upload_slot, cli->vm);
-                }
             } else {
                 cli_print("\r\n[ERROR] CRC32 verification failed for uploaded program!\r\n");
             }
@@ -541,8 +539,8 @@ static void handle_xmodem_char(le_cli_t* cli, uint8_t ch)
 
         if (block_ok && crc_ok)
         {
-            /* Commit 128 bytes to slot storage */
-            le_storage_write_chunk(cli->storage, cli->upload_slot, cli->upload_offset, payload, 128);
+            /* Stage 128 bytes into the hidden phantom slot */
+            le_storage_write_chunk(cli->storage, le_storage_get_phantom_slot(cli->storage), cli->upload_offset, payload, 128);
             cli->upload_offset += 128;
             cli->xmodem_expected_block++;
             cli->xmodem_retries = 0;
@@ -579,16 +577,14 @@ static void handle_hex_char(le_cli_t* cli, uint8_t ch)
 
     if (ch == '\r' || ch == '\n' || ch == '.') {
         if (cli->upload_offset > sizeof(le_header_t)) {
-            le_header_t hdr;
-            le_status_t st = le_storage_verify_slot(cli->storage, cli->upload_slot, &hdr);
+            le_status_t st = le_storage_commit_upload(cli->storage, cli->upload_slot, cli->upload_offset);
             if (st == LE_OK) {
+                le_header_t hdr;
+                le_storage_verify_slot(cli->storage, cli->upload_slot, &hdr);
                 char buf[128];
                 snprintf(buf, sizeof(buf), "\r\n[OK] Hex Upload Complete! Loaded %d instructions into Slot %d.\r\n",
                          hdr.instruction_count, cli->upload_slot);
                 cli_print(buf);
-                if (cli->storage->active_slot == cli->upload_slot) {
-                    le_storage_activate_slot(cli->storage, cli->upload_slot, cli->vm);
-                }
             } else {
                 cli_print("\r\n[ERROR] CRC32 verification failed!\r\n");
             }
@@ -613,8 +609,8 @@ static void handle_hex_char(le_cli_t* cli, uint8_t ch)
         } else {
             cli->hex_byte |= (uint8_t)val;
             cli->hex_high_nibble = true;
-            /* Write byte */
-            le_storage_write_chunk(cli->storage, cli->upload_slot, cli->upload_offset, &cli->hex_byte, 1);
+            /* Stage byte into the hidden phantom slot */
+            le_storage_write_chunk(cli->storage, le_storage_get_phantom_slot(cli->storage), cli->upload_offset, &cli->hex_byte, 1);
             cli->upload_offset++;
         }
     }
@@ -635,6 +631,12 @@ void le_cli_process_char(le_cli_t* cli, uint8_t ch)
     }
 
     /* NORMAL CLI Mode: Handle line buffer */
+    if (ch == '\n' && cli->last_was_cr) {
+        cli->last_was_cr = false;
+        return; /* Collapse CRLF: ignore paired LF immediately following CR */
+    }
+    cli->last_was_cr = (ch == '\r');
+
     if (ch == '\r' || ch == '\n') {
         cli_print("\r\n");
         cli->line_buf[cli->line_len] = '\0';
