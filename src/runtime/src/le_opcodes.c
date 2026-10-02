@@ -1558,8 +1558,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          * - false: Output angle referenced to sync phasor
                          */
                         if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t p_idx = inst->in_a;
+                        uint16_t p_idx = desc->reserved;
                         le_phasor_state_t* p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p_idx);
+                        if (!p) p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, 0);
                         if (!p) return LE_ERR_OUT_OF_BOUNDS;
                         
                         // Get inputs: [sample, sync] (2-in) or [sample, sync, freq_hz] (3-in)
@@ -1670,8 +1671,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          * self_sync properties apply identically to every
                          * phase, exactly as PHASOR_1P applies them to one phase. */
                         if (desc->in_count < 5 || desc->out_count < 3) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t p_idx = (uint16_t)(inst->in_a & 0xFF);
+                        uint16_t p_idx = desc->reserved;
                         le_phasor3_state_t* p = (le_phasor3_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR3, p_idx);
+                        if (!p) p = (le_phasor3_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR3, 0);
                         if (!p) return LE_ERR_OUT_OF_BOUNDS;
 
                         // Shared inputs: sync phasor + system frequency
@@ -1824,8 +1826,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          *    (so 81U/81O still see a real under/over-frequency event)
                          *  - Loss of potential / stall        -> freq_hz = nominal,   valid = false */
                         if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t f_idx = (uint16_t)(inst->in_a & 0xFF);
+                        uint16_t f_idx = desc->reserved;
                         le_freq_est_state_t* p = (le_freq_est_state_t*)le_process_image_kind_state(img, LE_BLK_FREQ_EST, f_idx);
+                        if (!p) p = (le_freq_est_state_t*)le_process_image_kind_state(img, LE_BLK_FREQ_EST, 0);
                         if (!p) return LE_ERR_OUT_OF_BOUNDS;
 
                         float sample = le_pi_get_float_fast(img, args[0]);
@@ -1910,7 +1913,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          *   I'_x = s * sum_j M[k][x][j] * I_j
                          * with scalar s = 1/sqrt(3) for odd k, 1/3 for even k. */
                         if (desc->in_count < 3 || desc->out_count < 3) return LE_ERR_OUT_OF_BOUNDS;
-                        le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, inst->in_a & 0xFF);
+                        uint16_t c_idx = desc->reserved;
+                        le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, c_idx);
+                        if (!c33) c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, 0);
                         if (!c33) return LE_ERR_OUT_OF_BOUNDS;
                         int k = (int)c33->comp;
                         if (k < 1) k = 1;
@@ -1964,7 +1969,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          *   th = o87p + slp1*irs1 + slp2*(I_rt-irs1) for I_rt > irs1  */
                         if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
                         int cin = desc->in_count;
-                        le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, inst->in_a & 0xFF);
+                        uint16_t d_idx = desc->reserved;
+                        le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, d_idx);
+                        if (!d87) d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, 0);
                         if (!d87) return LE_ERR_OUT_OF_BOUNDS;
                         le_complex_t op_sum = le_c_make(0.0f, 0.0f);
                         float rt_sum = 0.0f;
@@ -2006,8 +2013,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          * circle shift. Computes Z = V/I and trips when Z is inside the
                          * offset-mho circle. */
                         if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t d_idx = (uint16_t)(inst->in_a & 0xFF);
+                        uint16_t d_idx = desc->reserved;
                         le_dist21_state_t* dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, d_idx);
+                        if (!dist) dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, 0);
                         if (!dist) return LE_ERR_OUT_OF_BOUNDS;
 
                         le_complex_t v = le_pi_get_complex_fast(img, args[0]);
@@ -2098,8 +2106,9 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                          * overcurrent element, and other booleans simply enable/
                          * disable the element. Unconnected enable = LE_CONST_TRUE. */
                         if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t oc_idx = (uint16_t)(inst->in_a & 0xFF);
+                        uint16_t oc_idx = desc->reserved;
                         le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, oc_idx);
+                        if (!oc) oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, 0);
                         if (!oc) return LE_ERR_OUT_OF_BOUNDS;
 
                         /* Defaults if not baked by the compiler/loader. */

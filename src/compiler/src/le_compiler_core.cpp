@@ -1025,6 +1025,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     struct BlockCall {
         uint8_t in_count;
         uint8_t out_count;
+        uint8_t flags;
+        uint8_t reserved;
         std::vector<uint16_t> args;
     };
     std::vector<BlockCall> block_calls;
@@ -1048,10 +1050,12 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     };
 
     auto push_block = [&](uint8_t func_id, std::vector<uint16_t> args,
-                          uint8_t in_count, uint8_t out_count) {
+                          uint8_t in_count, uint8_t out_count, uint8_t reserved = 0) {
         BlockCall bc;
         bc.in_count = in_count;
         bc.out_count = out_count;
+        bc.flags = 0;
+        bc.reserved = reserved;
         bc.args = args;
         le_instruction_t inst;
         inst.opcode = LE_OP_BLOCK;
@@ -1513,9 +1517,9 @@ if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_D
                  * Input 0 also accepts the short 'in'/'complex' spellings. */
                 std::vector<std::string> names;
                 if (k == 0) {
-                    names = { "in", "a", "input_0", "in_0", "complex", "in_a" };
+                    names = { "in", "a", "input_0", "in_0", "complex", "in_a", "i1", "i_1", "ia" };
                 } else if (k == 1) {
-                    names = { "b", "input_1", "in_1", "in_b" };
+                    names = { "b", "input_1", "in_1", "in_b", "i2", "i_2", "ib" };
                 } else if (k == 2) {
                     names = { "c", "input_2", "in_2" };
                 } else {
@@ -1542,7 +1546,8 @@ if (type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_D
             node_temp_type[name] = TempType::Bool;
             element_outputs[name] = out0;
             args.push_back(out0);
-            push_block(LE_FUNC_DIFF_87, args, static_cast<uint8_t>(n_added), 1);
+            push_block(LE_FUNC_DIFF_87, args, static_cast<uint8_t>(n_added), 1,
+                       static_cast<uint8_t>(state_instances[LE_BLK_DIFF_87].size() - 1));
             continue;
         }
 
@@ -1582,7 +1587,8 @@ if (type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type ==
                 }
                 args.push_back(o);
             }
-            push_block(LE_FUNC_PHASE_COMP, args, static_cast<uint8_t>(n_in), 3);
+            push_block(LE_FUNC_PHASE_COMP, args, static_cast<uint8_t>(n_in), 3,
+                       static_cast<uint8_t>(state_instances[LE_BLK_PHASE_COMP].size() - 1));
             continue;
         }
 
@@ -1607,7 +1613,8 @@ if (type == "DIST_21" || type == "LE_DIST_21") {
             node_temp_type[name] = TempType::Bool;
             element_outputs[name] = out0;
             args.push_back(out0);
-            push_block(LE_FUNC_DIST_21, args, static_cast<uint8_t>(n_in), 1);
+            push_block(LE_FUNC_DIST_21, args, static_cast<uint8_t>(n_in), 1,
+                       static_cast<uint8_t>(state_instances[LE_BLK_21].size() - 1));
             continue;
         }
         if (type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT") {
@@ -1706,7 +1713,8 @@ if (type == "DIST_21" || type == "LE_DIST_21") {
             node_temp_type[name] = TempType::Bool;
             element_outputs[name] = out0;
             args.push_back(out0);
-            push_block(LE_FUNC_OVERCURRENT_51, args, static_cast<uint8_t>(n_in), 1);
+            push_block(LE_FUNC_OVERCURRENT_51, args, static_cast<uint8_t>(n_in), 1,
+                       static_cast<uint8_t>(state_instances[LE_BLK_OVERCURRENT].size() - 1));
             continue;
         }
         /* The type-specific block emissions above fall through here for the
@@ -1870,7 +1878,8 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             element_outputs_port[name]["phasor"] = out0;
             element_outputs_port[name]["out"] = out0;
             args.push_back(out0);
-            push_block(LE_FUNC_PHASOR_1P, args, static_cast<uint8_t>(n_in), 1);
+            push_block(LE_FUNC_PHASOR_1P, args, static_cast<uint8_t>(n_in), 1,
+                       static_cast<uint8_t>(state_instances[LE_BLK_PHASOR].size() - 1));
             continue;
         }
 
@@ -1924,7 +1933,8 @@ if (type == "PHASOR_3P" || type == "LE_PHASOR_3P") {
                 element_outputs_port[name]["out"] = o;
                 args.push_back(o);
             }
-            push_block(LE_FUNC_PHASOR_3P, args, static_cast<uint8_t>(n_in), 3);
+            push_block(LE_FUNC_PHASOR_3P, args, static_cast<uint8_t>(n_in), 3,
+                       static_cast<uint8_t>(state_instances[LE_BLK_PHASOR3].size() - 1));
             continue;
         }
 
@@ -1978,7 +1988,8 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             element_outputs_port[name]["tracking"] = out1;
             args.push_back(out1);
 
-            push_block(LE_FUNC_FREQ_EST, args, static_cast<uint8_t>(n_in), 2);
+            push_block(LE_FUNC_FREQ_EST, args, static_cast<uint8_t>(n_in), 2,
+                       static_cast<uint8_t>(state_instances[LE_BLK_FREQ_EST].size() - 1));
             continue;
         }
         /* Phasor conversions: 2-in (or 3-in) -> 2-out blocks (RECT2POLAR/POLAR2RECT/PHASOR_SHIFT). */
@@ -2314,8 +2325,8 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         le_block_desc_t d;
         d.in_count = bc.in_count;
         d.out_count = bc.out_count;
-        d.flags = 0;
-        d.reserved = 0;
+        d.flags = bc.flags;
+        d.reserved = bc.reserved;
         const uint8_t* dh = (const uint8_t*)&d;
         for (int bi = 0; bi < (int)sizeof(d); bi++) block_bytes.push_back(dh[bi]);
         for (uint16_t a : bc.args) {
@@ -2568,28 +2579,46 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
                 " used, " + std::to_string(max_ain) + " max allowed on " + dev_name + ".");
         }
 
-        int max_coils = limits.get("coils").as_int(limits.get("bool_registers").as_int(256));
-        if (total_bool_regs > max_coils) {
+        /* Architectural 16-bit address limits */
+        if (total_bool_regs > LE_ARCH_MAX_BOOL_REGS) {
             board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_bool_regs) +
-                " internal boolean registers (%M), but target board '" + dev_name + "' only supports up to " + std::to_string(max_coils) + ".");
+            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_bool_regs) +
+                " internal boolean registers (%M), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_BOOL_REGS) + ").");
+        }
+        if (total_float_regs > LE_ARCH_MAX_FLOATS) {
+            board_valid = false;
+            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_float_regs) +
+                " float registers (%R), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_FLOATS) + ").");
+        }
+        if (total_int_regs > LE_ARCH_MAX_INT_REGS) {
+            board_valid = false;
+            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_int_regs) +
+                " integer registers (%I), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_INT_REGS) + ").");
+        }
+        if (total_complex_regs > LE_ARCH_MAX_COMPLEX) {
+            board_valid = false;
+            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_complex_regs) +
+                " complex registers (%C), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_COMPLEX) + ").");
         }
 
-        int max_floats = limits.get("floats").as_int(limits.get("float_registers").as_int(128));
-        if (total_float_regs > max_floats) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_float_regs) +
-                " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
-        }
-
-        int max_complex = limits.get("complex_registers").as_int(64);
-        if (total_complex_regs > max_complex) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_complex_regs) +
-                " complex registers (%C), but target board '" + dev_name + "' only supports up to " + std::to_string(max_complex) + ".");
-        }
-
+        /* Unified RAM Workspace validation: packed register arena + element state */
         int workspace_bytes = limits.get("workspace_bytes").as_int(LE_RAM_WORKSPACE_BYTES);
+
+        uint32_t din_c    = static_cast<uint32_t>(din_map.size());
+        uint32_t dout_c   = static_cast<uint32_t>(dout_map.size());
+        uint32_t bool_c   = static_cast<uint32_t>(total_bool_regs);
+        uint32_t float_c  = static_cast<uint32_t>(total_float_regs);
+        uint32_t int_c    = static_cast<uint32_t>(total_int_regs);
+        uint32_t cmplx_c  = static_cast<uint32_t>(total_complex_regs);
+        uint32_t ain_c    = static_cast<uint32_t>(ain_map.size());
+
+        uint32_t bits_bytes = (din_c + dout_c + bool_c + 7u) / 8u;
+        uint32_t floats_off = (bits_bytes + 3u) & ~3u;
+        uint32_t ints_off   = (floats_off + float_c * 4u + 3u) & ~3u;
+        uint32_t cmplx_off  = (ints_off   + int_c   * 4u + 3u) & ~3u;
+        uint32_t ain_off    = (cmplx_off  + cmplx_c * 8u + 3u) & ~3u;
+        uint32_t arena_bytes = ain_off + ain_c * 8u;
+
         int total_state_bytes = 0;
         for (int k = 1; k < LE_BLK_LAST; k++) {
             auto sit = state_descs.find((uint8_t)k);
@@ -2598,10 +2627,14 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             if (sz == 0) continue;
             total_state_bytes += (int)sz * sit->second;
         }
-        if (total_state_bytes > workspace_bytes) {
+
+        uint32_t total_ram_needed = arena_bytes + static_cast<uint32_t>(total_state_bytes);
+        if (total_ram_needed > static_cast<uint32_t>(workspace_bytes)) {
             board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit state requires " + std::to_string(total_state_bytes) +
-                " bytes, but target board '" + dev_name + "' has a " + std::to_string(workspace_bytes) + "-byte state workspace.");
+            validation_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_ram_needed) +
+                " bytes of RAM (" + std::to_string(arena_bytes) + " bytes packed registers + " +
+                std::to_string(total_state_bytes) + " bytes element state), but target board '" + dev_name +
+                "' has a " + std::to_string(workspace_bytes) + "-byte RAM workspace.");
         }
 
         int slot_size = limits.get("slot_size_bytes").as_int(2048);
