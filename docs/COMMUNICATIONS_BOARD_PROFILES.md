@@ -54,16 +54,17 @@ There are two ways to target a board:
    hardware bounds and resolve symbolic pin aliases (e.g. `USER_BUTTON` →
    `%I0`, `USER_LED` → `%Q0`) without physical hardware.
 
-### Inspecting and generating board profiles (`le_board.py`)
+### Inspecting and generating board profiles (`le board` or `le_board.py`)
 
 ```bash
-# Display formatted capability report from a board profile:
+# Using the unified C++ host CLI:
+le board --info ports/stm32/stm32f401.leconfig
+le board --port COM3 --output my_board.leconfig
+le board --template --output custom_board.leconfig
+
+# Using the Python SDK tools:
 py tools/compiler/le_board.py --info ports/stm32/stm32f401.leconfig
-
-# Query live connected hardware over serial and save its profile:
 py tools/compiler/le_board.py --port COM3 --baud 115200 --output my_board.leconfig
-
-# Generate a starter template for custom hardware adopters:
 py tools/compiler/le_board.py --template --output custom_board.leconfig
 ```
 
@@ -73,7 +74,7 @@ Pass `-b` / `--board` to validate the circuit against the board's physical
 limits and resolve symbolic pin names:
 
 ```bash
-./build/Release/le_compile my_circuit.json -b ports/stm32/stm32f401.leconfig -o program.lebin
+le compile my_circuit.json -b ports/stm32/stm32f401.leconfig -o program.lebin
 py tools/compiler/le_compiler.py my_circuit.json -b ports/stm32/stm32f401.leconfig -o program.lebin
 ```
 
@@ -87,8 +88,9 @@ Board Validation Error: Circuit uses Protection & Control opcode 0x77, but targe
 
 ### Pre-configured reference board profiles
 
-| Profile | Platform | Flash Slots | %I / %Q | %M / %R | Features |
+| Profile | Platform | Flash Slots | %DIN / %DOUT | Workspace RAM | Features |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `ports/stm32/stm32f401.leconfig` | STM32F401RE (Nucleo) | 3 × 2048B | 16 / 16 | 128 / 64 | Protection & Control, I2C, SPI, DSP (16) |
-| `ports/rp2040/rp2040_pico.leconfig` | Raspberry Pi Pico | 4 × 4096B | 26 / 26 | 256 / 128 | Protection & Control, I2C, SPI, DSP (16) |
-| `ports/avr/atmega328p.leconfig` | Arduino Uno (ATmega328P) | 1 × 512B | 6 / 6 | 32 / 16 | Standard Logic, DSP (4) |
+| `ports/stm32/stm32f401.leconfig` | STM32F401RE (Nucleo) | 3 × 2048B | 16 / 16 | 2 KB | Protection & Control, I2C, SPI, DSP |
+| `ports/rp2040/rp2040_pico.leconfig` | Raspberry Pi Pico | 4 × 4096B | 26 / 26 | 4 KB | Protection & Control, I2C, SPI, DSP |
+| `ports/rp2350/rp2350_pico2_w.leconfig` | Raspberry Pi Pico 2 W | 2 × 4096B | 24 / 24 | 256 KB | Protection & Control, I2C, SPI, DSP |
+| `ports/avr/atmega328p.leconfig` | Arduino Uno (ATmega328P) | 1 × 512B | 6 / 6 | 512 B | Standard Logic, DSP |

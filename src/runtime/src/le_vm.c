@@ -333,3 +333,43 @@ le_status_t le_alias_pulse(le_vm_t* vm, const char* name)
 {
     return le_alias_pulse_for(vm, name, 1.0f); /* default: 1 second */
 }
+
+le_status_t le_vm_sync_inputs(le_vm_t* vm)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+    if (g_le_hal) {
+        if (g_le_hal->gpio_read) {
+            for (uint16_t i = 0; i < vm->image.din_count; i++) {
+                bool b = g_le_hal->gpio_read((uint8_t)i);
+                le_pi_set_bool_fast(&vm->image, LE_ADDR_MAKE_DIN(i), b);
+            }
+        }
+        if (g_le_hal->adc_read) {
+            for (uint16_t i = 0; i < vm->image.ain_count; i++) {
+                float a = g_le_hal->adc_read((uint8_t)i);
+                le_process_image_set_float(&vm->image, LE_ADDR_MAKE_AIN(i), a);
+            }
+        }
+    }
+    return LE_OK;
+}
+
+le_status_t le_vm_sync_outputs(le_vm_t* vm)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+    if (g_le_hal) {
+        if (g_le_hal->gpio_write) {
+            for (uint16_t i = 0; i < vm->image.dout_count; i++) {
+                bool b = le_pi_get_bool_fast(&vm->image, LE_ADDR_MAKE_DOUT(i));
+                g_le_hal->gpio_write((uint8_t)i, b);
+            }
+        }
+        if (g_le_hal->dac_write) {
+            for (uint16_t i = 0; i < vm->image.aout_count; i++) {
+                float a = le_pi_get_aout(&vm->image, i);
+                g_le_hal->dac_write((uint8_t)i, a);
+            }
+        }
+    }
+    return LE_OK;
+}

@@ -802,10 +802,9 @@ void test_timer_runs_via_heap()
     le_vm_start(&vm);
     le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
     TEST_ASSERT(le_vm_step(&vm, 10) == LE_OK, "timer step (t=10)");
-    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)), "timer not done at t=10");
+    TEST_ASSERT(!ht->q, "timer not done at t=10");
     TEST_ASSERT(le_vm_step(&vm, 60) == LE_OK, "timer step (t=60)");
-    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)),
-                "timer done via heap after preset elapsed");
+    TEST_ASSERT(ht->q, "timer done via heap after preset elapsed");
 
     le_compile_result_free(&res);
 }
@@ -2006,7 +2005,7 @@ void test_binary_header_fields()
     le_compile_result_t res;
     int rc = le_compile_json(circuit_json, nullptr, &res);
     TEST_ASSERT(rc == 0 && res.success, "header-fields circuit compiles");
-    TEST_ASSERT(sizeof(le_header_t) == 40, "packed header is exactly 40 bytes (4-byte aligned)");
+    TEST_ASSERT(sizeof(le_header_t) == 44, "packed header is exactly 44 bytes (4-byte aligned)");
 
     le_header_t h;
     TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "binary validates");
@@ -2305,12 +2304,13 @@ void test_integrated_pipeline_step()
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "integrated binary loads");
     TEST_ASSERT(vm.running, "autostart flag set");
     TEST_ASSERT(le_rt_kind_base(LE_BLK_TIMER) >= 0, "timer bound at load");
+    le_timer_state_t* ht = le_process_image_timer(&vm.image, 0);
 
     // float chain: F1 = C1 + C2 = 2.0, OUT1 = (F1 > 1.0) = true after one scan.
     le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
     le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
     TEST_ASSERT(le_vm_step(&vm, 10) == LE_OK, "step t=10");
-    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)), "TON not done at t=10 (<100ms)");
+    TEST_ASSERT(!ht->q, "TON not done at t=10 (<100ms)");
     TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "OUT0 gated off before timer done");
     float f1 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(0));
     TEST_ASSERT(f1 >= 1.99f && f1 <= 2.01f, "F1 = 1+1 = 2.0 after a scan");
@@ -2319,7 +2319,7 @@ void test_integrated_pipeline_step()
     // t=120: TON done; with IN1 also set, OUT0 goes high.
     le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
     TEST_ASSERT(le_vm_step(&vm, 120) == LE_OK, "step t=120");
-    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_TIMER(0)), "TON done after preset");
+    TEST_ASSERT(ht->q, "TON done after preset");
     TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "OUT0 = TON && IN1 is true");
 
     // Dropping the timer enable arms the TON down path; OUT0 clears immediately.
@@ -2333,23 +2333,24 @@ void test_integrated_pipeline_step()
 
 void test_register_limits_load_reject()
 {
-    // Circuit declaring more boolean registers than the runtime board budget.
+    // Circuit declaring more registers than fit in the runtime workspace budget.
     // The compiler emits it; the RUNTIME loader rejects it with LE_ERR_CAPACITY.
-    std::string s = "{\"name\":\"TooManyBool\",\"elements\":[";
-    for (int i = 0; i <= LE_MAX_BOOL_REGS; i++) {
-        s += "{\"name\":\"B" + std::to_string(i) + "\",\"type\":\"BOOLREGISTER\"}";
-        if (i < LE_MAX_BOOL_REGS) s += ",";
+    int num_floats = (LE_RAM_WORKSPACE_BYTES / 4) + 1;
+    std::string s = "{\"name\":\"TooManyFloats\",\"elements\":[";
+    for (int i = 0; i < num_floats; i++) {
+        s += "{\"name\":\"F" + std::to_string(i) + "\",\"type\":\"FLOATREGISTER\"}";
+        if (i < num_floats - 1) s += ",";
     }
     s += "],\"nets\":[]}";
 
     le_compile_result_t res;
     int rc = le_compile_json(s.c_str(), nullptr, &res);
-    TEST_ASSERT(rc == 0 && res.success, "over-budget circuit still compiles (compiler has no bool cap)");
+    TEST_ASSERT(rc == 0 && res.success, "over-budget circuit still compiles (compiler has no float cap)");
 
     le_vm_t vm;
     le_vm_init(&vm);
     TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_ERR_CAPACITY,
-                "runtime loader rejects register count beyond LE_MAX_BOOL_REGS");
+                "runtime loader rejects register count beyond LE_RAM_WORKSPACE_BYTES");
     le_compile_result_free(&res);
 }
 
@@ -2425,6 +2426,42 @@ void test_comms_upload_endtoend()
     le_compile_result_free(&res);
 }
 
+void test_analog_output_pipeline()
+{
+    const char* circuit_json = R"({
+        "name": "AnalogOutTest",
+        "elements": [
+            { "name": "C1", "type": "CONSTANT", "dataType": "float", "value": 1.0 },
+            { "name": "C2", "type": "CONSTANT", "dataType": "float", "value": 1.0 },
+            { "name": "ADD1", "type": "ADD" },
+            { "name": "AO0", "type": "ANALOGOUTPUT", "channel": 0 }
+        ],
+        "nets": [
+            { "output": { "name": "C1", "port": "out" }, "inputs": [ { "name": "ADD1", "port": "a" } ] },
+            { "output": { "name": "C2", "port": "out" }, "inputs": [ { "name": "ADD1", "port": "b" } ] },
+            { "output": { "name": "ADD1", "port": "out" }, "inputs": [ { "name": "AO0", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "analog output circuit compiles");
+    TEST_ASSERT(res.aout_count == 1, "res.aout_count is 1");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "analog output binary loads");
+    TEST_ASSERT(vm.image.aout_count == 1, "process image has 1 analog output");
+
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "step circuit");
+    TEST_ASSERT(fabsf(le_pi_get_aout(&vm.image, 0) - 2.0f) < 1e-4f, "AO0 has value 2.0 via le_pi_get_aout");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_AOUT(0)) - 2.0f) < 1e-4f,
+                "AO0 has value 2.0 via LE_ADDR_MAKE_AOUT");
+
+    le_compile_result_free(&res);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
@@ -2475,6 +2512,7 @@ int main()
     RUN_TEST(test_integrated_pipeline_step);
     RUN_TEST(test_register_limits_load_reject);
     RUN_TEST(test_comms_upload_endtoend);
+    RUN_TEST(test_analog_output_pipeline);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";

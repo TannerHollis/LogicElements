@@ -28,10 +28,10 @@ The compilation engine is implemented in standard C++17 (`src/compiler/src/le_co
 ┌────────────────────────────────────────────────────────┐
 │            1. Parsing and Validation                   │
 │  - Validate circuit structure and net connectivity     │
-│  - Verify limits against board profile                 │
-│    (DIN, DOUT, AIN, Coils, Floats, Timers, Counters)   │
+│  - Verify board limits & unified RAM workspace bytes   │
+│    (DIN, DOUT, AIN, Coils, Floats, Ints, Complex)      │
 │  - Verify feature support (Protection relays, Buses)   │
-│  - Resolve symbolic pin aliases (%I0, %Q0)             │
+│  - Resolve symbolic pin aliases (%IN0, %OUT0)          │
 └───────────────────────────┬────────────────────────────┘
                             │
                             ▼
@@ -107,19 +107,19 @@ The multi-pass optimizer executes an iterative fixed-point loop. When any pass a
 Evaluates operations whose inputs are statically known at compile time, eliminating runtime CPU cycles.
 
 - **Boolean logic**:
-  - `AND(x, FALSE)` $ightarrow$ `FALSE`
-  - `AND(x, TRUE)` $ightarrow$ `x`
-  - `OR(x, TRUE)` $ightarrow$ `TRUE`
-  - `OR(x, FALSE)` $ightarrow$ `x`
-  - `XOR(x, FALSE)` $ightarrow$ `x`
-  - `XOR(x, TRUE)` $ightarrow$ `NOT(x)`
+  - `AND(x, FALSE)` $\to$ `FALSE`
+  - `AND(x, TRUE)` $\to$ `x`
+  - `OR(x, TRUE)` $\to$ `TRUE`
+  - `OR(x, FALSE)` $\to$ `x`
+  - `XOR(x, FALSE)` $\to$ `x`
+  - `XOR(x, TRUE)` $\to$ `NOT(x)`
 - **Float arithmetic**:
-  - `ADD_F(x, 0.0f)` $ightarrow$ `x`
-  - `SUB_F(x, 0.0f)` $ightarrow$ `x`
-  - `MUL_F(x, 1.0f)` $ightarrow$ `x`
-  - `MUL_F(x, 0.0f)` $ightarrow$ `0.0f`
-  - `DIV_F(x, 1.0f)` $ightarrow$ `x`
-  - Statically evaluates two constant inputs: `ADD_F(2.0, 3.0)` $ightarrow$ `5.0`.
+  - `ADD_F(x, 0.0f)` $\to$ `x`
+  - `SUB_F(x, 0.0f)` $\to$ `x`
+  - `MUL_F(x, 1.0f)` $\to$ `x`
+  - `MUL_F(x, 0.0f)` $\to$ `0.0f`
+  - `DIV_F(x, 1.0f)` $\to$ `x`
+  - Statically evaluates two constant inputs: `ADD_F(2.0, 3.0)` $\to$ `5.0`.
 
 ### 2. Double negation elimination
 
@@ -222,22 +222,33 @@ The compiler ingests standard circuit JSON containing `name`, `elements`, and `n
 
 | Type Name | Category | Inputs | Outputs | Required properties |
 | :--- | :--- | :--- | :--- | :--- |
-| `DIGITALINPUT` | I/O | None | `out` | `address` (`%I0..%In`) or mapped alias |
-| `DIGITALOUTPUT` | I/O | `in` | None | `address` (`%Q0..%Qn`) or mapped alias, optional `safe_state` |
-| `ANALOGINPUT` | I/O | None | `val` | `channel`, `mode` (`raw`/`float`), `scale_min`, `scale_max` |
-| `BOOLREGISTER` | Storage | `in` | `out` | `address` (`%M0..%Mn`) |
-| `FLOATREGISTER` | Storage | `in` | `out` | `address` (`%R0..%Rn`), optional `units` |
-| `INTREGISTER` | Storage | `in` | `out` | `address` (`0..255`), optional `value` |
-| `CONSTANT` | Math | None | `out` | `dataType` (`Boolean`/`Float`/`Integer`), `value` |
-| `AND`, `OR`, `XOR`, `NAND`, `NOR` | Logic | `a`, `b` | `out` | None |
+| `DIGITALINPUT` | I/O | None | `out` | `address` (`%IN0..%INn`) or mapped alias |
+| `DIGITALOUTPUT` | I/O | `in` | None | `address` (`%OUT0..%OUTn`) or mapped alias, optional `safe_state` |
+| `ANALOGINPUT` | I/O | None | `val` / `out` | `channel`, optional `raw_min`, `raw_max`, `scale_min`, `scale_max` |
+| `BOOLREGISTER` | Storage | `in` | `out` | `address` (`%B0..%Bn`) or mapped alias |
+| `FLOATREGISTER` | Storage | `in` | `out` | `address` (`%F0..%Fn`) or mapped alias, optional `units` |
+| `INTREGISTER` | Storage | `in` | `out` | `address` (`%I0..%In`) or mapped alias, optional `value` |
+| `COMPLEXREGISTER` | Storage | `in` | `out` | `address` (`%C0..%Cn`) or mapped alias |
+| `CONSTANT` | Math | None | `out` | `dataType` (`Boolean`/`Float`/`Integer`/`Complex`), `value` |
+| `AND`, `OR`, `XOR`, `NAND`, `NOR` | Logic | `a`, `b` (or fan-in `a`..`z`) | `out` | None |
 | `NOT` | Logic | `in` | `out` | None |
 | `MUX` | Logic | `sel`, `in0`, `in1` | `out` | None |
 | `RTRIG`, `FTRIG` | Edge | `clk` | `q` | None |
 | `LATCH`, `SR`, `RS` | Memory | `s`, `r` | `q` | `dominant` (`"Reset Dominant"` or `"Set Dominant"`) |
-| `TON`, `TOF`, `TP` | Timer | `in`, `pt` | `q`, `et` | `preset_ms` |
-| `CTU`, `CTD`, `CTUD` | Counter | `cu`, `cd`, `r`, `pv` | `qu`, `qd`, `cv` | `preset` |
+| `TON`, `TOF`, `TP` | Timer | `in` | `q` | `preset_ms` |
+| `CTU`, `CTD`, `CTUD` | Counter | `cu`, `cd`, `r` | `q` | `preset` |
 | `ADD`, `SUB`, `MUL`, `DIV` | Float Math | `a`, `b` | `out` | None |
+| `ABS`, `NEG`, `MIN`, `MAX`, `CLAMP` | Float Math | `a`, `b` | `out` | None (or `min`, `max` for clamp) |
+| `CADD`, `CSUB`, `CMUL`, `CDIV` | Complex Math | `a`, `b` | `out` | None |
 | `CMP_GT`, `CMP_LT`, `CMP_GE`, `CMP_LE`, `CMP_EQ`, `CMP_NE` | Compare | `a`, `b` | `out` | None |
+| `LPF`, `BIQUAD`, `MOVING_AVG`, `RATE_LIMITER` | DSP Filter | Signal inputs | `out` | Filter-specific tuning (`alpha`, `window_size`, etc.) |
+| `DEADBAND`, `WASHOUT`, `PEAK_DETECTOR`, `RMS` | DSP Filter | Signal inputs | `out` | Filter-specific tuning (`threshold`, `decay_rate`, etc.) |
+| `MEDIAN`, `DERIVATIVE`, `ZERO_CROSSING`, `LUT_1D` | DSP / Signal | Signal inputs | `out` | `window_size`, `alpha`, `num_points`, etc. |
+| `TOTALIZER`, `MIN_MAX_HOLD`, `PID` | Control / DSP | Signal inputs | `out` | Element tuning (`time_base_sec`, `kp`, `ki`, `kd`, etc.) |
+| `PHASOR_1P`, `PHASOR_3P`, `FREQ_EST` | Protection / Phasor | Waveform samples | Phasors / Frequency | `samples_per_cycle`, `nominal_freq_hz`, etc. |
+| `OVERCURRENT_51`, `DIST_21`, `DIFF_87`, `PHASE_COMP` | Protection Relay | Phasors / Enable | Trip / Comp | Relay settings (`pickup`, `time_dial`, `reach`, `o87p`, etc.) |
+| `RECT2POLAR`, `POLAR2RECT`, `RECT2COMPLEX`, `COMPLEX2RECT` | Conversion | Inputs | Outputs | None |
+| `I2C`, `SPI` | Serial Bus | Clock / Data | Out | `addr`, `cs_pin`, `poll_rate_ms`, etc. |
 | `LE_CUSTOM` | Board Ext | Dynamic | Dynamic | `custom_type`, `function_id` |
 
 ---
@@ -322,37 +333,52 @@ Target board profiles define physical microcontroller limits and configuration:
 
 ```json
 {
-  "name": "STM32F401RE-Nucleo",
-  "platform": "STM32",
-  "firmware_version": "2.0.0",
+  "device": {
+    "name": "STM32F401RE-Nucleo",
+    "firmware_version": "1.0",
+    "protocol_version": 1
+  },
   "limits": {
     "digital_inputs": 16,
     "digital_outputs": 16,
-    "analog_inputs": 6,
-    "bool_regs": 128,
-    "floats": 64,
-    "int_regs": 32,
+    "analog_inputs": 16,
+    "analog_outputs": 4,
     "workspace_bytes": 2048,
+    "config_slots": 3,
     "slot_size_bytes": 2048,
-    "slots": 3
+    "ns_per_abstract_cycle": 600,
+    "nvram_total_bytes": 16384,
+    "nvram_block_size": 4096,
+    "nvram_page_size": 256,
+    "nvram_regs_bytes": 1024,
+    "nvram_ser_bytes": 3072,
+    "nvram_event_rec_bytes": 10176
   },
   "features": {
     "protection": true,
+    "complex": true,
+    "analog": true,
+    "dsp": true,
     "serial_bus": true
   },
-  "pins": [
-    { "address": "%I0", "alias": "USER_BUTTON", "debounce_ms": 20, "mode": "Pull-Up" },
-    { "address": "%Q0", "alias": "USER_LED", "mode": "Push-Pull" }
-  ],
+  "pin_map": {
+    "inputs": {
+      "%IN0": { "alias": "USER_BUTTON", "pin": "PC13", "desc": "Onboard User Pushbutton" },
+      "%IN1": { "alias": "LIMIT_SW_FWD", "pin": "PA0", "desc": "Forward Limit Switch" }
+    },
+    "outputs": {
+      "%OUT0": { "alias": "USER_LED", "pin": "PA5", "desc": "Green Onboard LED" },
+      "%OUT1": { "alias": "MOTOR_FWD", "pin": "PB0", "desc": "Motor Forward Relay" }
+    }
+  },
   "custom_nodes": [
     {
-      "type_id": "PWM_Generator",
+      "type_id": "STM32_PWM_Gen",
       "display_name": "PWM Generator",
+      "category": "STM32 Peripherals",
       "function_id": 1,
-      "bsp_function": "bsp_pwm_set",
-      "bsp_header": "bsp_pwm.h",
-      "inputs": [ { "name": "Enable", "type": "Boolean" }, { "name": "DutyCycle", "type": "Float" } ],
-      "outputs": [ { "name": "Active", "type": "Boolean" } ]
+      "inputs": [ { "name": "Enable", "type": "bool", "default": false }, { "name": "DutyCycle", "type": "float", "default": 50.0 } ],
+      "outputs": [ { "name": "Active", "type": "bool" } ]
     }
   ]
 }
@@ -399,21 +425,30 @@ typedef struct {
     char*       disassembly_text;         /* Formatted assembly listing */
     char*       json_circuit;             /* Normalized circuit JSON */
     int         instruction_count;        /* Emitted instruction count */
-    int         din_count;                /* Digital inputs used */
-    int         dout_count;               /* Digital outputs used */
-    int         ain_count;                /* Analog inputs used */
-    int         bool_reg_count;           /* Total boolean registers allocated */
-    int         float_count;              /* Total float registers allocated */
-    int         int_count;                /* Total integer registers allocated */
+    int         din_count;                /* Digital inputs used (%IN) */
+    int         dout_count;               /* Digital outputs used (%OUT) */
+    int         ain_count;                /* Analog inputs used (%AIN) */
+    int         aout_count;               /* Analog outputs used (%AOUT) */
+    int         bool_reg_count;           /* Total boolean registers allocated (%B) */
+    int         float_count;              /* Total float registers allocated (%F) */
+    int         complex_count;            /* Total complex registers allocated (%C) */
+    int         int_count;                /* Total integer registers allocated (%I) */
     int         timer_count;              /* Timers used */
     int         counter_count;            /* Counters used */
+    int         alias_count;              /* Register aliases declared */
     uint32_t    crc32;                    /* IEEE 802.3 CRC32 checksum */
-    int         user_bool_count;          /* Explicit user %M registers */
+    int         user_bool_count;          /* Explicit user %B registers */
     int         temp_bool_count;          /* Peak temporary scratchpad registers */
-    int         user_float_count;         /* Explicit user %R registers */
+    int         user_float_count;         /* Explicit user %F registers */
     int         temp_float_count;         /* Peak temporary float registers */
+    int         user_complex_count;       /* Explicit user %C registers */
+    int         temp_complex_count;       /* Peak temporary complex registers */
+    int         user_int_count;           /* Explicit user %I registers */
+    int         temp_int_count;           /* Peak temporary int registers */
     int         eliminated_instructions;  /* Instructions pruned by optimizer */
     int         eliminated_registers;     /* Registers saved by optimizer */
+    uint32_t    abstract_cycles;          /* Worst-case compiler abstract cost */
+    double      estimated_exec_us;        /* Estimated scan execution time (us) */
 } le_compile_result_t;
 ```
 
@@ -486,7 +521,7 @@ execution).
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
 | `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `10`). |
+| `0x04` | `version` | `uint16_t` | Format version (Current: `11`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
 | `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%IN). |
@@ -519,31 +554,63 @@ Bytes 4-5: [ Input Address B (uint16_t, Little-Endian) ]
 Bytes 6-7: [ Output Address  (uint16_t, Little-Endian) ]
 ```
 
-### Memory address mapping
+### Virtual operand encoding vs. physical MCU RAM layout
 
-The 16-bit address fields encode the memory region in their high bits. Register
-families use the canonical user-facing names (`%IN`, `%OUT`, `%AIN`, `%B`, `%I`,
-`%F`, `%C`):
+> [!IMPORTANT]
+> **Virtual handles, not physical MCU memory addresses**:
+> Unlike microcontroller peripherals which are hardware memory-mapped (e.g. ARM Cortex-M peripheral registers at `0x40000000`), the 16-bit "addresses" in LogicElements instructions are **compact virtual operand tags**.
+>
+> In the physical microcontroller RAM, there are **no hardcoded address windows or wasted static arrays**. At load time, the runtime allocates a single, contiguously packed memory buffer sized *only* to what the circuit actually requires.
 
-| Region | Address Range | Notation | Description |
+#### 1. Virtual instruction operand encoding (16-Bit)
+
+Inside an 8-byte instruction, the high 4 bits (`0xF000`) identify the register family/type, and the low 12 bits (`0x0FFF`) identify the index (with extended regions supporting up to 13 bits):
+
+| Register Family | Virtual Range | Tag Mnemonic | Index Width & Architectural Capacity |
 | :--- | :--- | :--- | :--- |
-| Digital Inputs | `0x0000 - 0x0FFF` | `%IN[i]` | Read-only hardware digital inputs (%IN) |
-| Digital Outputs | `0x1000 - 0x1FFF` | `%OUT[i]` | Read/write physical digital outputs (%OUT) |
-| Boolean Registers | `0x2000 - 0x3FFF` | `%B[i]` / `T_B[i]` | Bit-packed internal coils & scratchpads (%B) |
-| Float Registers | `0x4000 - 0x7FFF` | `%F[i]` / `T_F[i]` | 32-bit floating-point registers (%F) |
-| Timers | `0x8000 - 0x8FFF` | `TIMER[i]` | Timer state blocks |
-| Counters | `0x9000 - 0x9FFF` | `COUNTER[i]` | Counter state blocks |
-| Integer Registers | `0xA000 - 0xAFFF` | `%I[i]` / `T_I[i]` | 32-bit integer registers (%I) |
-| Analog Inputs | `0xB000 - 0xBFFF` | `%AIN[i]` | Hardware ADC channels (%AIN) |
-| Constants | `0xC000 - 0xDFFF` | `FALSE`, `TRUE`, `0.0f`, `0+0j` | Immediate constants (`LE_CONST_*`) |
-| Complex Registers | `0xD000 - 0xDFFF` | `%C[i]` / `T_C[i]` | Complex register pairs (real+imag) (%C) |
-| Reserved | `0xE000 - 0xFFFE` | — | Unused; `0xFFFF` is `LE_ADDR_UNUSED` (empty/fast-false) |
+| Digital Inputs | `0x0000 - 0x0FFF` | `%IN[i]` | 12-bit index (up to 4,096 inputs) |
+| Digital Outputs | `0x1000 - 0x1FFF` | `%OUT[i]` | 12-bit index (up to 4,096 outputs) |
+| Analog Inputs | `0x2000 - 0x2FFF` | `%AIN[i]` | 12-bit index (up to 4,096 ADC channels) |
+| Analog Outputs | `0x3000 - 0x3FFF` | `%AOUT[i]` | 12-bit index (up to 4,096 DAC channels) |
+| Boolean Registers | `0x4000 - 0x5FFF` | `%B[i]` / `T_B[i]` | 13-bit index (up to 8,192 bit-packed booleans) |
+| Integer Registers | `0x6000 - 0x7FFF` | `%I[i]` / `T_I[i]` | 13-bit index (up to 8,192 32-bit integers) |
+| Float Registers | `0x8000 - 0x9FFF` | `%F[i]` / `T_F[i]` | 13-bit index (up to 8,192 32-bit floats) |
+| Complex Registers | `0xA000 - 0xAFFF` | `%C[i]` / `T_C[i]` | 12-bit index (up to 4,096 complex phasor pairs) |
+| Reserved Primitives | `0xB000 - 0xBFFF` | — | Reserved for future primitives (e.g. `%L` int64) |
+| Immediate Constants | `0xC000 - 0xCFFF` | `FALSE`, `TRUE`, `0.0f`, `0+0j` | Predefined immediate literals (`LE_CONST_*`) |
+| Reserved Structs | `0xD000 - 0xDFFF` | — | Reserved for future structs (e.g. `%D` double64) |
+| System Variables | `0xE000 - 0xEFFF` | `%SYS[i]` | Reserved for system & diagnostic variables |
+| Reserved | `0xF000 - 0xFFFE` | — | Reserved |
+| Unused Operand | `0xFFFF` | `—` | Fast unconnected/default false sentinel (`LE_ADDR_UNUSED`) |
+
+> [!NOTE]
+> **Removal of Dedicated Timer/Counter Address Regions**:
+> In binary format v12, dedicated virtual address spaces for Timers and Counters were eliminated. Timers (`TON`, `TOF`, `TP`) and Counters (`CTU`, `CTD`, `CTUD`) are stateful blocks instantiated in the unified state image. Their instance index is held in the instruction's `modifier` byte, and their boolean outputs (`Q`) write directly to standard boolean destinations (`%B` temporary or user registers, or coalesced `%OUT` pins).
 
 > The legacy `%I` (digital input) / `%Q` / `%M` / `%R` spellings were renamed to
 > `%IN` / `%OUT` / `%B` / `%F` respectively in binary version `6`. Existing
 > element JSON using the old spellings is still accepted by the compiler, and
-> `DIN[i]` / `DOUT[i]` / `BOOL[i]` / `FLOAT[i]` / `INT[i]` / `AIN[i]` remain
+> `DIN[i]` / `DOUT[i]` / `BOOL[i]` / `FLOAT[i]` / `INT[i]` / `AIN[i]` / `AOUT[i]` remain
 > valid synonyms in alias targets.
+
+#### 2. Physical MCU RAM layout: dynamically packed workspace
+
+On the physical device, all data resides in one unified RAM workspace (`le_process_image_t`). The runtime dynamically partitions this buffer at load time based strictly on the declared counts in the `.lebin` header:
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        Target MCU RAM Workspace (LE_RAM_WORKSPACE_BYTES)                               │
+├─────────────────┬───────────┬───────────┬───────────┬───────────┬───────────┬──────────────────────┤
+│ Bit-Packed Arena│ Floats    │ Integers  │ Complex   │ Analog In │ Analog Out│ Stateful Block Image │
+│ (%IN, %OUT, %B) │ (%F)      │ (%I)      │ (%C)      │ (%AIN)    │ (%AOUT)   │ (Timers, PID, DSP)   │
+└─────────────────┴───────────┴───────────┴───────────┴───────────┴───────────┴──────────────────────┘
+0                 ▲           ▲           ▲           ▲           ▲           ▲
+                  floats_off  ints_off    cmplx_off   ain_off     aout_off    state_workspace_base
+```
+
+- **Bit packing**: Digital inputs, digital outputs, and boolean registers are packed 8-per-byte into the Bit-Packed Arena.
+- **Zero waste for unused types**: If a circuit does not declare any `%C` (complex), `%AOUT` (analog output), or `%I` (integer) registers, their byte offsets are identical and they consume **0 bytes** of MCU RAM.
+- **Zero heap**: No dynamic allocation (`malloc`) takes place. Stateful structs (timers, counters, DSP filters, P&C relays) are copied verbatim from the preconfigured state image directly into RAM after the register arena. Capacity is validated at compile time (`arena_bytes + state_bytes <= workspace_bytes`).
 
 ### Timing descriptor (10 bytes, `timing_count == 1`)
 
@@ -701,18 +768,24 @@ To guarantee deterministic scan cycles and eliminate fragmentation risks on bare
 
 ### DSP opcode specification
 
-The runtime implements opcodes `0x90` through `0x97`:
+The runtime implements opcodes `0x90` through `0x9D`:
 
 | Opcode | Identifier | Modifier byte | Inputs | Output | Description & recurrence relation |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `0x90` | `LE_OP_LPF_1P` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Alpha $\alpha$ | `out`: Filtered $y[n]$ | **First-Order Lowpass Filter**: Single-pole IIR filter for noise smoothing.<br>$y[n] = y[n-1] + \alpha \cdot (x[n] - y[n-1])$ |
-| `0x91` | `LE_OP_BIQUAD_IIR` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: Filtered $y[n]$ | **Biquad IIR Filter**: Direct Form II Transposed structure supporting lowpass, highpass, bandpass, and notch responses.<br>$y[n] = b_0 x[n] + d_1[n-1]$<br>$d_1[n] = b_1 x[n] - a_1 y[n] + d_2[n-1]$<br>$d_2[n] = b_2 x[n] - a_2 y[n]$ |
-| `0x92` | `LE_OP_MOVING_AVG` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: Average $\bar{x}[n]$ | **Moving Average**: Circular ring buffer boxcar filter ($N \le 32$) with running $O(1)$ accumulator.<br>$y[n] = \frac{1}{N}\sum_{k=0}^{N-1} x[n-k]$ |
-| `0x93` | `LE_OP_RATE_LIMITER` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: Slew $y[n]$ | **Rate / Slew Limiter**: Clamps the maximum rate of change for rising and falling signal slopes.<br>$\Delta = x[n] - y[n-1]$<br>$y[n] = y[n-1] + \text{clamp}(\Delta, -R_{\text{fall}} \Delta t, R_{\text{rise}} \Delta t)$ |
-| `0x94` | `LE_OP_DEADBAND` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: Filtered $y[n]$ | **Deadband / Hysteresis Gate**: Suppresses small fluctuations around an operating center point.<br>$y[n] = 0 \text{ if } |x[n] - c| \le \text{threshold}$, else $x[n]$ |
-| `0x95` | `LE_OP_WASHOUT` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: AC $y[n]$ | **Washout / Highpass DC Blocker**: Attenuates DC bias and steady-state sensor drift while passing transient high-frequency perturbations.<br>$y[n] = \alpha \cdot y[n-1] + \alpha \cdot (x[n] - x[n-1])$ |
-| `0x96` | `LE_OP_PEAK_DETECTOR` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Reset flag | `out`: Peak $\hat{x}[n]$ | **Peak / Envelope Follower**: Fast instantaneous attack tracking positive signal peaks with exponential decay toward zero. |
-| `0x97` | `LE_OP_RMS` | Block index `0..15` | `in_a`: Signal $x[n]$<br>`in_b`: Unused | `out`: RMS $x_{\text{rms}}$ | **True RMS Energy Detector**: True Root-Mean-Square calculation over a windowed ring buffer ($N \le 32$).<br>$x_{\text{rms}} = \sqrt{\frac{1}{N}\sum_{k=0}^{N-1} x[n-k]^2}$ |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `0x90` | `LE_OP_LPF_1P` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Alpha &alpha; | `out`: Filtered y[n] | **First-Order Lowpass Filter**: Single-pole IIR filter for noise smoothing.<br>y[n] = y[n-1] + &alpha; &middot; (x[n] - y[n-1]) |
+| `0x91` | `LE_OP_BIQUAD_IIR` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Filtered y[n] | **Biquad IIR Filter**: Direct Form II Transposed structure supporting lowpass, highpass, bandpass, and notch responses.<br>y[n] = b0&middot;x[n] + d1[n-1]<br>d1[n] = b1&middot;x[n] - a1&middot;y[n] + d2[n-1]<br>d2[n] = b2&middot;x[n] - a2&middot;y[n] |
+| `0x92` | `LE_OP_MOVING_AVG` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Average x_avg[n] | **Moving Average**: Circular ring buffer boxcar filter (N &le; 32) with running O(1) accumulator.<br>y[n] = (1/N) &sum; x[n-k] |
+| `0x93` | `LE_OP_RATE_LIMITER` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Slew y[n] | **Rate / Slew Limiter**: Clamps the maximum rate of change for rising and falling signal slopes.<br>&Delta; = x[n] - y[n-1]<br>y[n] = y[n-1] + clamp(&Delta;, -R_fall&middot;&Delta;t, R_rise&middot;&Delta;t) |
+| `0x94` | `LE_OP_DEADBAND` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Filtered y[n] | **Deadband / Hysteresis Gate**: Suppresses small fluctuations around an operating center point.<br>y[n] = 0 if abs(x[n] - center) &le; threshold, else x[n] |
+| `0x95` | `LE_OP_WASHOUT` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: AC y[n] | **Washout / Highpass DC Blocker**: Attenuates DC bias and steady-state sensor drift while passing transient high-frequency perturbations.<br>y[n] = &alpha;&middot;y[n-1] + &alpha;&middot;(x[n] - x[n-1]) |
+| `0x96` | `LE_OP_PEAK_DETECTOR` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Reset flag | `out`: Peak x_peak[n] | **Peak / Envelope Follower**: Fast instantaneous attack tracking positive signal peaks with exponential decay toward zero. |
+| `0x97` | `LE_OP_RMS` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: RMS x_rms | **True RMS Energy Detector**: True Root-Mean-Square calculation over a windowed ring buffer (N &le; 32).<br>x_rms = sqrt((1/N) &sum; x[n-k]&sup2;) |
+| `0x98` | `LE_OP_MEDIAN` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Median x_med[n] | **Median Filter**: Sliding window filter (N &le; 9) for impulse noise and spike rejection. |
+| `0x99` | `LE_OP_DERIVATIVE` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Unused | `out`: Rate y[n] | **Filtered Derivative**: Numerical differentiator with lowpass smoothing filter. |
+| `0x9A` | `LE_OP_ZERO_CROSSING` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Reset flag | `out`: Frequency f | **Zero-Crossing Detector**: Computes signal zero-crossings with Schmitt hysteresis band. |
+| `0x9B` | `LE_OP_LUT_1D` | Block index `0..15` | `in_a`: Input x<br>`in_b`: Unused | `out`: Interpolated y | **1D Lookup Table**: Piecewise linear interpolation across up to 16 calibrated breakpoints. |
+| `0x9C` | `LE_OP_TOTALIZER` | Block index `0..15` | `in_a`: Rate input<br>`in_b`: Reset flag | `out`: Total y | **Rate Totalizer / Integrator**: Integrates flow/power rates over configurable time base with reset. |
+| `0x9D` | `LE_OP_MIN_MAX_HOLD` | Block index `0..15` | `in_a`: Signal x[n]<br>`in_b`: Reset flag | `out`: Peak y | **Min / Max Peak Hold**: Tracks and latches minimum or maximum observed values with reset. |
 
 ### Numerical stability safeguards
 
@@ -791,16 +864,16 @@ When constructing circuits programmatically or authoring custom tools, declare D
 }
 ```
 
-### Board capability validation
+### Board capability and workspace validation
 
-The compiler validates circuit DSP usage against target `.leconfig` board profiles:
+The compiler validates circuit element usage against target `.leconfig` board profiles:
 - **`features.dsp`**: Boolean flag. If `false`, any circuit containing DSP elements will fail compilation with:
   ```
   Board Validation Error: Circuit uses DSP opcode 0x90, but target board 'TargetBoard' has DSP feature disabled.
   ```
-- **`limits.dspFilters`**: Maximum allowed count of DSP blocks on the target board (e.g., `16` on STM32 Nucleo, `4` on AVR). If a circuit defines more DSP elements than the board limit, the compiler rejects the circuit:
+- **Unified RAM workspace**: Rather than arbitrary static per-type instance counts, DSP filter capacity is bounded by the target board's configured RAM workspace (`limits.workspace_bytes`, default `LE_RAM_WORKSPACE_BYTES` = 2048 bytes). The compiler sums the packed register arena (digital pins, bit-packed booleans, floats, integers, complex numbers, analog inputs, and analog outputs) plus total materialized state structs (`le_lpf_state_t`, `le_biquad_state_t`, etc.), and rejects any circuit that exceeds the workspace limit:
   ```
-  Board Limit Exceeded: Circuit defines 5 DSP filter elements, but target board allows a maximum of 4.
+  Board Validation Error: Circuit requires 2112 bytes of RAM (80 bytes packed registers + 2032 bytes element state), but target board 'TargetBoard' has a 2048-byte RAM workspace.
   ```
 
 ---

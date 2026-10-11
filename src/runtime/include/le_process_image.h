@@ -28,13 +28,15 @@ typedef struct {
     uint16_t  int_count;           /**< Int registers allocated. */
     uint16_t  cmplx_count;         /**< Complex registers allocated. */
     uint16_t  ain_count;           /**< Analog input channels allocated. */
+    uint16_t  aout_count;          /**< Analog output channels allocated. */
 
     /* Byte offsets of each packed bucket within regs (computed by bind). Each
      * bucket is 4-byte aligned; the bit bucket starts at byte 0. */
     uint16_t  floats_off;          /**< Float bucket byte offset. */
     uint16_t  ints_off;            /**< Int bucket byte offset. */
     uint16_t  cmplx_off;           /**< Complex bucket byte offset. */
-    uint16_t  ain_off;             /**< Analog bucket byte offset (raw int32, then float). */
+    uint16_t  ain_off;             /**< Analog input bucket byte offset (raw int32, then float). */
+    uint16_t  aout_off;            /**< Analog output bucket byte offset (float values). */
 
     /* Typed bucket pointers (regs + offset), set by bind. The arena base is
      * required to be 4-byte aligned, and every offset is a multiple of 4, so
@@ -45,6 +47,7 @@ typedef struct {
     le_complex_t*   cmplx;         /**< == regs + cmplx_off. */
     int32_t*        ain_raw;       /**< == regs + ain_off (raw int32 channels). */
     float*          ain_vals;      /**< == regs + ain_off + ain_count*4 (scaled float channels). */
+    float*          aout_vals;     /**< == regs + aout_off (analog output float channels). */
 } le_process_image_t;
 
 /**
@@ -119,6 +122,24 @@ float le_process_image_get_float(const le_process_image_t* img, uint16_t addr);
  * @param val Float value to write.
  */
 void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float val);
+
+/**
+ * @brief Reads a 32-bit float value from an analog output channel (%AOUT).
+ *
+ * @param img Pointer to the process image structure.
+ * @param ch Zero-based analog output channel index.
+ * @return Returns the float value at the specified channel; returns 0.0f if invalid.
+ */
+float le_pi_get_aout(const le_process_image_t* img, uint16_t ch);
+
+/**
+ * @brief Writes a 32-bit float value to an analog output channel (%AOUT).
+ *
+ * @param img Pointer to the process image structure.
+ * @param ch Zero-based analog output channel index.
+ * @param val Float value to write.
+ */
+void le_pi_set_aout(le_process_image_t* img, uint16_t ch, float val);
 
 /**
  * @brief Reads a 32-bit signed integer value from the specified 16-bit process image address.
@@ -341,9 +362,12 @@ uint8_t* le_process_image_kind_state(const le_process_image_t* img, uint8_t kind
  */
 LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint16_t addr)
 {
-    if ((addr & 0xF000) == LE_REGION_FLOAT) {
-        uint16_t idx = addr & 0x0FFF;
+    if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
         if (img->floats && idx < img->float_count) return img->floats[idx];
+    } else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) return img->aout_vals[idx];
     }
     if (addr == LE_CONST_ZERO_F) return 0.0f;
     if (addr == LE_CONST_ONE_F)  return 1.0f;
@@ -355,10 +379,16 @@ LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint1
  */
 LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t addr, float val)
 {
-    if ((addr & 0xF000) == LE_REGION_FLOAT) {
-        uint16_t idx = addr & 0x0FFF;
+    if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
         if (img->floats && idx < img->float_count) {
             img->floats[idx] = val;
+            return;
+        }
+    } else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) {
+            img->aout_vals[idx] = val;
             return;
         }
     }
@@ -370,19 +400,18 @@ LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t add
  */
 LE_ALWAYS_INLINE bool le_pi_get_bool_fast(const le_process_image_t* img, uint16_t addr)
 {
-    uint16_t reg = addr & LE_ADDR_REGION_MASK;
-    if (reg == LE_REGION_BOOL_REG) {
+    if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
         uint16_t idx = addr & 0x1FFF;
         if (img->regs && idx < img->bool_count) {
             uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
             return (img->regs[bit >> 3] & (1U << (bit & 7))) != 0;
         }
-    } else if (reg == LE_REGION_DIN) {
+    } else if ((addr & 0xF000) == LE_REGION_DIN) {
         uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->regs && idx < img->din_count) {
             return (img->regs[idx >> 3] & (1U << (idx & 7))) != 0;
         }
-    } else if (reg == LE_REGION_DOUT) {
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
         uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->regs && idx < img->dout_count) {
             uint32_t bit = (uint32_t)img->din_count + idx;
@@ -401,8 +430,7 @@ LE_ALWAYS_INLINE bool le_pi_get_bool_fast(const le_process_image_t* img, uint16_
  */
 LE_ALWAYS_INLINE void le_pi_set_bool_fast(le_process_image_t* img, uint16_t addr, bool val)
 {
-    uint16_t reg = addr & LE_ADDR_REGION_MASK;
-    if (reg == LE_REGION_BOOL_REG) {
+    if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
         uint16_t idx = addr & 0x1FFF;
         if (img->regs && idx < img->bool_count) {
             uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
@@ -410,7 +438,7 @@ LE_ALWAYS_INLINE void le_pi_set_bool_fast(le_process_image_t* img, uint16_t addr
             else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
             return;
         }
-    } else if (reg == LE_REGION_DOUT) {
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
         uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->regs && idx < img->dout_count) {
             uint32_t bit = (uint32_t)img->din_count + idx;

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file le_port.c
  * @brief Starter Board Port Template (v3 / le_hal_t contract).
  *
@@ -14,18 +14,62 @@
 
 #include "le_port.h"
 #include "le_storage.h"
+#include "le_nvram.h"
 #include <string.h>
 
 /* ========================================================================== */
-/* User-editable config                                                       */
+/* Configuration Slots Storage (Compiled .lebin Program Bytecode)             */
 /* ========================================================================== */
 
-/* Flash offset where LogicElements stores its multi-slot program partitions. */
-#define LE_PORT_FLASH_BASE  0x08000000UL
+/**
+ * Total storage capacity required across all configuration slots plus the
+ * hidden phantom staging slot (LE_PHYSICAL_SLOT_COUNT = LE_MAX_CONFIG_SLOTS + 1).
+ */
+#define LE_PORT_STORAGE_TOTAL_BYTES  (LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT)
 
-/* Example static RAM flash mirror so the template is self-contained without a
- * real storage driver. On real hardware, back this array with flash/EEPROM. */
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
+/**
+ * Program Storage Backend Selection:
+ *   0 = In-Memory RAM Mirror (default for rapid board bring-up & simulation)
+ *   1 = Microcontroller On-Chip / External NOR Flash (sector erase + page program)
+ */
+#ifndef LE_PORT_STORAGE_BACKEND
+#define LE_PORT_STORAGE_BACKEND      0
+#endif
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+static uint8_t s_port_flash[LE_PORT_STORAGE_TOTAL_BYTES] = {0};
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+#define LE_PORT_FLASH_BASE           0x08060000UL
+#define LE_PORT_FLASH_SECTOR_SIZE    4096UL
+#endif
+
+/* ========================================================================== */
+/* Operational NVRAM Configuration (NV Registers, SER Log, Event Recording)  */
+/* ========================================================================== */
+
+/**
+ * NVRAM Backend Selection:
+ *   0 = In-Memory RAM Mirror (bring-up / simulation)
+ *   1 = External SPI NVRAM / FRAM (e.g. MB85RS64, FM25V02 - byte writes, zero erase)
+ *   2 = On-Chip / External NOR Flash with runtime wear leveling (no board wear leveling needed!)
+ */
+#ifndef LE_PORT_NVRAM_BACKEND
+#define LE_PORT_NVRAM_BACKEND        0
+#endif
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+static uint8_t s_port_nvram[LE_NVRAM_TOTAL_BYTES] = {0};
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+#define LE_PORT_NVRAM_SPI_CS_PIN     10
+#define LE_PORT_NVRAM_CMD_WREN       0x06
+#define LE_PORT_NVRAM_CMD_WRITE      0x02
+#define LE_PORT_NVRAM_CMD_READ       0x03
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+#define LE_PORT_NVRAM_FLASH_BASE     0x08070000UL
+#define LE_PORT_NVRAM_SECTOR_SIZE    LE_NVRAM_BLOCK_SIZE
+#define LE_PORT_NVRAM_PAGE_SIZE      LE_NVRAM_PAGE_SIZE
+#define LE_PORT_NVRAM_SECTOR_COUNT   4UL
+#endif
 
 /* ========================================================================== */
 /* Pin mapping configuration                                                  */
@@ -60,6 +104,15 @@ void le_port_init(void)
 {
     /* TODO: Configure INPUT_MAP pins as Digital Inputs (with pull-up if needed) */
     /* TODO: Configure OUTPUT_MAP pins as Digital Outputs (push-pull) */
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    le_nvram_init_direct();
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* TODO: bsp_spi_cs_init(LE_PORT_NVRAM_SPI_CS_PIN); */
+    le_nvram_init_direct();
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    le_nvram_init_flash(&s_template_wl_driver);
+#endif
 }
 
 void le_port_read_inputs(le_process_image_t* img)
@@ -79,21 +132,43 @@ void le_port_write_outputs(const le_process_image_t* img)
 {
     if (!img) return;
 
+    /* 1. Flush Digital Outputs (%DOUT) to physical pins */
     for (uint8_t i = 0; i < NUM_OUTPUTS; i++)
     {
         bool state = le_process_image_get_bool(img, LE_ADDR_MAKE_DOUT(i));
         /* TODO: MY_MCU_GPIO_WRITE(OUTPUT_MAP[i].port_id, OUTPUT_MAP[i].pin_num, state); */
         (void)state;
     }
+
+#if LE_ENABLE_ANALOG
+    /* 2. Flush Analog Outputs (%AOUT) to physical DAC channels */
+    for (uint16_t ch = 0; ch < img->aout_count; ch++)
+    {
+        float val = le_pi_get_aout(img, ch);
+        /* TODO: Write physical DAC channel: bsp_dac_write(ch, val); */
+        (void)val;
+    }
+#endif
 }
 
 void le_port_deenergize_outputs(void)
 {
+    /* 1. De-energize digital outputs */
     for (uint8_t i = 0; i < NUM_OUTPUTS; i++)
     {
         /* TODO: MY_MCU_GPIO_WRITE(OUTPUT_MAP[i].port_id, OUTPUT_MAP[i].pin_num, false); */
     }
-}/* ========================================================================== */
+
+#if LE_ENABLE_ANALOG
+    /* 2. De-energize analog outputs (reset DACs to 0.0V) */
+    for (uint8_t ch = 0; ch < LE_MAX_ANALOG_OUT; ch++)
+    {
+        /* TODO: Reset physical DAC channel: bsp_dac_write(ch, 0.0f); */
+    }
+#endif
+}
+
+/* ========================================================================== */
 /* HAL callback implementations (dispatched through le_hal_t)                 */
 /* ========================================================================== */
 
@@ -173,20 +248,172 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
 
 static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 {
-    uint32_t base = LE_PORT_FLASH_BASE;
-    uint32_t rel = offset - base;
-    if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
-    memcpy(buf, &s_port_flash[rel], len);
+    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror (Bring-up / Simulation) */
+    memcpy(buf, &s_port_flash[offset], len);
     return true;
+
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    /* Backend 1: On-Chip or External NOR Flash (Memory-Mapped Read) */
+    const uint8_t* flash_ptr = (const uint8_t*)(LE_PORT_FLASH_BASE + offset);
+    memcpy(buf, flash_ptr, len);
+    return true;
+#endif
 }
 
 static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
-    uint32_t base = LE_PORT_FLASH_BASE;
-    uint32_t rel = offset - base;
-    if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
-    memcpy(&s_port_flash[rel], buf, len);
+    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror (Bring-up / Simulation) */
+    memcpy(&s_port_flash[offset], buf, len);
     return true;
+
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    /* Backend 1: On-Chip or External NOR Flash (Erase + Program) */
+    uint32_t flash_addr = LE_PORT_FLASH_BASE + offset;
+    if ((offset % LE_PORT_FLASH_SECTOR_SIZE) == 0) {
+        /* bsp_flash_erase_sector(flash_addr); */
+    }
+    /* return bsp_flash_program(flash_addr, buf, len); */
+    (void)flash_addr; (void)buf; (void)len;
+    return true;
+#endif
+}
+
+/* ========================================================================== */
+/* Operational NVRAM Functions (Retentive Registers, SER, Event Recorder)   */
+/* ========================================================================== */
+
+#if (LE_PORT_NVRAM_BACKEND == 2)
+static bool template_wl_erase(uint32_t sector_idx, uint32_t phys_addr)
+{
+    (void)sector_idx; (void)phys_addr;
+    /* TODO: bsp_flash_erase_sector(phys_addr); */
+    return true;
+}
+
+static bool template_wl_program(uint32_t phys_addr, const uint8_t* data, size_t len)
+{
+    (void)phys_addr; (void)data; (void)len;
+    /* TODO: bsp_flash_program(phys_addr, data, len); */
+    return true;
+}
+
+static bool template_wl_read(uint32_t phys_addr, uint8_t* data, size_t len)
+{
+    (void)phys_addr; (void)data; (void)len;
+    /* TODO: memcpy(data, (const void*)phys_addr, len); */
+    return true;
+}
+
+static const le_flash_wl_driver_t s_template_wl_driver = {
+    .flash_base_offset = LE_PORT_NVRAM_FLASH_BASE,
+    .sector_size = LE_PORT_NVRAM_SECTOR_SIZE,
+    .page_size = LE_PORT_NVRAM_PAGE_SIZE,
+    .sector_count = LE_PORT_NVRAM_SECTOR_COUNT,
+    .erase_sector = template_wl_erase,
+    .program = template_wl_program,
+    .read = template_wl_read,
+};
+#endif
+
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror */
+    memcpy(buf, &s_port_nvram[offset], len);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI NVRAM / FRAM (e.g. MB85RS64, FM25V02) */
+    /* uint8_t cmd[4] = {
+     *     LE_PORT_NVRAM_CMD_READ,
+     *     (uint8_t)((offset >> 16) & 0xFF),
+     *     (uint8_t)((offset >> 8) & 0xFF),
+     *     (uint8_t)(offset & 0xFF)
+     * };
+     * bsp_spi_select(LE_PORT_NVRAM_SPI_CS_PIN);
+     * bsp_spi_transmit(cmd, sizeof(cmd));
+     * bsp_spi_receive(buf, len);
+     * bsp_spi_deselect(LE_PORT_NVRAM_SPI_CS_PIN);
+     */
+    (void)offset; (void)buf; (void)len;
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: On-Chip Flash with runtime wear leveling */
+    return le_nvram_read(offset, buf, len);
+#endif
+}
+
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror */
+    memcpy(&s_port_nvram[offset], buf, len);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI NVRAM / FRAM (e.g. MB85RS64, FM25V02) */
+    /* uint8_t wren = LE_PORT_NVRAM_CMD_WREN;
+     * bsp_spi_select(LE_PORT_NVRAM_SPI_CS_PIN);
+     * bsp_spi_transmit(&wren, 1);
+     * bsp_spi_deselect(LE_PORT_NVRAM_SPI_CS_PIN);
+     *
+     * uint8_t cmd[4] = {
+     *     LE_PORT_NVRAM_CMD_WRITE,
+     *     (uint8_t)((offset >> 16) & 0xFF),
+     *     (uint8_t)((offset >> 8) & 0xFF),
+     *     (uint8_t)(offset & 0xFF)
+     * };
+     * bsp_spi_select(LE_PORT_NVRAM_SPI_CS_PIN);
+     * bsp_spi_transmit(cmd, sizeof(cmd));
+     * bsp_spi_transmit(buf, len);
+     * bsp_spi_deselect(LE_PORT_NVRAM_SPI_CS_PIN);
+     */
+    (void)offset; (void)buf; (void)len;
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: On-Chip Flash with runtime wear leveling */
+    return le_nvram_write(offset, buf, len);
+#endif
+}
+
+bool le_port_nvram_erase(uint32_t offset, size_t len)
+{
+    if (offset + len > LE_NVRAM_TOTAL_BYTES) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror */
+    memset(&s_port_nvram[offset], 0, len);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI NVRAM / FRAM */
+    uint8_t zeros[64] = {0};
+    uint32_t rem = (uint32_t)len;
+    uint32_t cur = offset;
+    while (rem > 0) {
+        uint32_t chunk = (rem > sizeof(zeros)) ? (uint32_t)sizeof(zeros) : rem;
+        if (!le_port_nvram_write(cur, zeros, chunk)) return false;
+        cur += chunk;
+        rem -= chunk;
+    }
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: On-Chip Flash with runtime wear leveling */
+    return le_nvram_erase(offset, len);
+#endif
 }
 
 #if LE_ENABLE_SERIAL_BUS
@@ -254,6 +481,10 @@ const le_hal_t s_my_mcu_hal = {
 
     .storage_read = port_storage_read,
     .storage_write = port_storage_write,
+
+    .nvram_read = (bool (*)(uint32_t, uint8_t*, size_t))le_port_nvram_read,
+    .nvram_write = (bool (*)(uint32_t, const uint8_t*, size_t))le_port_nvram_write,
+    .nvram_erase = (bool (*)(uint32_t, size_t))le_port_nvram_erase,
 
 #if LE_ENABLE_SERIAL_BUS
     .i2c_write = port_i2c_write,

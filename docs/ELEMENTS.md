@@ -6,10 +6,11 @@ it lowers to at `-O0`.
 
 Notation used in example disassembly:
 
-- `T_BOOL[n]` / `T_FLOAT[n]` — transient (compiler-allocated) temp registers.
-- `BOOL[n]` / `FLOAT[n]` / `INT[n]` — user registers (`%M` / `%R` / `%N`).
-- `DIN[n]` / `DOUT[n]` — digital pins (`%I` / `%Q`).
-- `TIMER[n]` / `COUNTER[n]` — stateful timer/counter instances.
+- `T_B[n]` / `T_F[n]` / `T_I[n]` — transient (compiler-allocated) temp registers.
+- `%B[n]` / `%F[n]` / `%I[n]` — user registers.
+- `%IN[n]` / `%OUT[n]` — digital input/output pins.
+- `%AIN[n]` / `%AOUT[n]` — analog input/output pins.
+- `%C[n]` / `T_C[n]` — complex phasor registers.
 - `BLK[i] fn:0x.. -> in->out [args | outs]` — a variable-arity block call.
 - `-` — unconnected/unused operand (defaults to a literal).
 
@@ -160,7 +161,21 @@ An analog input channel (`AIN`). In **raw** mode produces no instruction. In
   "raw_min": 0, "raw_max": 4095, "scale_min": 0.0, "scale_max": 100.0 }
 ```
 ```
-[0000]  SCALE_F        AIN[0]       SCL[0]       -> T_FLOAT[0]
+[0000]  SCALE_F        %AIN[0]      SCL[0]       -> T_F[0]
+```
+
+### `ANALOGOUTPUT`
+An analog output channel (`%AOUT`). Directs an internal float signal to a physical DAC output channel.
+
+- Properties: `channel` (DAC channel index, e.g. `0`).
+- Input: `in` (float signal).
+- Lowers to a `MOVE_F` instruction (or is coalesced by the optimizer) writing directly to `%AOUT[channel]`.
+
+```json
+{ "name": "AO0", "type": "ANALOGOUTPUT", "channel": 0 }
+```
+```
+[0000]  MOVE_F         %F[0]        -            -> %AOUT[0]
 ```
 
 ### `CONSTANT`
@@ -274,7 +289,7 @@ On-delay timer. `in` rising arms it; `q = 1` once `now - start >= preset_ms`.
 { "name": "T1", "type": "TON", "preset_ms": 1000 }
 ```
 ```
-[0000]  TON            FALSE        -            -> TIMER[0]
+[0000]  TON            FALSE        -            -> T_B[0]
 ```
 
 ### `TOF`
@@ -284,7 +299,7 @@ Off-delay timer. Input: `in`. Output: `out` (`q`).
 { "name": "T1", "type": "TOF", "preset_ms": 1000 }
 ```
 ```
-[0000]  TOF            FALSE        -            -> TIMER[0]
+[0000]  TOF            FALSE        -            -> T_B[0]
 ```
 
 ### `TP`
@@ -294,7 +309,7 @@ Pulse timer. Input: `in`. Output: `out` (`q`).
 { "name": "T1", "type": "TP", "preset_ms": 1000 }
 ```
 ```
-[0000]  TP             FALSE        -            -> TIMER[0]
+[0000]  TP             FALSE        -            -> T_B[0]
 ```
 
 ---
@@ -316,21 +331,21 @@ Count-up. Input: `cu` (in `in`). Optional reset: `r`. Done when `count >= preset
 { "name": "C1", "type": "CTU", "preset": 10 }
 ```
 ```
-[0000]  CTU            FALSE        -            -> COUNTER[0]
+[0000]  CTU            FALSE        -            -> T_B[0]
 ```
 
 ### `CTD`
 Count-down. Input: `cd`. Done when `count <= 0`.
 
 ```
-[0000]  CTD            FALSE        -            -> COUNTER[0]
+[0000]  CTD            FALSE        -            -> T_B[0]
 ```
 
 ### `CTUD`
 Count up/down (`cu` in `in_a`, `cd` in `in_b`). Done when `count >= preset`.
 
 ```
-[0000]  CTUD           FALSE        -            -> COUNTER[0]
+[0000]  CTUD           FALSE        -            -> T_B[0]
 ```
 
 ---

@@ -1,4 +1,4 @@
-﻿# Platform Hardware Abstraction Layer (HAL) and UART upload guide
+# Platform Hardware Abstraction Layer (HAL) and UART upload guide
 
 LogicElements v2 uses a decoupled, lightweight C function pointer table (`le_hal_t`) to interface with any microcontroller hardware without touching core logic.
 
@@ -108,10 +108,17 @@ typedef struct {
     size_t      (*uart_write)(const uint8_t* buf, size_t len);
 
     /* ------------------------------------------------------------------ */
-    /* Non-volatile storage (required for multi-slot flashing)            */
+    /* Non-volatile configuration slot storage (.lebin program slots)     */
     /* ------------------------------------------------------------------ */
     bool        (*storage_read)(uint32_t offset, uint8_t* buf, size_t len);
     bool        (*storage_write)(uint32_t offset, const uint8_t* buf, size_t len);
+
+    /* ------------------------------------------------------------------ */
+    /* Non-volatile runtime NVRAM (retentive registers, SER, Event Rec)   */
+    /* ------------------------------------------------------------------ */
+    bool        (*nvram_read)(uint32_t offset, uint8_t* buf, size_t len);
+    bool        (*nvram_write)(uint32_t offset, const uint8_t* buf, size_t len);
+    bool        (*nvram_erase)(uint32_t offset, size_t len);
 
 #if LE_ENABLE_SERIAL_BUS
     /* I2C and SPI master bus callbacks */
@@ -266,7 +273,157 @@ static bool ram_storage_write(uint32_t offset, const uint8_t* buf, size_t len) {
 
 ---
 
+## Step 1B: Implement Non-Volatile Runtime Memory (NVRAM) & Wear Leveling
+
+LogicElements strictly decouples **static program configuration slots** (`storage_read` / `storage_write` for `.lebin` program code) from **operational non-volatile runtime memory** (`nvram_read` / `nvram_write`).
+
+Operational NVRAM persists:
+1. **Retentive Registers**: User-configured subsets of boolean `%B`, integer `%I`, float `%F`, and complex `%C` registers that survive power loss.
+2. **Sequence of Events (SER)**: High-resolution timestamped digital transitions logged to a circular journal.
+3. **Event Recorder**: Pre-trigger and post-trigger waveform sample captures during electrical protection trips or fault events.
+
+### NVRAM Partition Geometry
+
+LogicElements defines a standard 16 KB (`LE_NVRAM_TOTAL_BYTES`) logical partition layout in [`le_nvram.h`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/runtime/include/le_nvram.h):
+
+| Logical Offset | Size | Identifier | Description |
+| :--- | :--- | :--- | :--- |
+| `0x0000` | 64 B | `LE_NVRAM_OFFSET_MANIFEST` | Manifest header (magic `0x4D564E4C`, schema version, component lengths) |
+| `0x0040` | 1,024 B | `LE_NVRAM_OFFSET_REGS` | Retentive registers snapshot (CRC32 checked) |
+| `0x0440` | 3,072 B | `LE_NVRAM_OFFSET_SER` | SER circular event journal |
+| `0x1040` | 12,288 B | `LE_NVRAM_OFFSET_EVENT_REC` | Event recorder waveform capture buffers |
+
+The runtime accesses this region exclusively through `g_le_hal->nvram_read` and `g_le_hal->nvram_write`.
+
+### Choosing your NVRAM Backend
+
+Depending on your board's hardware design, choose one of two options:
+
+#### Option 1: Direct Byte-Addressable NVRAM (External SPI FRAM, EEPROM, Battery-Backed SRAM)
+Industrial PLCs frequently include an SPI FRAM (e.g., Cypress/Infineon FM25V02 or Fujitsu MB85RS64) or an I2C/SPI EEPROM. FRAM supports trillions of write cycles and byte-level writing with zero erase latency.
+
+In this setup, implement `le_port_nvram_read` and `le_port_nvram_write` by directly calling your SPI/I2C driver:
+
+```c
+/* In le_port.c */
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+    return bsp_spi_fram_read(offset, (uint8_t*)buf, len);
+}
+
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+    return bsp_spi_fram_write(offset, (const uint8_t*)buf, len);
+}
+
+bool le_port_nvram_erase(uint32_t offset, size_t len)
+{
+    if (offset + len > LE_NVRAM_TOTAL_BYTES) return false;
+    /* FRAM supports direct byte writes without sector erase cycles: zero range */
+    uint8_t zeros[64] = {0};
+    uint32_t rem = (uint32_t)len, cur = offset;
+    while (rem > 0) {
+        uint32_t chunk = (rem > sizeof(zeros)) ? (uint32_t)sizeof(zeros) : rem;
+        if (!bsp_spi_fram_write(cur, zeros, chunk)) return false;
+        cur += chunk;
+        rem -= chunk;
+    }
+    return true;
+}
+
+/* Initialize runtime in direct mode */
+void board_nvram_init(void)
+{
+    le_nvram_init_direct();
+}
+```
+
+#### Option 2: Flash with Built-In Runtime Wear Leveling (Zero User Algorithm Required)
+When using on-chip MCU Flash (e.g., STM32, RP2040, RP2350, ESP32), raw flash sectors wear out quickly (typically rated for 10,000 to 100,000 erase cycles). 
+
+**The board implementer does not need to design or write a wear-leveling algorithm.** The LogicElements runtime includes a built-in log-structured wear-leveling journal:
+- Sectors rotate cyclically using monotonic sequence IDs and erase counters.
+- Writes are appended sequentially with CRC32 records without erasing sectors prematurely.
+- Automatic compaction reclaims space by gathering the latest active data into the next clean sector.
+
+The board implementer only provides raw sector erase, page program, and memory read callbacks in an `le_flash_wl_driver_t` descriptor:
+
+```c
+#include "le_nvram.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+
+#define PICO_NVRAM_FLASH_BASE   (1472 * 1024) /* 64 KB reserved below config slots */
+#define PICO_NVRAM_SECTOR_SIZE  LE_NVRAM_BLOCK_SIZE /* 4096 */
+#define PICO_NVRAM_PAGE_SIZE    LE_NVRAM_PAGE_SIZE  /* 256 */
+#define PICO_NVRAM_SECTOR_COUNT 4                   /* 4 sectors = 16 KB pool */
+
+static bool pico_wl_erase(uint32_t sector_idx, uint32_t phys_addr)
+{
+    (void)sector_idx;
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(phys_addr, PICO_NVRAM_SECTOR_SIZE);
+    restore_interrupts(ints);
+    return true;
+}
+
+static bool pico_wl_program(uint32_t phys_addr, const uint8_t* data, size_t len)
+{
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_program(phys_addr, data, len);
+    restore_interrupts(ints);
+    return true;
+}
+
+static bool pico_wl_read(uint32_t phys_addr, uint8_t* data, size_t len)
+{
+    const uint8_t* flash_ptr = (const uint8_t*)(XIP_BASE + phys_addr);
+    memcpy(data, flash_ptr, len);
+    return true;
+}
+
+static const le_flash_wl_driver_t s_pico_wl_driver = {
+    .flash_base_offset = PICO_NVRAM_FLASH_BASE,
+    .sector_size       = PICO_NVRAM_SECTOR_SIZE,
+    .page_size         = PICO_NVRAM_PAGE_SIZE,
+    .sector_count      = PICO_NVRAM_SECTOR_COUNT,
+    .erase_sector      = pico_wl_erase,
+    .program           = pico_wl_program,
+    .read              = pico_wl_read,
+};
+
+/* Port NVRAM functions delegate to the runtime wear-leveling engine */
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+{
+    return le_nvram_read(offset, (uint8_t*)buf, len);
+}
+
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+{
+    return le_nvram_write(offset, (const uint8_t*)buf, len);
+}
+
+bool le_port_nvram_erase(uint32_t offset, size_t len)
+{
+    return le_nvram_erase(offset, len);
+}
+
+/* Call once at boot */
+void board_nvram_init(void)
+{
+    le_nvram_init_flash(&s_pico_wl_driver);
+}
+```
+
+Bind `le_port_nvram_read`, `le_port_nvram_write`, and `le_port_nvram_erase` to `s_my_mcu_hal.nvram_read`, `s_my_mcu_hal.nvram_write`, and `s_my_mcu_hal.nvram_erase` so the runtime engine automatically manages persistent memory.
+
+
+---
+
 ## Step 2: Implement asynchronous UART reception
+
 
 PLC execution must never stall or block waiting for UART bytes. Always use an **Interrupt-Driven Ring Buffer** (or DMA with idle-line detection):
 
@@ -586,23 +743,23 @@ int main(void)
 
 ## Memory footprint and resource configuration
 
-Adopters can fine-tune memory limits to match any microcontroller by setting defines in `src/runtime/include/le_types.h` (or via compiler `-D` flags in CMake / Makefile):
+Adopters can fine-tune memory limits to match any microcontroller by setting defines in `src/runtime/include/le_board_config.h` (or via compiler `-D` flags in CMake / Makefile):
 
 ```c
 /* Number of stored program slots in flash */
 #define LE_MAX_CONFIG_SLOTS     3       /* 3 configurations */
 #define LE_SLOT_SIZE_BYTES      2048    /* 2 KB per slot */
 
-/* Register memory is fixed-size; element state lives in the state workspace. */
-#define LE_MAX_DIGITAL_IN       64      /* %I (8 bytes) */
-#define LE_MAX_DIGITAL_OUT      64      /* %Q (8 bytes) */
-#define LE_MAX_COILS            128     /* %M (16 bytes) */
-#define LE_MAX_FLOATS           64      /* %R (256 bytes) */
+/* Physical board hardware pin capacities */
+#define LE_MAX_DIGITAL_IN       64      /* %DIN */
+#define LE_MAX_DIGITAL_OUT      64      /* %DOUT */
+#define LE_MAX_ANALOG_IN        16      /* %AIN */
+#define LE_MAX_ANALOG_OUT       16      /* %AOUT */
 
-/* Zero-heap state workspace shared by ALL stateful elements: the compiler
-   bakes each block state (defaults + properties) into a state image in the
-   .lebin and the loader copies it into this RAM workspace at load. */
-#define LE_RAM_WORKSPACE_BYTES 2048    /* unified RAM workspace (registers + state) */
+/* Unified dynamic RAM workspace: internal registers (%B, %I, %F, %C)
+   and element state blocks (timers, filters, relays) all dynamically
+   share this unified memory pool. No static per-type register limits! */
+#define LE_RAM_WORKSPACE_BYTES  2048    /* unified RAM workspace */
 ```
 
 ### Typical footprint across architectures
@@ -688,6 +845,6 @@ py tools/compiler/le_compiler.py circuit.json -b my_board.leconfig -o circuit.le
 | **`[FAIL] CRC32 Mismatch` after upload** | UART dropped bytes or flash erase failed before write. | Ensure UART RX ring buffer is interrupt/DMA driven. Verify sector erase was called at `offset == 0`. |
 | **Outputs glitch during slot reload** | VM continued stepping while new configuration was being activated. | Call `le_port_deenergize_outputs()` or pause VM (`vm.running = false`) during `le_storage_activate_slot()`. |
 | **MCU hard faults during flash write** | Flash programming address not aligned or interrupts not disabled. | On RP2040, wrap flash programming in `save_and_disable_interrupts()`. On STM32, check Flash write alignment requirements. |
-| **Memory limits exceeded on small MCU** | Default budget too large for target RAM. | Override `LE_MAX_CONFIG_SLOTS`, `LE_MAX_FLOATS`, and `LE_MAX_COILS` with smaller values in your build flags. |
+| **Memory limits exceeded on small MCU** | Default budget too large for target RAM. | Override `LE_RAM_WORKSPACE_BYTES` and `LE_MAX_CONFIG_SLOTS` with smaller values in your build flags. |
 
 

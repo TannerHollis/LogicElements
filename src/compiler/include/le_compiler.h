@@ -47,11 +47,12 @@ typedef struct {
 
     /* Resource statistics */
     int instruction_count;     /**< Total number of virtual machine instructions generated. */
-    int din_count;             /**< Total number of physical digital input pins mapped (%I). */
-    int dout_count;            /**< Total number of physical digital output pins mapped (%Q). */
-    int ain_count;             /**< Total number of analog input channels mapped. */
-    int bool_reg_count;        /**< Total number of boolean memory registers allocated (%M). */
-    int float_count;           /**< Total number of 32-bit floating-point registers allocated (%R). */
+    int din_count;             /**< Total number of physical digital input pins mapped (%IN). */
+    int dout_count;            /**< Total number of physical digital output pins mapped (%OUT). */
+    int ain_count;             /**< Total number of analog input channels mapped (%AIN). */
+    int aout_count;            /**< Total number of analog output channels mapped (%AOUT). */
+    int bool_reg_count;        /**< Total number of boolean memory registers allocated (%B). */
+    int float_count;           /**< Total number of 32-bit floating-point registers allocated (%F). */
     int complex_count;         /**< Total number of complex registers allocated (%C, real+imag pairs). */
     int int_count;             /**< Total number of 32-bit integer registers allocated. */
     int timer_count;           /**< Total number of timer function blocks allocated. */

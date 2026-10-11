@@ -87,9 +87,9 @@ static void handle_packet(le_comms_t* comms)
             pong[1] = LE_BIN_VERSION;
             pong[2] = LE_MAX_DIGITAL_IN;
             pong[3] = LE_MAX_DIGITAL_OUT;
-            pong[4] = (uint8_t)(LE_MAX_BOOL_REGS & 0xFF);
-            pong[5] = (uint8_t)((LE_MAX_BOOL_REGS >> 8) & 0xFF);
-            pong[6] = LE_MAX_FLOATS;
+            pong[4] = 0x00; /* Dynamic register arena in RAM workspace */
+            pong[5] = 0x00;
+            pong[6] = 0x00;
             pong[7] = (uint8_t)(LE_RAM_WORKSPACE_BYTES & 0xFF); /* unified RAM workspace (low byte) */
             send_packet(LE_CMD_PONG, seq, pong, sizeof(pong));
             break;
@@ -113,8 +113,8 @@ static void handle_packet(le_comms_t* comms)
 #else
             caps.max_analog_in = 0;
 #endif
-            caps.max_bool_regs = LE_MAX_BOOL_REGS;
-            caps.max_floats = LE_MAX_FLOATS;
+            caps.max_bool_regs = 0; /* 0 = dynamic allocation up to workspace_bytes */
+            caps.max_floats = 0;    /* 0 = dynamic allocation up to workspace_bytes */
             /* The caps field is 16-bit; the Pico 2 W workspace (256 KB) exceeds it.
              * Clamp the reported value - the authoritative capacity is in the
              * board .leconfig (and the loader enforces the real LE_RAM_WORKSPACE_BYTES). */

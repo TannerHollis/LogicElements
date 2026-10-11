@@ -50,6 +50,7 @@ static const element_spec_t g_oracle[] = {
     SPEC("ANALOGINPUT_scaled", "SCALE_F", 1),
     SPECN("CONSTANT"),
     SPEC("DIGITALOUTPUT", "MOVE", 1),
+    SPEC("ANALOGOUTPUT", "MOVE_F", 1),
     SPEC("BOOLREGISTER", "MOVE", 1),
     SPEC("FLOATREGISTER", "MOVE_F", 1),
     SPEC("INTREGISTER", "MOVE", 1),

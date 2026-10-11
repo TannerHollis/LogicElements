@@ -46,9 +46,14 @@ typedef struct {
     size_t      (*uart_read)(uint8_t* buf, size_t max_len);
     size_t      (*uart_write)(const uint8_t* buf, size_t len);
 
-    /* Non-volatile storage (flash, EEPROM, or battery-backed SRAM) */
+    /* Non-volatile configuration slot storage (.lebin program slots) */
     bool        (*storage_read)(uint32_t offset, uint8_t* buf, size_t len);
     bool        (*storage_write)(uint32_t offset, const uint8_t* buf, size_t len);
+
+    /* Dedicated Non-volatile RAM (NV registers, SER log, Event recording) */
+    bool        (*nvram_read)(uint32_t offset, uint8_t* buf, size_t len);
+    bool        (*nvram_write)(uint32_t offset, const uint8_t* buf, size_t len);
+    bool        (*nvram_erase)(uint32_t offset, size_t len);
 
 #if LE_ENABLE_SERIAL_BUS
     /* I2C master bus callbacks */

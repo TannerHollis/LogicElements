@@ -15,16 +15,19 @@ from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
 LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 11
+LE_BIN_VERSION = 12
 LE_FLAG_AUTOSTART = 0x0001
 
-# Address Regions
+# Address Regions (top-nibble aligned)
 LE_REGION_DIN   = 0x0000
 LE_REGION_DOUT  = 0x1000
-LE_REGION_BOOL  = 0x2000
-LE_REGION_COIL  = 0x2000
-LE_REGION_FLOAT = 0x4000
-LE_REGION_TIMER = 0x8000
+LE_REGION_AIN   = 0x2000
+LE_REGION_AOUT  = 0x3000
+LE_REGION_BOOL  = 0x4000
+LE_REGION_COIL  = 0x4000
+LE_REGION_INT   = 0x6000
+LE_REGION_FLOAT = 0x8000
+LE_REGION_CMPLX = 0xA000
 LE_REGION_CONST = 0xC000
 
 LE_CONST_FALSE  = 0xC000
@@ -99,6 +102,7 @@ class _LeCompileResult(Structure):
         ("din_count", c_int),
         ("dout_count", c_int),
         ("ain_count", c_int),
+        ("aout_count", c_int),
         ("bool_reg_count", c_int),
         ("float_count", c_int),
         ("complex_count", c_int),

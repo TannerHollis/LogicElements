@@ -24,8 +24,9 @@
  *
  *   -DLE_RAM_WORKSPACE_BYTES=2048   unified RAM pool (packed register arena +
  *                                   state blocks) the loader carves at load
- *   -DLE_MAX_DIGITAL_IN=N -DLE_MAX_DIGITAL_OUT=N -DLE_MAX_BOOL_REGS=N
- *   -DLE_MAX_FLOATS=N -DLE_MAX_INT_REGS=N -DLE_MAX_ANALOG_IN=N
+ *   -DLE_MAX_DIGITAL_IN=N -DLE_MAX_DIGITAL_OUT=N
+ *   -DLE_MAX_ANALOG_IN=N  -DLE_MAX_ANALOG_OUT=N
+ *   (Internal %B, %I, %F, %C registers are dynamically packed within workspace)
  *
  * Fixed-rate scan configuration (deterministic execution):
  *   The SCAN RATE IS CIRCUIT-OWNED: each circuit declares `scan_rate_hz` in its
@@ -42,6 +43,18 @@
  * Optionally disable subsystems you do not need (smaller RAM + opcode space):
  *   -DLE_ENABLE_PROTECTION=0 -DLE_ENABLE_COMPLEX=0 -DLE_ENABLE_ANALOG=0
  *   -DLE_ENABLE_SERIAL_BUS=0 -DLE_ENABLE_DSP=0
+ *
+ * Operational NVRAM configuration (matches your .leconfig):
+ *   -DLE_NVRAM_TOTAL_BYTES=16384    total logical NVRAM capacity (default: 16 KB)
+ *   -DLE_NVRAM_BLOCK_SIZE=4096      physical erase sector size for Flash (e.g. 4096)
+ *   -DLE_NVRAM_PAGE_SIZE=256        programming page size for Flash / EEPROM (e.g. 256)
+ *   -DLE_NVRAM_REGS_BYTES=1024      retentive register block size per config slot
+ *   -DLE_NVRAM_SER_BYTES=3072       circular SER transition log buffer size
+ *
+ * NVRAM backend selection in le_port.c:
+ *   -DLE_PORT_NVRAM_BACKEND=0       in-memory RAM mirror (rapid bring-up / simulation)
+ *   -DLE_PORT_NVRAM_BACKEND=1       external SPI/I2C byte NVRAM / FRAM (MB85RS64, FM25V02)
+ *   -DLE_PORT_NVRAM_BACKEND=2       plain on-chip / SPI NOR Flash with runtime wear leveling
  *
  * The reference ports ship with the exact flag set for their .leconfig;
  * see ports/<board>/le_port.h. A program is rejected at load when its register
@@ -103,6 +116,40 @@ void le_port_write_outputs(const le_process_image_t* img);
  * outputs are never left energized.
  */
 void le_port_deenergize_outputs(void);
+
+/**
+ * @brief Reads a byte buffer from Non-Volatile RAM (NV registers, SER, Event Recorder).
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param buf Destination buffer pointer.
+ * @param len Number of bytes to read.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len);
+
+/**
+ * @brief Writes a byte buffer to Non-Volatile RAM (NV registers, SER, Event Recorder).
+ *
+ * If backed by external SPI FRAM / EEPROM / battery SRAM, writes are directly committed.
+ * If backed by raw on-chip Flash, uses the runtime wear-leveling engine to protect flash sectors.
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param buf Source data buffer pointer.
+ * @param len Number of bytes to write.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len);
+
+/**
+ * @brief Erases a region of Non-Volatile RAM, or formats the entire NVRAM partition.
+ *
+ * If offset is 0 and len >= LE_NVRAM_TOTAL_BYTES, this triggers a full format/wipe.
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param len Number of bytes to erase.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_erase(uint32_t offset, size_t len);
 
 #ifdef __cplusplus
 }

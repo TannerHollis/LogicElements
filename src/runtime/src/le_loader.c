@@ -79,20 +79,15 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
         return LE_ERR_OUT_OF_BOUNDS;
     }
 
-    /* Check MCU capacity limits: per-region maxima (board budgets) plus the
-     * unified RAM pool — the packed register arena (sized from the header's
-     * actual register counts) and the preconfigured state image must BOTH fit
-     * inside LE_RAM_WORKSPACE_BYTES, so RAM tracks what the program declares. */
+    /* Check MCU capacity limits: physical terminal I/O maxima plus the
+     * unified RAM pool — the packed register arena (sized dynamically from the
+     * header's actual register counts) and the preconfigured state image must BOTH fit
+     * inside LE_RAM_WORKSPACE_BYTES. */
     if (header->digital_in_count > LE_MAX_DIGITAL_IN ||
         header->digital_out_count > LE_MAX_DIGITAL_OUT ||
-        header->bool_reg_count > LE_MAX_BOOL_REGS ||
-        header->float_reg_count > LE_MAX_FLOATS ||
-        header->int_reg_count > LE_MAX_INT_REGS ||
 #if LE_ENABLE_ANALOG
         header->analog_in_count > LE_MAX_ANALOG_IN ||
-#endif
-#if LE_ENABLE_COMPLEX
-        header->complex_reg_count > LE_MAX_COMPLEX ||
+        header->analog_out_count > LE_MAX_ANALOG_OUT ||
 #endif
         (uint32_t)le_process_image_regs_len(header) +
             (uint32_t)header->state_img_len > (uint32_t)LE_RAM_WORKSPACE_BYTES)

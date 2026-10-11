@@ -12,11 +12,15 @@
 
 #include "le_port.h"
 #include "le_storage.h"
+#include "le_nvram.h"
 #include <string.h>
 #include <stddef.h>
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/adc.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+#include "hardware/spi.h"
 #include "tusb.h"
 
 #ifdef LE_PORT_CYW43_LED
@@ -48,11 +52,58 @@ static const uint8_t OUTPUT_PINS[] = { 2, 3, 7 };
 #define LE_ADC_CHANNELS 4
 static const uint8_t ADC_INPUT_PINS[] = { 26, 27, 28, 29 };
 
-/* RP2350 XIP flash base (differs from the RP2040 0x08000000). Storage is a
- * RAM shim for bring-up; real flash writes need flash_safe_execute()/sector
- * erase which is left as a follow-up. */
-#define LE_PORT_FLASH_BASE 0x10000000UL
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
+/* ========================================================================== */
+/* Configuration Slots Storage (Compiled .lebin Program Bytecode)             */
+/* ========================================================================== */
+
+#define LE_PORT_STORAGE_TOTAL_BYTES   (LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT)
+
+/**
+ * Program Storage Backend Selection:
+ *   0 = Onboard QSPI NOR Flash (upper sectors of RP2350 flash, sector-erase + page-program)
+ *   1 = In-Memory RAM Mirror (bring-up / simulation without non-volatile hardware)
+ */
+#ifndef LE_PORT_STORAGE_BACKEND
+#define LE_PORT_STORAGE_BACKEND       0
+#endif
+
+#define LE_PICO2W_FLASH_TOTAL_BYTES   (4 * 1024 * 1024UL)
+#define LE_PICO2W_FLASH_TARGET_OFFSET (LE_PICO2W_FLASH_TOTAL_BYTES - LE_PORT_STORAGE_TOTAL_BYTES)
+
+#if (LE_PORT_STORAGE_BACKEND == 1)
+static uint8_t s_port_flash[LE_PORT_STORAGE_TOTAL_BYTES] = {0};
+#endif
+
+/* ========================================================================== */
+/* Operational NVRAM Configuration (NV Registers, SER Log, Event Recording)  */
+/* ========================================================================== */
+
+/**
+ * NVRAM Backend Selection:
+ *   0 = Onboard QSPI Flash with runtime wear leveling (no board wear leveling needed!)
+ *   1 = External SPI NVRAM / FRAM (e.g. Adafruit SPI FRAM on GP16-GP19, byte-level writes)
+ *   2 = In-Memory RAM Mirror (bring-up / simulation)
+ */
+#ifndef LE_PORT_NVRAM_BACKEND
+#define LE_PORT_NVRAM_BACKEND         0
+#endif
+
+#define LE_PICO2W_NVRAM_SECTOR_COUNT  4UL
+#define LE_PICO2W_NVRAM_SECTOR_SIZE   FLASH_SECTOR_SIZE /* 4096 */
+#define LE_PICO2W_NVRAM_TOTAL_FLASH   (LE_PICO2W_NVRAM_SECTOR_SIZE * LE_PICO2W_NVRAM_SECTOR_COUNT)
+#define LE_PICO2W_NVRAM_TARGET_OFFSET (LE_PICO2W_FLASH_TARGET_OFFSET - LE_PICO2W_NVRAM_TOTAL_FLASH)
+
+#if (LE_PORT_NVRAM_BACKEND == 1)
+/* External SPI FRAM (e.g. MB85RS64, FM25V02). Connected to SPI0:
+ * SCK: GP18, MOSI: GP19, MISO: GP16, CS: GP17. */
+#define LE_PORT_EXTERNAL_NVRAM_SPI    spi0
+#define LE_PORT_EXTERNAL_NVRAM_CS_PIN 17
+#define LE_PORT_NVRAM_CMD_WREN        0x06
+#define LE_PORT_NVRAM_CMD_WRITE       0x02
+#define LE_PORT_NVRAM_CMD_READ        0x03
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+static uint8_t s_port_nvram[LE_NVRAM_TOTAL_BYTES] = {0};
+#endif
 
 void le_port_init(void)
 {
@@ -73,6 +124,18 @@ void le_port_init(void)
     /* RP2350 ADC: init once, route the four 12-bit channels on GP26..GP29. */
     adc_init();
     for (uint8_t i = 0; i < LE_ADC_CHANNELS; i++) adc_gpio_init(ADC_INPUT_PINS[i]);
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    le_nvram_init_flash(&s_pico_wl_driver);
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* External SPI NVRAM/FRAM: initialize CS pin as deselect (high) */
+    gpio_init(LE_PORT_EXTERNAL_NVRAM_CS_PIN);
+    gpio_set_dir(LE_PORT_EXTERNAL_NVRAM_CS_PIN, GPIO_OUT);
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 1);
+    le_nvram_init_direct();
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    le_nvram_init_direct();
+#endif
 }
 
 void le_port_read_inputs(le_process_image_t* img)
@@ -92,6 +155,15 @@ void le_port_write_outputs(const le_process_image_t* img)
 #endif
         gpio_put(OUTPUT_PINS[i], raw ? 1 : 0);
     }
+
+#if LE_ENABLE_ANALOG
+    /* Flush Analog Outputs (%AOUT) to DAC / PWM channels */
+    for (uint16_t ch = 0; ch < img->aout_count; ch++) {
+        float val = le_pi_get_aout(img, ch);
+        /* RP2350 uses PWM or external DAC; forwards to port_dac_write */
+        port_dac_write((uint8_t)ch, val);
+    }
+#endif
 }
 
 void le_port_deenergize_outputs(void)
@@ -101,6 +173,12 @@ void le_port_deenergize_outputs(void)
     for (uint8_t i = 1; i < NUM_OUTPUTS; i++) gpio_put(OUTPUT_PINS[i], 0);
 #else
     for (uint8_t i = 0; i < NUM_OUTPUTS; i++) gpio_put(OUTPUT_PINS[i], 0);
+#endif
+
+#if LE_ENABLE_ANALOG
+    for (uint8_t ch = 0; ch < LE_MAX_ANALOG_OUT; ch++) {
+        port_dac_write(ch, 0.0f);
+    }
 #endif
 }
 
@@ -210,19 +288,209 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
 
 static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
 {
-    uint32_t rel = offset - LE_PORT_FLASH_BASE;
-    if (offset < LE_PORT_FLASH_BASE) return false;
-    if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
-    memcpy(buf, &s_port_flash[rel], len);
+    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    /* Backend 0: Onboard QSPI NOR Flash (Memory-mapped direct XIP read) */
+    const uint8_t* flash_target = (const uint8_t*)(XIP_BASE + LE_PICO2W_FLASH_TARGET_OFFSET + offset);
+    memcpy(buf, flash_target, len);
     return true;
+
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    /* Backend 1: In-Memory RAM Mirror (Bring-up / Simulation) */
+    memcpy(buf, &s_port_flash[offset], len);
+    return true;
+#endif
 }
+
 static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
-    uint32_t rel = offset - LE_PORT_FLASH_BASE;
-    if (offset < LE_PORT_FLASH_BASE) return false;
-    if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
-    memcpy(&s_port_flash[rel], buf, len);
+    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    /* Backend 0: Onboard QSPI NOR Flash (Sector erase + page program) */
+    uint32_t flash_addr = LE_PICO2W_FLASH_TARGET_OFFSET + offset;
+
+    /* If write starts on a 4KB sector boundary, erase the sector(s) first */
+    if ((offset % FLASH_SECTOR_SIZE) == 0) {
+        size_t erase_len = ((len + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE) * FLASH_SECTOR_SIZE;
+        if (erase_len < FLASH_SECTOR_SIZE) erase_len = FLASH_SECTOR_SIZE;
+
+        uint32_t ints = save_and_disable_interrupts();
+        flash_range_erase(flash_addr, erase_len);
+        restore_interrupts(ints);
+    }
+
+    /* Program in multiples of FLASH_PAGE_SIZE (256 bytes) */
+    size_t prog_len = ((len + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
+    if (len % FLASH_PAGE_SIZE != 0) {
+        uint8_t page_buf[FLASH_PAGE_SIZE];
+        memset(page_buf, 0xFF, sizeof(page_buf));
+        memcpy(page_buf, buf + (prog_len - FLASH_PAGE_SIZE), len % FLASH_PAGE_SIZE);
+
+        uint32_t ints = save_and_disable_interrupts();
+        if (prog_len > FLASH_PAGE_SIZE) {
+            flash_range_program(flash_addr, buf, prog_len - FLASH_PAGE_SIZE);
+        }
+        flash_range_program(flash_addr + (prog_len - FLASH_PAGE_SIZE), page_buf, FLASH_PAGE_SIZE);
+        restore_interrupts(ints);
+    } else {
+        uint32_t ints = save_and_disable_interrupts();
+        flash_range_program(flash_addr, buf, len);
+        restore_interrupts(ints);
+    }
     return true;
+
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    /* Backend 1: In-Memory RAM Mirror (Bring-up / Simulation) */
+    memcpy(&s_port_flash[offset], buf, len);
+    return true;
+#endif
+}
+
+/* ========================================================================== */
+/* Operational NVRAM Functions (Retentive Registers, SER, Event Recorder)   */
+/* ========================================================================== */
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+static bool rp2350_wl_erase_sector(uint32_t sector_idx, uint32_t phys_addr)
+{
+    (void)sector_idx;
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(phys_addr, FLASH_SECTOR_SIZE);
+    restore_interrupts(ints);
+    return true;
+}
+
+static bool rp2350_wl_program(uint32_t phys_addr, const uint8_t* data, size_t len)
+{
+    size_t prog_len = ((len + FLASH_PAGE_SIZE - 1) / FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
+    if (len % FLASH_PAGE_SIZE != 0) {
+        uint8_t page_buf[FLASH_PAGE_SIZE];
+        memset(page_buf, 0xFF, sizeof(page_buf));
+        memcpy(page_buf, data, len);
+
+        uint32_t ints = save_and_disable_interrupts();
+        if (prog_len > FLASH_PAGE_SIZE) {
+            flash_range_program(phys_addr, data, prog_len - FLASH_PAGE_SIZE);
+        }
+        flash_range_program(phys_addr + (prog_len - FLASH_PAGE_SIZE), page_buf, FLASH_PAGE_SIZE);
+        restore_interrupts(ints);
+    } else {
+        uint32_t ints = save_and_disable_interrupts();
+        flash_range_program(phys_addr, data, len);
+        restore_interrupts(ints);
+    }
+    return true;
+}
+
+static bool rp2350_wl_read(uint32_t phys_addr, uint8_t* data, size_t len)
+{
+    const uint8_t* src = (const uint8_t*)(XIP_BASE + phys_addr);
+    memcpy(data, src, len);
+    return true;
+}
+
+static const le_flash_wl_driver_t s_pico_wl_driver = {
+    .flash_base_offset = LE_PICO2W_NVRAM_TARGET_OFFSET,
+    .sector_size = LE_PICO2W_NVRAM_SECTOR_SIZE,
+    .page_size = FLASH_PAGE_SIZE,
+    .sector_count = LE_PICO2W_NVRAM_SECTOR_COUNT,
+    .erase_sector = rp2350_wl_erase_sector,
+    .program = rp2350_wl_program,
+    .read = rp2350_wl_read,
+};
+#endif
+
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: Onboard QSPI Flash with runtime wear leveling */
+    return le_nvram_read(offset, buf, len);
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI FRAM (MB85RS64) */
+    uint8_t cmd[4] = {
+        LE_PORT_NVRAM_CMD_READ,
+        (uint8_t)((offset >> 16) & 0xFF),
+        (uint8_t)((offset >> 8) & 0xFF),
+        (uint8_t)(offset & 0xFF)
+    };
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 0);
+    spi_write_blocking(LE_PORT_EXTERNAL_NVRAM_SPI, cmd, sizeof(cmd));
+    spi_read_blocking(LE_PORT_EXTERNAL_NVRAM_SPI, 0x00, (uint8_t*)buf, len);
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 1);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: In-Memory RAM Mirror */
+    memcpy(buf, &s_port_nvram[offset], len);
+    return true;
+#endif
+}
+
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+{
+    if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: Onboard QSPI Flash with runtime wear leveling */
+    return le_nvram_write(offset, buf, len);
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI FRAM (MB85RS64) */
+    uint8_t wren = LE_PORT_NVRAM_CMD_WREN;
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 0);
+    spi_write_blocking(LE_PORT_EXTERNAL_NVRAM_SPI, &wren, 1);
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 1);
+
+    uint8_t cmd[4] = {
+        LE_PORT_NVRAM_CMD_WRITE,
+        (uint8_t)((offset >> 16) & 0xFF),
+        (uint8_t)((offset >> 8) & 0xFF),
+        (uint8_t)(offset & 0xFF)
+    };
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 0);
+    spi_write_blocking(LE_PORT_EXTERNAL_NVRAM_SPI, cmd, sizeof(cmd));
+    spi_write_blocking(LE_PORT_EXTERNAL_NVRAM_SPI, (const uint8_t*)buf, len);
+    gpio_put(LE_PORT_EXTERNAL_NVRAM_CS_PIN, 1);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: In-Memory RAM Mirror */
+    memcpy(&s_port_nvram[offset], buf, len);
+    return true;
+#endif
+}
+
+bool le_port_nvram_erase(uint32_t offset, size_t len)
+{
+    if (offset + len > LE_NVRAM_TOTAL_BYTES) return false;
+
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    /* Backend 0: Onboard QSPI Flash with runtime wear leveling */
+    return le_nvram_erase(offset, len);
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Backend 1: External SPI FRAM (MB85RS64) */
+    uint8_t zeros[64] = {0};
+    uint32_t rem = (uint32_t)len;
+    uint32_t cur = offset;
+    while (rem > 0) {
+        uint32_t chunk = (rem > sizeof(zeros)) ? (uint32_t)sizeof(zeros) : rem;
+        if (!le_port_nvram_write(cur, zeros, chunk)) return false;
+        cur += chunk;
+        rem -= chunk;
+    }
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    /* Backend 2: In-Memory RAM Mirror */
+    memset(&s_port_nvram[offset], 0, len);
+    return true;
+#endif
 }
 
 #if LE_ENABLE_SERIAL_BUS
@@ -271,6 +539,9 @@ const le_hal_t s_my_mcu_hal = {
     .get_time_ms = port_get_time_ms, .get_time_us = port_get_time_us,
     .uart_available = port_uart_available, .uart_read = port_uart_read, .uart_write = port_uart_write,
     .storage_read = port_storage_read, .storage_write = port_storage_write,
+    .nvram_read = (bool (*)(uint32_t, uint8_t*, size_t))le_port_nvram_read,
+    .nvram_write = (bool (*)(uint32_t, const uint8_t*, size_t))le_port_nvram_write,
+    .nvram_erase = (bool (*)(uint32_t, size_t))le_port_nvram_erase,
 #if LE_ENABLE_SERIAL_BUS
     .i2c_write = port_i2c_write, .i2c_read = port_i2c_read, .i2c_write_read = port_i2c_write_read,
     .spi_transfer = port_spi_transfer,

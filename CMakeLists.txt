@@ -22,6 +22,9 @@ set(LOGIC_ELEMENTS_SOURCES
     src/runtime/src/le_vm.c
     src/runtime/src/le_loader.c
     src/runtime/src/le_storage.c
+    src/runtime/src/le_nvram.c
+    src/runtime/src/le_ser.c
+    src/runtime/src/le_event_rec.c
     src/runtime/src/le_cli.c
     src/runtime/src/le_comms.c
     src/hal/le_hal_sim.c

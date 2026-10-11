@@ -139,6 +139,22 @@ void le_vm_reset(le_vm_t* vm);
 le_status_t le_vm_load_aliases(le_vm_t* vm, const le_alias_t* aliases, uint16_t count);
 
 /**
+ * @brief Reads physical inputs from HAL into the VM process image (%IN, %AIN).
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_sync_inputs(le_vm_t* vm);
+
+/**
+ * @brief Writes physical outputs from VM process image to HAL (%OUT, %AOUT).
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_sync_outputs(le_vm_t* vm);
+
+/**
  * @brief Attaches a host/board-supplied alias table.
  *
  * Board pin aliases are resolved by the host/firmware (from the board profile)

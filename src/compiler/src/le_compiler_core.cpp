@@ -34,8 +34,6 @@ CompilerCore::CompilerCore()
     , m_peak_temp_float(0)
     , m_peak_temp_complex(0)
     , m_peak_temp_int(0)
-    , m_timer_counter(0)
-    , m_counter_counter(0)
 {
 }
 
@@ -64,19 +62,6 @@ uint16_t CompilerCore::allocate_user_complex()
 {
     uint16_t addr = static_cast<uint16_t>(LE_REGION_CMPLX | (m_user_complex_count & LE_ADDR_INDEX_MASK));
     m_user_complex_count++;
-    return addr;
-}
-uint16_t CompilerCore::allocate_timer()
-{
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_TIMER | (m_timer_counter & 0x0FFF));
-    m_timer_counter++;
-    return addr;
-}
-
-uint16_t CompilerCore::allocate_counter()
-{
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_COUNTER | (m_counter_counter & 0x0FFF));
-    m_counter_counter++;
     return addr;
 }
 
@@ -548,15 +533,15 @@ static bool parse_register_addr(const std::string& in, uint16_t* out)
     else if (tok == "I"    || tok == "INT")   region = LE_REGION_INT_REG;
     else if (tok == "C"    || tok == "CMPLX") region = LE_REGION_CMPLX;
     else if (tok == "AIN")                    region = LE_REGION_AIN;
-    else if (tok == "AOUT")  return false;   /* analog-output region not yet allocated */
+    else if (tok == "AOUT")                   region = LE_REGION_AOUT;
     else if (tok == "M")     region = LE_REGION_BOOL_REG;  /* legacy coils */
     else if (tok == "R")     region = LE_REGION_FLOAT;     /* legacy floats */
     else if (tok == "Q")     region = LE_REGION_DOUT;      /* legacy outputs */
     else if (tok == "N")     region = LE_REGION_INT_REG;   /* legacy ints */
     else return false;
 
-    uint16_t mask = (region == LE_REGION_BOOL_REG) ? 0x1FFFU :
-                   ((region == LE_REGION_FLOAT) ? 0x3FFFU : LE_ADDR_INDEX_MASK);
+    uint16_t mask = (region == LE_REGION_BOOL_REG || region == LE_REGION_INT_REG || region == LE_REGION_FLOAT)
+                    ? 0x1FFFU : LE_ADDR_INDEX_MASK;
     *out = (uint16_t)((uint16_t)region | ((uint16_t)idx & mask));
     return true;
 }
@@ -704,8 +689,6 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     m_peak_temp_float = 0;
     m_peak_temp_complex = 0;
     m_peak_temp_int = 0;
-    m_timer_counter = 0;
-    m_counter_counter = 0;
     m_free_temp_bool_pool.clear();
     m_free_temp_float_pool.clear();
     m_free_temp_complex_pool.clear();
@@ -715,12 +698,14 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     std::map<std::string, uint16_t> dout_map;
     std::map<uint16_t, std::vector<std::string>> output_drivers;
     std::map<std::string, uint16_t> ain_map;
+    std::map<std::string, uint16_t> aout_map;
     std::map<std::string, uint16_t> element_outputs;   /* element name -> canonical output address */
     std::map<std::string, std::map<std::string, uint16_t>> element_outputs_port; /* element -> {output port -> address} */
     std::map<std::string, std::map<std::string, std::string>> net_source_port;   /* consumer -> {consumer port -> source output port} */
     std::vector<ScalerInfo> scaler_list;
     int auto_din_idx = 0;
     int auto_dout_idx = 0;
+    int auto_aout_idx = 0;
     int scaler_counter = 0;
     bool uses_protection = false;
     bool uses_serial_bus = false;
@@ -800,6 +785,27 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             if (m != "float" && m != "scaled") {
                 element_outputs[name] = addr;
             }
+        } else if (type == "ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "LE_ANALOGOUTPUT" || type == "AOUT") {
+            int ch = -1;
+            if (el.contains("channel")) {
+                ch = (int)prop(el, "channel", 0);
+            }
+            if (explicit_addr.empty() && alias_to_addr.find(name) != alias_to_addr.end()) {
+                explicit_addr = alias_to_addr[name];
+            }
+            if (!explicit_addr.empty()) {
+                uint16_t parsed_addr = 0;
+                if (parse_register_addr(explicit_addr, &parsed_addr) && LE_ADDR_IS_AOUT(parsed_addr)) {
+                    ch = (int)(parsed_addr & LE_ADDR_INDEX_MASK);
+                }
+            }
+            if (ch < 0) {
+                ch = auto_aout_idx++;
+            }
+            uint16_t addr = static_cast<uint16_t>(LE_REGION_AOUT | (ch & 0x0FFF));
+            aout_map[name] = addr;
+            element_outputs[name] = addr;
+            output_drivers[addr].push_back(name);
         } else if (type == "CONSTANT" || type == "LE_CONSTANT") {
             std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("bool")));
             if (dt == "float") {
@@ -1192,6 +1198,26 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             uint16_t dst_addr = dout_map[name];
             le_instruction_t inst;
             inst.opcode = LE_OP_MOVE;
+            inst.modifier = 0;
+            inst.in_a = src_addr;
+            inst.in_b = LE_ADDR_UNUSED;
+            inst.out = dst_addr;
+            instructions.push_back(inst);
+            if (!src_name.empty()) consume_input(src_name);
+            continue;
+        }
+
+        if (type == "ANALOGOUTPUT" || type == "LE_ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "AOUT") {
+            uint16_t src_addr = LE_CONST_ZERO_F;
+            std::string src_name;
+            if (!opt_node.inputs.empty()) {
+                std::string consumer_port = opt_node.inputs.begin()->first;
+                src_name = opt_node.inputs.begin()->second;
+                src_addr = src_address(src_name, source_port_of(name, consumer_port), LE_CONST_ZERO_F);
+            }
+            uint16_t dst_addr = aout_map[name];
+            le_instruction_t inst;
+            inst.opcode = LE_OP_MOVE_F;
             inst.modifier = 0;
             inst.in_a = src_addr;
             inst.in_b = LE_ADDR_UNUSED;
@@ -2134,26 +2160,32 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         if (!opt_node.direct_dest_node.empty()) {
             if (dout_map.find(opt_node.direct_dest_node) != dout_map.end()) {
                 out_addr = dout_map[opt_node.direct_dest_node];
+            } else if (is_float_op && aout_map.find(opt_node.direct_dest_node) != aout_map.end()) {
+                out_addr = aout_map[opt_node.direct_dest_node];
             } else if (element_outputs.find(opt_node.direct_dest_node) != element_outputs.end()) {
                 out_addr = element_outputs[opt_node.direct_dest_node];
             }
         }
 
+        if (is_timer_op) {
+            uint16_t t_idx = static_cast<uint16_t>(state_instances[LE_BLK_TIMER].size());
+            modifier = static_cast<uint8_t>(t_idx);
+            state_descs[LE_BLK_TIMER]++;
+            le_timer_state_t tst{};
+            tst.preset_ms = (uint32_t)el.get("preset_ms").as_float(
+                prop(el, "preset", 0.0f));
+            append_state(LE_BLK_TIMER, &tst, sizeof(tst));
+        } else if (is_counter_op) {
+            uint16_t c_idx = static_cast<uint16_t>(state_instances[LE_BLK_COUNTER].size());
+            modifier = static_cast<uint8_t>(c_idx);
+            state_descs[LE_BLK_COUNTER]++;
+            le_counter_state_t cst{};
+            cst.preset = (int32_t)prop(el, "preset", 0.0f);
+            append_state(LE_BLK_COUNTER, &cst, sizeof(cst));
+        }
+
         if (out_addr == LE_ADDR_UNUSED) {
-            if (is_timer_op) {
-                out_addr = allocate_timer();
-                state_descs[LE_BLK_TIMER]++;
-                le_timer_state_t tst{};
-                tst.preset_ms = (uint32_t)el.get("preset_ms").as_float(
-                    prop(el, "preset", 0.0f));
-                append_state(LE_BLK_TIMER, &tst, sizeof(tst));
-            } else if (is_counter_op) {
-                out_addr = allocate_counter();
-                state_descs[LE_BLK_COUNTER]++;
-                le_counter_state_t cst{};
-                cst.preset = (int32_t)prop(el, "preset", 0.0f);
-                append_state(LE_BLK_COUNTER, &cst, sizeof(cst));
-            } else if (is_float_op) {
+            if (is_float_op) {
                 int temp_idx = -1;
                 out_addr = acquire_temp_float(temp_idx);
                 node_temp_idx[name] = temp_idx;
@@ -2304,7 +2336,7 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             if (is_float_op) release_temp_float(node_temp_idx[name]);
             else if (is_complex_op) release_temp_complex(node_temp_idx[name]);
             else if (is_int_op) release_temp_int(node_temp_idx[name]);
-            else if (!is_timer_op && !is_counter_op) release_temp_bool(node_temp_idx[name]);
+            else release_temp_bool(node_temp_idx[name]);
             node_temp_idx.erase(name);
             node_temp_type.erase(name);
         }
@@ -2531,11 +2563,13 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     header.complex_reg_count = static_cast<uint16_t>(total_complex_regs);
     header.int_reg_count = static_cast<uint16_t>(total_int_regs);
     header.analog_in_count = static_cast<uint16_t>(ain_map.size());
+    header.analog_out_count = static_cast<uint16_t>(aout_map.size());
     header.block_count = static_cast<uint16_t>(block_calls.size());
     header.state_desc_count = static_cast<uint16_t>(state_records);
     header.state_img_len = static_cast<uint32_t>(state_image.size());
     header.alias_count = static_cast<uint16_t>(alias_list.size());
     header.timing_count = 1;
+    header.reserved = 0;
     header.crc32 = crc;
 
     size_t total_bin_size = sizeof(le_header_t) + total_payload;
@@ -2579,6 +2613,41 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
                 " used, " + std::to_string(max_ain) + " max allowed on " + dev_name + ".");
         }
 
+        int max_aout = limits.get("analog_outputs").as_int(16);
+        if (static_cast<int>(aout_map.size()) > max_aout) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Analog Outputs exceed limit: " + std::to_string(aout_map.size()) +
+                " used, " + std::to_string(max_aout) + " max allowed on " + dev_name + ".");
+        }
+
+        int max_coils = limits.get("coils").as_int(limits.get("bool_registers").as_int(-1));
+        if (max_coils >= 0 && total_bool_regs > max_coils) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_bool_regs) +
+                " internal boolean registers (%M), but target board '" + dev_name + "' only supports up to " + std::to_string(max_coils) + ".");
+        }
+
+        int max_floats = limits.get("floats").as_int(limits.get("float_registers").as_int(-1));
+        if (max_floats >= 0 && total_float_regs > max_floats) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_float_regs) +
+                " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
+        }
+
+        int max_complex = limits.get("complex_registers").as_int(-1);
+        if (max_complex >= 0 && total_complex_regs > max_complex) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_complex_regs) +
+                " complex registers (%C), but target board '" + dev_name + "' only supports up to " + std::to_string(max_complex) + ".");
+        }
+
+        int max_ints = limits.get("int_registers").as_int(-1);
+        if (max_ints >= 0 && total_int_regs > max_ints) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_int_regs) +
+                " integer registers (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_ints) + ".");
+        }
+
         /* Architectural 16-bit address limits */
         if (total_bool_regs > LE_ARCH_MAX_BOOL_REGS) {
             board_valid = false;
@@ -2611,13 +2680,15 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         uint32_t int_c    = static_cast<uint32_t>(total_int_regs);
         uint32_t cmplx_c  = static_cast<uint32_t>(total_complex_regs);
         uint32_t ain_c    = static_cast<uint32_t>(ain_map.size());
+        uint32_t aout_c   = static_cast<uint32_t>(aout_map.size());
 
         uint32_t bits_bytes = (din_c + dout_c + bool_c + 7u) / 8u;
         uint32_t floats_off = (bits_bytes + 3u) & ~3u;
         uint32_t ints_off   = (floats_off + float_c * 4u + 3u) & ~3u;
         uint32_t cmplx_off  = (ints_off   + int_c   * 4u + 3u) & ~3u;
         uint32_t ain_off    = (cmplx_off  + cmplx_c * 8u + 3u) & ~3u;
-        uint32_t arena_bytes = ain_off + ain_c * 8u;
+        uint32_t aout_off   = (ain_off    + ain_c   * 8u + 3u) & ~3u;
+        uint32_t arena_bytes = aout_off + aout_c * 4u;
 
         int total_state_bytes = 0;
         for (int k = 1; k < LE_BLK_LAST; k++) {
@@ -2712,12 +2783,13 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     out_result->din_count = static_cast<int>(din_map.size());
     out_result->dout_count = static_cast<int>(dout_map.size());
     out_result->ain_count = static_cast<int>(ain_map.size());
+    out_result->aout_count = static_cast<int>(aout_map.size());
     out_result->bool_reg_count = total_bool_regs;
     out_result->float_count = total_float_regs;
     out_result->complex_count = total_complex_regs;
     out_result->int_count = total_int_regs;
-    out_result->timer_count = m_timer_counter;
-    out_result->counter_count = m_counter_counter;
+    out_result->timer_count = static_cast<int>(state_instances[LE_BLK_TIMER].size());
+    out_result->counter_count = static_cast<int>(state_instances[LE_BLK_COUNTER].size());
     out_result->alias_count = static_cast<int>(alias_list.size());
     out_result->crc32 = crc;
     out_result->user_bool_count = m_user_bool_count;

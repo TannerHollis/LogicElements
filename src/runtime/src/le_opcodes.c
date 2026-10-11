@@ -239,7 +239,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
         case LE_OP_RESERVED_2F:
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_TON: {
-            uint16_t t_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
@@ -260,7 +260,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
         case LE_OP_TOF: {
-            uint16_t t_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
@@ -279,7 +279,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
         case LE_OP_TP: {
-            uint16_t t_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
@@ -296,7 +296,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
         }
 
         case LE_OP_CTU: {
-            uint16_t c_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
             bool en = le_pi_get_bool_fast(img, inst->in_a);
@@ -312,7 +312,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
         case LE_OP_CTD: {
-            uint16_t c_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
             bool en = le_pi_get_bool_fast(img, inst->in_a);
@@ -327,7 +327,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
         case LE_OP_CTUD: {
-            uint16_t c_idx = inst->out & LE_ADDR_INDEX_MASK;
+            uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
             bool en = le_pi_get_bool_fast(img, inst->in_a);
@@ -716,8 +716,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
 
                     /* Store received data in process image if destination configured */
                     if (dev->data_dest_addr != LE_ADDR_UNUSED) {
-                        if ((dev->data_dest_addr & LE_ADDR_REGION_MASK) >= LE_REGION_FLOAT &&
-                            (dev->data_dest_addr & LE_ADDR_REGION_MASK) <= LE_REGION_FLOAT_EXT3)
+                        if (LE_ADDR_IS_FLOAT(dev->data_dest_addr))
                         {
                             float val = 0.0f;
                             if (dev->poll_rx_len >= 4) {
@@ -794,8 +793,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
 
                     /* Store received data in process image if destination configured */
                     if (dev->data_dest_addr != LE_ADDR_UNUSED) {
-                        if ((dev->data_dest_addr & LE_ADDR_REGION_MASK) >= LE_REGION_FLOAT &&
-                            (dev->data_dest_addr & LE_ADDR_REGION_MASK) <= LE_REGION_FLOAT_EXT3)
+                        if (LE_ADDR_IS_FLOAT(dev->data_dest_addr))
                         {
                             float val = 0.0f;
                             if (dev->poll_len >= 4) {

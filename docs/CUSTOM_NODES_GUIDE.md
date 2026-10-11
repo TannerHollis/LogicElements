@@ -1,4 +1,4 @@
-﻿# LogicElements Custom Nodes Guide
+# LogicElements Custom Nodes Guide
 
 This guide describes how to design, configure, implement, and compile custom board nodes and hardware extension functions for the LogicElements engine.
 
@@ -492,13 +492,13 @@ Example disassembly listing:
  LOGICELEMENTS BINARY DISASSEMBLY (.lebin)
 ============================================================
 Magic:               0x4C454231 ('LEB1')
-Version:             5
+Version:             12
 Flags:               0x0001 (Autostart: True)
 Instruction Count:   1
 ------------------------------------------------------------
 INDEX   OPCODE         IN_A         IN_B         OUT         
 ------------------------------------------------------------
-[0000]  BLOCK          BLK[0]       fn:0x81      -> 2->1 [R[0] DIN[0] | DOUT[0]]     
+[0000]  BLOCK          BLK[0]       fn:0x81      -> 2->1 [F[0] DIN[0] | DOUT[0]]     
 ============================================================
 ```
 

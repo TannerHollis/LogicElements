@@ -95,9 +95,8 @@ static void cmd_caps(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "    \"digital_outputs\": %d,\r\n", LE_MAX_DIGITAL_OUT); cli_print(buf);
 #if LE_ENABLE_ANALOG
     snprintf(buf, sizeof(buf), "    \"analog_inputs\": %d,\r\n", LE_MAX_ANALOG_IN); cli_print(buf);
+    snprintf(buf, sizeof(buf), "    \"analog_outputs\": %d,\r\n", LE_MAX_ANALOG_OUT); cli_print(buf);
 #endif
-    snprintf(buf, sizeof(buf), "    \"bool_regs\": %d,\r\n", LE_MAX_BOOL_REGS); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"floats\": %d,\r\n", LE_MAX_FLOATS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_RAM_WORKSPACE_BYTES); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"config_slots\": %d,\r\n", LE_MAX_CONFIG_SLOTS); cli_print(buf);
     snprintf(buf, sizeof(buf), "    \"slot_size_bytes\": %d\r\n", LE_SLOT_SIZE_BYTES); cli_print(buf);
@@ -132,12 +131,13 @@ static void cmd_info(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "  Platform:        %s\r\n", plat); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Firmware Ver:    v%d.0\r\n", LE_BIN_VERSION); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Config Slots:    %d slots (%d bytes each)\r\n", LE_MAX_CONFIG_SLOTS, LE_SLOT_SIZE_BYTES); cli_print(buf);
-    #if LE_ENABLE_ANALOG
-    snprintf(buf, sizeof(buf), "  Process Image:   DIN:%d, DOUT:%d, AIN:%d, BOOL:%d, FLOAT:%d, INT:%d\r\n",
-             LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT, LE_MAX_ANALOG_IN, LE_MAX_BOOL_REGS, LE_MAX_FLOATS, LE_MAX_INT_REGS); cli_print(buf);
+    snprintf(buf, sizeof(buf), "  RAM Workspace:   %d bytes (dynamic register arena + state)\r\n", LE_RAM_WORKSPACE_BYTES); cli_print(buf);
+#if LE_ENABLE_ANALOG
+    snprintf(buf, sizeof(buf), "  Physical I/O:    DIN:%d, DOUT:%d, AIN:%d, AOUT:%d\r\n",
+             LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT, LE_MAX_ANALOG_IN, LE_MAX_ANALOG_OUT); cli_print(buf);
 #else
-    snprintf(buf, sizeof(buf), "  Process Image:   DIN:%d, DOUT:%d, BOOL:%d, FLOAT:%d, INT:%d\r\n",
-             LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT, LE_MAX_BOOL_REGS, LE_MAX_FLOATS, LE_MAX_INT_REGS); cli_print(buf);
+    snprintf(buf, sizeof(buf), "  Physical I/O:    DIN:%d, DOUT:%d\r\n",
+             LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT); cli_print(buf);
 #endif
     (void)cli;
 }
@@ -230,9 +230,14 @@ static void cmd_io(le_cli_t* cli)
         snprintf(buf, sizeof(buf), "AIN[%d]=%ld (%.2f)  ", i, (long)le_process_image_get_int(&cli->vm->image, LE_ADDR_MAKE_AIN(i)), le_process_image_get_float(&cli->vm->image, LE_ADDR_MAKE_AIN(i)));
         cli_print(buf);
     }
+    cli_print("\r\n  Analog Outputs:\r\n    ");
+    for (int i = 0; i < 8 && i < cli->vm->image.aout_count; i++) {
+        snprintf(buf, sizeof(buf), "AOUT[%d]=%.2f  ", i, le_pi_get_aout(&cli->vm->image, (uint16_t)i));
+        cli_print(buf);
+    }
 #endif
     cli_print("\r\n  Boolean Registers:\r\n    ");
-    for (int i = 0; i < 8 && i < LE_MAX_BOOL_REGS; i++) {
+    for (int i = 0; i < 8 && i < cli->vm->image.bool_count; i++) {
         snprintf(buf, sizeof(buf), "BOOL[%d]=%d  ", i, le_process_image_get_bool(&cli->vm->image, LE_ADDR_MAKE_BOOL_REG(i)));
         cli_print(buf);
     }

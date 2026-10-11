@@ -13,7 +13,7 @@ zero-heap state workspace, and UART/telemetry support.
 | :--- | :--- |
 | **Language** | ANSI C99 runtime · C++17 compiler |
 | **Runtime core** | ~10 KB flash, zero-heap, execute-in-place (XIP) |
-| **Binary format** | `.lebin` v7 — `LEB1` magic, IEEE 802.3 CRC32 |
+| **Binary format** | `.lebin` v12 — `LEB1` magic, IEEE 802.3 CRC32 |
 | **License** | MIT |
 
 ## Quick start
@@ -57,18 +57,19 @@ All documentation lives in `docs/`.
   optimization passes, liveness/register allocation, and CLI/API usage.
 - **[Custom nodes](docs/CUSTOM_NODES_GUIDE.md)** — adding board-specific
   hardware blocks (`LE_OP_BLOCK` / `LE_FUNC_CUSTOM_BASE`, `ext_call`).
-- **[Supported boards](docs/Ports.md)** — reference board profiles.
-- **[Custom-nodes example](docs/CustomNodesExample.md)** — working PWM /
+- **[Custom Board Implementer's Guide](docs/PORTS.md)** — porting to custom
+  microcontrollers, hardware HAL, NVRAM, flash wear leveling, and board profiles.
+- **[Custom-nodes example](docs/CUSTOM_NODES_EXAMPLE.md)** — working PWM /
   encoder / filter example.
-- **[Element test fixtures](docs/ElementFixtures.md)** — the per-element
+- **[Element test fixtures](docs/ELEMENT_FIXTURES.md)** — the per-element
   assembly test suite.
 
 ### Reference
 
 - **Elements** — [all elements and their disassembly](docs/ELEMENTS.md)
 - **Board profiles & UART protocol** — [communications & profiles](docs/COMMUNICATIONS_BOARD_PROFILES.md)
-- **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/Ports.md))
-- **Binary format** — [`.lebin` v7](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
+- **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/PORTS.md))
+- **Binary format** — [`.lebin` v12](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
 - **Generation & tooling** — `tools/compiler/le_compiler.py`,
   `le_board.py`, `le_disasm.py`; `tools/sim/main.c`
 
@@ -81,7 +82,7 @@ CMakeLists.txt               # C/C++ build, library + CLI + tests
 build_element_assembly.bat   # Windows per-element assembly test build
 docs/                        # all documentation
 examples/custom_nodes/       # custom node example (circuit, board, HAL, runner)
-ports/                       # board profiles + HAL ports (stm32, rp2040, avr, template)
+ports/                       # board profiles + HAL ports (stm32, rp2040, rp2350, avr, template)
 src/cli/                     # Unified host CLI toolsuite (`le`) & portable comms engine (`le_host_comms`)
 src/compiler/                # C++17 compiler engine + C API
 src/hal/                     # simulator HAL

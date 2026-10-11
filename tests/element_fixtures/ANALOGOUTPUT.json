@@ -1,0 +1,30 @@
+{
+  "name": "Element_ANALOGOUTPUT",
+  "elements": [
+    {
+      "name": "C1",
+      "type": "CONSTANT",
+      "dataType": "float",
+      "value": 1.23
+    },
+    {
+      "name": "AOUT1",
+      "type": "ANALOGOUTPUT",
+      "address": "%AOUT0"
+    }
+  ],
+  "nets": [
+    {
+      "output": {
+        "name": "C1",
+        "port": "out"
+      },
+      "inputs": [
+        {
+          "name": "AOUT1",
+          "port": "in"
+        }
+      ]
+    }
+  ]
+}

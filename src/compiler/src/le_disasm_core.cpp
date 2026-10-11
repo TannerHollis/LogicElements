@@ -23,30 +23,29 @@ std::string format_address(uint16_t addr, int user_bool_count, int user_float_co
 
     if (region == LE_REGION_DIN) return "%IN[" + std::to_string(idx) + "]";
     if (region == LE_REGION_DOUT) return "%OUT[" + std::to_string(idx) + "]";
-    if (region == LE_REGION_BOOL_REG) {
+    if (region == LE_REGION_AIN) return "%AIN[" + std::to_string(idx) + "]";
+    if (region == LE_REGION_AOUT) return "%AOUT[" + std::to_string(idx) + "]";
+    if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
         int b_idx = addr & 0x1FFF;
         if (user_bool_count >= 0 && b_idx >= user_bool_count) {
             return "T_B[" + std::to_string(b_idx - user_bool_count) + "]";
         }
         return "%B[" + std::to_string(b_idx) + "]";
     }
-    if (region == LE_REGION_FLOAT || region == LE_REGION_FLOAT_EXT1 ||
-        region == LE_REGION_FLOAT_EXT2 || region == LE_REGION_FLOAT_EXT3) {
-        int f_idx = addr & 0x3FFF;
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        int i_idx = addr & 0x1FFF;
+        if (user_int_count >= 0 && i_idx >= user_int_count) {
+            return "T_I[" + std::to_string(i_idx - user_int_count) + "]";
+        }
+        return "%I[" + std::to_string(i_idx) + "]";
+    }
+    if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        int f_idx = addr & 0x1FFF;
         if (user_float_count >= 0 && f_idx >= user_float_count) {
             return "T_F[" + std::to_string(f_idx - user_float_count) + "]";
         }
         return "%F[" + std::to_string(f_idx) + "]";
     }
-    if (region == LE_REGION_TIMER) return "TIMER[" + std::to_string(idx) + "]";
-    if (region == LE_REGION_COUNTER) return "COUNTER[" + std::to_string(idx) + "]";
-    if (region == LE_REGION_INT_REG) {
-        if (user_int_count >= 0 && idx >= static_cast<uint16_t>(user_int_count)) {
-            return "T_I[" + std::to_string(idx - user_int_count) + "]";
-        }
-        return "%I[" + std::to_string(idx) + "]";
-    }
-    if (region == LE_REGION_AIN) return "%AIN[" + std::to_string(idx) + "]";
 #if LE_ENABLE_COMPLEX
     if (region == LE_REGION_CMPLX) return "%C[" + std::to_string(idx) + "]";
 #endif
@@ -569,7 +568,7 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
         << "  " << bool_summary << "  " << float_summary
         << "  INT:" << h.int_reg_count
 #if LE_ENABLE_ANALOG
-        << "  AIN:" << h.analog_in_count
+        << "  AIN:" << h.analog_in_count << "  AOUT:" << h.analog_out_count
 #endif
 #if LE_ENABLE_COMPLEX
         << "  CMPLX:" << h.complex_reg_count

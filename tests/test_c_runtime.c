@@ -10,6 +10,9 @@
 #include "le_rt.h"
 #include "le_loader.h"
 #include "le_hal.h"
+#include "le_nvram.h"
+#include "le_ser.h"
+#include "le_event_rec.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -27,14 +30,15 @@ void    le_sim_capture_tx_get(uint8_t* out, size_t cap);
  * so the runtime tests carry no external config dependency. Version 11 adds the
  * PHASOR_1P frequency-adaptive support (header/timing layout unchanged vs v10). */
 static const uint8_t le_default_program[] = {
-    0x31, 0x42, 0x45, 0x4c, 0x0b, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
+    0x31, 0x42, 0x45, 0x4c, 0x0c, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
     0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-    0x33, 0xd5, 0xce, 0x16, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x20,
-    0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x20, 0x01, 0x00, 0x01, 0x20,
-    0xff, 0xff, 0x00, 0x10, 0x01, 0x00, 0x00, 0x20, 0xff, 0xff, 0x01, 0x10,
-    0x04, 0x00, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00, 0x00, 0x00
-}; /* 82 bytes, version 11 (40-byte header + 4 instructions + 10-byte timing descriptor) */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x36, 0x75, 0x37, 0x04, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x40, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x40,
+    0x01, 0x00, 0x00, 0x40, 0xff, 0xff, 0x00, 0x10, 0x01, 0x00, 0x01, 0x40,
+    0xff, 0xff, 0x01, 0x10, 0x04, 0x00, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00,
+    0x00, 0x00
+}; /* 86 bytes, version 12 (44-byte header + 4 instructions + 10-byte timing descriptor) */
 
 int g_tests_passed = 0;
 int g_tests_failed = 0;
@@ -70,14 +74,15 @@ static void test_img_init(le_process_image_t* img)
     memset(&full, 0, sizeof(full));
     full.digital_in_count  = LE_MAX_DIGITAL_IN;
     full.digital_out_count = LE_MAX_DIGITAL_OUT;
-    full.bool_reg_count    = LE_MAX_BOOL_REGS;
-    full.float_reg_count   = LE_MAX_FLOATS;
-    full.int_reg_count     = LE_MAX_INT_REGS;
+    full.bool_reg_count    = 64;
+    full.float_reg_count   = 32;
+    full.int_reg_count     = 16;
 #if LE_ENABLE_COMPLEX
-    full.complex_reg_count = LE_MAX_COMPLEX;
+    full.complex_reg_count = 16;
 #endif
 #if LE_ENABLE_ANALOG
     full.analog_in_count   = LE_MAX_ANALOG_IN;
+    full.analog_out_count  = LE_MAX_ANALOG_OUT;
 #endif
     le_process_image_init(img);
     memset(s_test_reg_arena.b, 0, sizeof(s_test_reg_arena.b)); /* clear stale bits (old init zeroed the struct) */
@@ -126,6 +131,13 @@ void test_process_image(void)
     le_process_image_set_int(&img, LE_ADDR_MAKE_AIN(2), 1024);
     TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_AIN(2)) == 1024, "AIN 2 set to 1024");
     TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_AIN(2)) - 1024.0f) < 1e-4f, "AIN 2 float value is 1024.0");
+
+    /* Test analog outputs (aout) */
+    le_process_image_set_float(&img, LE_ADDR_MAKE_AOUT(1), 3.3f);
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_AOUT(1)) - 3.3f) < 1e-4f, "AOUT 1 float value is 3.3");
+    le_pi_set_aout(&img, 1, 5.0f);
+    TEST_ASSERT(fabsf(le_pi_get_aout(&img, 1) - 5.0f) < 1e-4f, "AOUT 1 direct accessor value is 5.0");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_AOUT(1)) - 5.0f) < 1e-4f, "AOUT 1 matches through address");
 
     /* Test float registers (%R) */
     TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(5))) < 1e-6f, "Float initially 0.0");
@@ -208,7 +220,7 @@ void test_timer_opcode(void)
         .opcode = LE_OP_TON,
         .modifier = 0,
         .in_a = LE_ADDR_MAKE_DIN(0),
-        .in_b = LE_ADDR_MAKE_TIMER(0),
+        .in_b = LE_ADDR_UNUSED,
         .out = LE_ADDR_MAKE_DOUT(0)
     };
 
@@ -397,8 +409,8 @@ void test_protection_relays(void)
 
     le_phasor_state_t* ph = (le_phasor_state_t*)le_process_image_kind_state(&img, LE_BLK_PHASOR, 0);
 
-    /* Local block descriptor + args (2-in/1-out max needed here). */
-    struct { le_block_desc_t d; uint16_t a[4]; } b;
+    /* Local block descriptor + args (up to 3-in/3-out = 6 args in section 5). */
+    struct { le_block_desc_t d; uint16_t a[8]; } b;
 
     /* ---------------------------------------------------------------------- */
     /* 1. 1P Winding Phasor Extraction                                        */
@@ -1021,8 +1033,8 @@ void test_board_capabilities_query(void)
     TEST_ASSERT(caps.max_digital_in == LE_MAX_DIGITAL_IN, "Max DIN matches configuration");
     TEST_ASSERT(caps.max_digital_out == LE_MAX_DIGITAL_OUT, "Max DOUT matches configuration");
     TEST_ASSERT(caps.max_analog_in == LE_MAX_ANALOG_IN, "Max AIN matches configuration");
-    TEST_ASSERT(caps.max_bool_regs == LE_MAX_BOOL_REGS, "Max Bool Regs matches configuration");
-    TEST_ASSERT(caps.max_floats == LE_MAX_FLOATS, "Max Floats matches configuration");
+    TEST_ASSERT(caps.max_bool_regs == 0, "Max Bool Regs reports 0 (dynamic workspace allocation)");
+    TEST_ASSERT(caps.max_floats == 0, "Max Floats reports 0 (dynamic workspace allocation)");
     TEST_ASSERT(caps.workspace_bytes == LE_RAM_WORKSPACE_BYTES, "State workspace bytes matches configuration");
     TEST_ASSERT(caps.config_slots == LE_MAX_CONFIG_SLOTS, "Config slots matches LE_MAX_CONFIG_SLOTS");
     TEST_ASSERT(caps.slot_size_bytes == LE_SLOT_SIZE_BYTES, "Slot size matches LE_SLOT_SIZE_BYTES");
@@ -1870,10 +1882,10 @@ void test_counter_opcode(void)
 
     /* ---- CTU: count up to preset (3) ---- */
     le_process_image_counter(&img, 0)->preset = 3;
-    le_instruction_t ctu = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_COUNTER(0) };
+    le_instruction_t ctu = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_DOUT(0) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctu, &img, 0);                       /* edge1 -> count=1 */
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(0)), "CTU not done at count=1");
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTU not done at count=1");
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
     le_exec_instruction(&ctu, &img, 1);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
@@ -1882,11 +1894,11 @@ void test_counter_opcode(void)
     le_exec_instruction(&ctu, &img, 3);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctu, &img, 4);                       /* edge3 -> count=3 */
-    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(0)), "CTU done at count=3");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTU done at count=3");
     TEST_ASSERT(le_process_image_counter(&img, 0)->count == 3, "CTU count == 3");
 
     /* CTU reset via second input (in_b) */
-    le_instruction_t ctu_r = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_COUNTER(0) };
+    le_instruction_t ctu_r = { LE_OP_CTU, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_DOUT(0) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
     le_exec_instruction(&ctu_r, &img, 5);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);  /* reset rising edge */
@@ -1897,29 +1909,29 @@ void test_counter_opcode(void)
     test_img_init(&img);
     le_process_image_counter(&img, 1)->preset = 2;
     le_process_image_counter(&img, 1)->count = 2;
-    le_instruction_t ctd = { LE_OP_CTD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_COUNTER(1) };
+    le_instruction_t ctd = { LE_OP_CTD, 1, LE_ADDR_MAKE_DIN(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_DOUT(0) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctd, &img, 0);                       /* edge1 -> 2->1 */
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(1)), "CTD not done at count=1");
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTD not done at count=1");
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
     le_exec_instruction(&ctd, &img, 1);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
     le_exec_instruction(&ctd, &img, 2);                       /* edge2 -> 1->0 */
-    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(1)), "CTD done at count=0");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTD done at count=0");
     TEST_ASSERT(le_process_image_counter(&img, 1)->count == 0, "CTD count == 0");
 
     /* ---- CTUD: count up (in_a) / count down (in_b) ---- */
     test_img_init(&img);
     le_process_image_counter(&img, 2)->preset = 1;
-    le_instruction_t cud = { LE_OP_CTUD, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_COUNTER(2) };
+    le_instruction_t cud = { LE_OP_CTUD, 2, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_DOUT(0) };
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);   /* cu rising -> count=1 */
     le_exec_instruction(&cud, &img, 0);
-    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(2)), "CTUD done at count>=preset(1)");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTUD done at count>=preset(1)");
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
     le_exec_instruction(&cud, &img, 1);
     le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);   /* cd rising -> count=0 */
     le_exec_instruction(&cud, &img, 2);
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_COUNTER(2)), "CTUD count down to 0 -> not done");
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_DOUT(0)), "CTUD count down to 0 -> not done");
     TEST_ASSERT(le_process_image_counter(&img, 2)->count == 0, "CTUD count == 0");
 }
 
@@ -2102,19 +2114,19 @@ void test_loader_negative_paths(void)
 
     /* Block-table walk past end of buffer */
     memcpy(buf, le_default_program, sizeof(buf));
-    buf[0x18] = 1; /* block_count = 1 but no block table is appended */
+    ((le_header_t*)buf)->block_count = 1; /* block_count = 1 but no block table is appended */
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
                 "block descriptor walk past end of buffer rejected");
 
     /* State-desc table past end of buffer */
     memcpy(buf, le_default_program, sizeof(buf));
-    buf[0x1A] = 1; /* state_desc_count = 1 but no state table is appended */
+    ((le_header_t*)buf)->state_desc_count = 1; /* state_desc_count = 1 but no state table is appended */
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
                 "state-desc table past end of buffer rejected");
 
     /* Alias table past end of buffer */
     memcpy(buf, le_default_program, sizeof(buf));
-    buf[0x20] = 1; /* alias_count = 1 but no alias table is appended */
+    ((le_header_t*)buf)->alias_count = 1; /* alias_count = 1 but no alias table is appended */
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
                 "alias table past end of buffer rejected");
 
@@ -2124,11 +2136,11 @@ void test_loader_negative_paths(void)
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CRC_MISMATCH,
                 "payload bit flip detected by CRC32");
 
-    /* Capacity: register count beyond the board budget (check precedes CRC) */
+    /* Capacity: register count beyond the workspace budget (check precedes CRC) */
     memcpy(buf, le_default_program, sizeof(buf));
-    buf[0x0E] = 0x01; buf[0x0F] = 0x01; /* bool_reg_count = 257 > LE_MAX_BOOL_REGS */
+    ((le_header_t*)buf)->float_reg_count = (uint16_t)((LE_RAM_WORKSPACE_BYTES / 4) + 1);
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CAPACITY,
-                "register count beyond board budget rejected");
+                "register count beyond workspace budget rejected");
 }
 void test_loader_state_desc_edges(void)
 {
@@ -2610,15 +2622,15 @@ void test_arena_boundary_access(void)
     TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_UNUSED) == 0, "INT LE_ADDR_UNUSED == 0");
 
     /* Out-of-range indices return the idle value, never crash */
-    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(LE_MAX_BOOL_REGS)),
+    TEST_ASSERT(!le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(img.bool_count)),
                 "BOOL out-of-range reads false");
-    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(LE_MAX_FLOATS)) == 0.0f,
+    TEST_ASSERT(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(img.float_count)) == 0.0f,
                 "FLOAT out-of-range reads 0");
-    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(LE_MAX_INT_REGS)) == 0,
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(img.int_count)) == 0,
                 "INT out-of-range reads 0");
 #if LE_ENABLE_COMPLEX
     {
-        le_complex_t z = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(LE_MAX_COMPLEX));
+        le_complex_t z = le_process_image_get_complex(&img, LE_ADDR_MAKE_CMPLX(img.cmplx_count));
         TEST_ASSERT(z.r == 0.0f && z.i == 0.0f, "CMPLX out-of-range reads 0+0j");
         le_complex_t zc = le_process_image_get_complex(&img, LE_CONST_ZERO_C);
         TEST_ASSERT(zc.r == 0.0f && zc.i == 0.0f, "CMPLX const ZERO_C == 0+0j");
@@ -2803,6 +2815,286 @@ void test_fixed_rate_cadence(void)
     le_vm_set_enforce_fixed_rate(&vm, false);
 }
 
+/* ========================================================================== */
+/* NVRAM & Flash Wear-Leveling Automated Unit Tests                           */
+/* ========================================================================== */
+
+#define MOCK_WL_SECTOR_SIZE   4096
+#define MOCK_WL_SECTOR_COUNT  4
+static uint8_t s_mock_flash[MOCK_WL_SECTOR_COUNT * MOCK_WL_SECTOR_SIZE];
+static uint32_t s_mock_erase_counts[MOCK_WL_SECTOR_COUNT];
+
+static bool mock_wl_erase_sector(uint32_t sector_idx, uint32_t phys_addr)
+{
+    if (sector_idx >= MOCK_WL_SECTOR_COUNT) return false;
+    memset(&s_mock_flash[phys_addr], 0xFF, MOCK_WL_SECTOR_SIZE);
+    s_mock_erase_counts[sector_idx]++;
+    return true;
+}
+
+static bool mock_wl_program(uint32_t phys_addr, const uint8_t* data, size_t len)
+{
+    if (phys_addr + len > sizeof(s_mock_flash)) return false;
+    memcpy(&s_mock_flash[phys_addr], data, len);
+    return true;
+}
+
+static bool mock_wl_read(uint32_t phys_addr, uint8_t* data, size_t len)
+{
+    if (phys_addr + len > sizeof(s_mock_flash)) return false;
+    memcpy(data, &s_mock_flash[phys_addr], len);
+    return true;
+}
+
+static void test_nvram_and_wear_leveling(void)
+{
+    printf("\n--- Test: NVRAM & Flash Wear-Leveling ---\n");
+
+    /* 1. Direct Mode basic read/write */
+    TEST_ASSERT(le_nvram_init_direct() == true, "direct NVRAM initialized");
+    uint8_t tx_data[32] = "LogicElements NVRAM Direct Test";
+    uint8_t rx_data[32] = {0};
+
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_OFFSET_REGS + 10, tx_data, sizeof(tx_data)) == true, "write direct NVRAM");
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 10, rx_data, sizeof(rx_data)) == true, "read direct NVRAM");
+    TEST_ASSERT(memcmp(tx_data, rx_data, sizeof(tx_data)) == 0, "direct NVRAM data matches");
+
+    /* Boundary check */
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_TOTAL_BYTES - 2, tx_data, 10) == false, "out of bounds NVRAM write rejected");
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_TOTAL_BYTES - 2, rx_data, 10) == false, "out of bounds NVRAM read rejected");
+
+    /* 2. Retentive Register save and restore */
+    le_process_image_t img;
+    test_img_init(&img);
+    memset(&s_test_reg_arena, 0, sizeof(s_test_reg_arena));
+
+    /* Populate values in image */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(0), true);
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(1), false);
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(2), true);
+    le_process_image_set_int(&img, LE_ADDR_MAKE_INT_REG(0), 123456);
+    le_process_image_set_int(&img, LE_ADDR_MAKE_INT_REG(1), -9876);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 3.14159f);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(1), 2.71828f);
+
+    le_nvram_reg_cfg_t reg_cfg;
+    reg_cfg.range_count = 3;
+    reg_cfg.ranges[0].start_addr = LE_ADDR_MAKE_BOOL_REG(0);
+    reg_cfg.ranges[0].count = 3;
+    reg_cfg.ranges[1].start_addr = LE_ADDR_MAKE_INT_REG(0);
+    reg_cfg.ranges[1].count = 2;
+    reg_cfg.ranges[2].start_addr = LE_ADDR_MAKE_FLOAT(0);
+    reg_cfg.ranges[2].count = 2;
+
+    TEST_ASSERT(le_nvram_save_regs(&reg_cfg, &img) == true, "save retentive registers");
+
+    /* Clear the process image to ensure restore actually repopulates */
+    memset(&s_test_reg_arena, 0, sizeof(s_test_reg_arena));
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(0)) == false, "register cleared before restore");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(0)) == 0, "int cleared before restore");
+
+    TEST_ASSERT(le_nvram_restore_regs(&reg_cfg, &img) == true, "restore retentive registers");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(0)) == true, "restored bool 0");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(1)) == false, "restored bool 1");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(2)) == true, "restored bool 2");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(0)) == 123456, "restored int 0");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(1)) == -9876, "restored int 1");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(0)) - 3.14159f) < 1e-4f, "restored float 0");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(1)) - 2.71828f) < 1e-4f, "restored float 1");
+
+    /* 2b. Multi-slot NVRAM isolation (Slot 0 vs Slot 1) */
+    le_process_image_set_int(&img, LE_ADDR_MAKE_INT_REG(0), 999999);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 100.5f);
+    TEST_ASSERT(le_nvram_save_regs_slot(1, &reg_cfg, &img) == true, "save retentive registers to slot 1");
+    TEST_ASSERT(le_nvram_save_regs_slot(LE_MAX_CONFIG_SLOTS, &reg_cfg, &img) == false, "save to out-of-bounds slot rejected");
+
+    /* Clear and restore from Slot 0 - should still have Recipe A (123456, 3.14159f) */
+    memset(&s_test_reg_arena, 0, sizeof(s_test_reg_arena));
+    TEST_ASSERT(le_nvram_restore_regs_slot(0, &reg_cfg, &img) == true, "restore from slot 0");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(0)) == 123456, "slot 0 preserved int 0");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(0)) - 3.14159f) < 1e-4f, "slot 0 preserved float 0");
+
+    /* Clear and restore from Slot 1 - should have Recipe B (999999, 100.5f) */
+    memset(&s_test_reg_arena, 0, sizeof(s_test_reg_arena));
+    TEST_ASSERT(le_nvram_restore_regs_slot(1, &reg_cfg, &img) == true, "restore from slot 1");
+    TEST_ASSERT(le_process_image_get_int(&img, LE_ADDR_MAKE_INT_REG(0)) == 999999, "slot 1 restored distinct int 0");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&img, LE_ADDR_MAKE_FLOAT(0)) - 100.5f) < 1e-4f, "slot 1 restored distinct float 0");
+    TEST_ASSERT(le_nvram_restore_regs_slot(LE_MAX_CONFIG_SLOTS, &reg_cfg, &img) == false, "restore from out-of-bounds slot rejected");
+
+    /* 3. Flash Wear-Leveling Journal with Sector Compaction & Rollover */
+    memset(s_mock_flash, 0xFF, sizeof(s_mock_flash));
+    memset(s_mock_erase_counts, 0, sizeof(s_mock_erase_counts));
+
+    le_flash_wl_driver_t wl_driver;
+    wl_driver.flash_base_offset = 0;
+    wl_driver.sector_size = MOCK_WL_SECTOR_SIZE;
+    wl_driver.page_size = 256;
+    wl_driver.sector_count = MOCK_WL_SECTOR_COUNT;
+    wl_driver.erase_sector = mock_wl_erase_sector;
+    wl_driver.program = mock_wl_program;
+    wl_driver.read = mock_wl_read;
+
+    TEST_ASSERT(le_nvram_init_flash(&wl_driver) == true, "mount unformatted flash journal");
+    TEST_ASSERT(s_mock_erase_counts[0] == 1, "sector 0 formatted with initial erase count 1");
+
+    /* Distinct blocks to verify endurance and compaction */
+    uint8_t block_a[64], block_b[64], block_c[64];
+    memset(block_a, 0xAA, sizeof(block_a));
+    memset(block_b, 0xBB, sizeof(block_b));
+    memset(block_c, 0xCC, sizeof(block_c));
+
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_OFFSET_REGS + 0, block_a, sizeof(block_a)) == true, "write block A");
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_OFFSET_REGS + 64, block_b, sizeof(block_b)) == true, "write block B");
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_OFFSET_REGS + 128, block_c, sizeof(block_c)) == true, "write block C");
+
+    /* Repeatedly update a counter block to simulate high-frequency cyclic PLC variables.
+     * With 100-byte updates plus headers (~112 bytes each), 40 writes = ~4480 bytes,
+     * which exceeds the 4096-byte sector size and triggers rollover + compaction! */
+    uint8_t cyclic_update[100];
+    for (int step = 1; step <= 45; step++) {
+        memset(cyclic_update, (uint8_t)step, sizeof(cyclic_update));
+        uint32_t off = LE_NVRAM_OFFSET_REGS + 200;
+        TEST_ASSERT(le_nvram_write(off, cyclic_update, sizeof(cyclic_update)) == true, "cyclic update write");
+    }
+
+    /* Assert sector 1 was erased and formatted as new active sector during rollover */
+    TEST_ASSERT(s_mock_erase_counts[1] >= 1, "rollover compacted into sector 1");
+
+    /* Verify all static blocks AND the latest cyclic update survived compaction intact */
+    uint8_t read_check[100];
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 0, read_check, sizeof(block_a)) == true, "read block A");
+    TEST_ASSERT(memcmp(block_a, read_check, sizeof(block_a)) == 0, "block A preserved after compaction");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 64, read_check, sizeof(block_b)) == true, "read block B");
+    TEST_ASSERT(memcmp(block_b, read_check, sizeof(block_b)) == 0, "block B preserved after compaction");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 128, read_check, sizeof(block_c)) == true, "read block C");
+    TEST_ASSERT(memcmp(block_c, read_check, sizeof(block_c)) == 0, "block C preserved after compaction");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 200, read_check, sizeof(cyclic_update)) == true, "read cyclic update");
+    TEST_ASSERT(memcmp(cyclic_update, read_check, sizeof(cyclic_update)) == 0, "latest cyclic update preserved after compaction");
+
+    /* Test recovery after simulated power reboot: remount from mock flash */
+    TEST_ASSERT(le_nvram_init_flash(&wl_driver) == true, "remount after power loss");
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 0, read_check, sizeof(block_a)) == true, "remount read block A");
+    TEST_ASSERT(memcmp(block_a, read_check, sizeof(block_a)) == 0, "remount block A match");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 64, read_check, sizeof(block_b)) == true, "remount read block B");
+    TEST_ASSERT(memcmp(block_b, read_check, sizeof(block_b)) == 0, "remount block B match");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 128, read_check, sizeof(block_c)) == true, "remount read block C");
+    TEST_ASSERT(memcmp(block_c, read_check, sizeof(block_c)) == 0, "remount block C match");
+
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 200, read_check, sizeof(cyclic_update)) == true, "remount read cyclic update");
+    TEST_ASSERT(memcmp(cyclic_update, read_check, sizeof(cyclic_update)) == 0, "remount cyclic update match");
+
+    /* Switch back to direct mode for subsequent tests */
+    le_nvram_init_direct();
+
+    /* 4. Sequence of Events Recorder (SER) with NVRAM persistence */
+    le_ser_channel_t ser_channels[2] = {
+        { LE_ADDR_MAKE_DIN(0), LE_SER_EDGE_RISING, 0 },
+        { LE_ADDR_MAKE_DIN(1), LE_SER_EDGE_FALLING, 0 }
+    };
+    le_ser_event_t ser_events[8];
+    le_ser_t ser;
+    le_ser_init(&ser, ser_channels, 2, ser_events, 8, LE_NVRAM_OFFSET_SER);
+
+    /* Initial state: DIN0 low, DIN1 high */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(1), true);
+    le_ser_scan(&ser, &img, 1000);
+    TEST_ASSERT(ser.count == 0, "no transitions on baseline scan");
+
+    /* Transition: DIN0 goes HIGH (rising edge trigger) */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
+    le_ser_scan(&ser, &img, 2000);
+    TEST_ASSERT(ser.count == 1, "SER recorded 1 transition event");
+    TEST_ASSERT(ser_events[0].address == LE_ADDR_MAKE_DIN(0), "SER event address match");
+    TEST_ASSERT(ser_events[0].edge == LE_SER_EDGE_RISING, "SER edge rising match");
+    TEST_ASSERT(ser_events[0].timestamp_us == 2000, "SER event timestamp match");
+
+    /* Flush to NVRAM */
+    TEST_ASSERT(le_ser_flush_nvram(&ser) == true, "SER flushed to NVRAM");
+
+    /* Wipe in-memory SER state and restore from NVRAM */
+    memset(&ser, 0, sizeof(ser));
+    memset(ser_events, 0, sizeof(ser_events));
+    ser.events = ser_events;
+    ser.capacity = 8;
+    ser.nv_offset = LE_NVRAM_OFFSET_SER;
+    TEST_ASSERT(le_ser_restore_nvram(&ser) == true, "SER restored from NVRAM");
+    TEST_ASSERT(ser.count == 1, "SER restored count match");
+    TEST_ASSERT(ser_events[0].address == LE_ADDR_MAKE_DIN(0), "SER restored address match");
+    TEST_ASSERT(ser_events[0].sequence_id == 1, "SER restored sequence ID match");
+
+    /* 5. Event Recorder (Oscillography) with NVRAM persistence */
+    le_event_rec_cfg_t er_cfg;
+    memset(&er_cfg, 0, sizeof(er_cfg));
+    er_cfg.trigger_address = LE_ADDR_MAKE_DIN(0);
+    er_cfg.trigger_edge = LE_SER_EDGE_RISING;
+    er_cfg.active_levels = 1;
+    er_cfg.levels[0].enabled = true;
+    er_cfg.levels[0].rate_div = 1;
+    er_cfg.levels[0].pre_trigger = 2;
+    er_cfg.levels[0].capacity = 6;
+    er_cfg.levels[0].channel_count = 1;
+    er_cfg.levels[0].channels[0] = LE_ADDR_MAKE_FLOAT(0);
+
+    uint8_t er_pool[512];
+    le_event_rec_t er;
+    le_event_rec_init(&er, &er_cfg, er_pool, sizeof(er_pool), LE_NVRAM_OFFSET_EVENT_REC);
+
+    /* Pre-trigger sample capture */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 10.0f);
+    le_event_rec_scan(&er, &img, 1, 1000);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 20.0f);
+    le_event_rec_scan(&er, &img, 2, 2000);
+
+    /* Trigger fired! DIN0 -> true */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), 30.0f);
+    le_event_rec_scan(&er, &img, 3, 3000);
+    TEST_ASSERT(er.levels[0].state.triggered == 1, "Event recorder triggered on rising edge");
+    TEST_ASSERT(er.levels[0].state.trigger_seq == 3, "Event recorder trigger seq recorded");
+
+    /* Complete post-trigger samples until capture freeze */
+    for (uint32_t s = 4; s <= 8; s++) {
+        le_process_image_set_float(&img, LE_ADDR_MAKE_FLOAT(0), (float)(s * 10));
+        le_event_rec_scan(&er, &img, s, (uint64_t)s * 1000);
+    }
+    TEST_ASSERT(er.levels[0].state.completed == 1, "Event recorder capture completed and frozen");
+
+    /* Flush to NVRAM */
+    TEST_ASSERT(le_event_rec_flush_nvram(&er) == true, "Event recorder capture flushed to NVRAM");
+
+    /* Wipe in-memory and restore */
+    memset(er_pool, 0, sizeof(er_pool));
+    memset(&er, 0, sizeof(er));
+    le_event_rec_init(&er, &er_cfg, er_pool, sizeof(er_pool), LE_NVRAM_OFFSET_EVENT_REC);
+    TEST_ASSERT(er.levels[0].state.triggered == 1, "Event recorder restored triggered state");
+    TEST_ASSERT(er.levels[0].state.completed == 1, "Event recorder restored completed state");
+    TEST_ASSERT(er.levels[0].state.trigger_time_us == 3000, "Event recorder restored trigger timestamp");
+
+    /* Test selective block erase and full format */
+    uint8_t dummy[32] = {1, 2, 3, 4};
+    TEST_ASSERT(le_nvram_write(LE_NVRAM_OFFSET_REGS, dummy, sizeof(dummy)) == true, "NVRAM write prior to erase");
+    TEST_ASSERT(le_nvram_erase(LE_NVRAM_OFFSET_REGS, sizeof(dummy)) == true, "NVRAM selective block erase");
+    uint8_t readback[32];
+    TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS, readback, sizeof(readback)) == true, "NVRAM read after erase");
+    bool all_zero = true;
+    for (size_t i = 0; i < sizeof(readback); i++) {
+        if (readback[i] != 0) all_zero = false;
+    }
+    TEST_ASSERT(all_zero == true, "NVRAM erased range is zeroed");
+
+    TEST_ASSERT(le_nvram_format() == true, "NVRAM full partition format");
+
+    /* Switch back to direct mode for clean simulator state */
+    le_nvram_init_direct();
+}
+
 int main(void)
 {
     printf("============================================================\n");
@@ -2851,6 +3143,7 @@ int main(void)
     test_storage_corrupt_slot();
     test_cli_new_surface();
     test_fixed_rate_cadence();
+    test_nvram_and_wear_leveling();
 
     printf("============================================================\n");
     printf(" RESULTS: %d PASSED, %d FAILED\n", g_tests_passed, g_tests_failed);

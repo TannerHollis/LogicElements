@@ -11,9 +11,10 @@ circuit compiles into expected bytecode/state.
 
 | Suite | Binary | Assertions (current) | Focus |
 | :--- | :--- | :--- | :--- |
-| Runtime | `test_c_runtime.c` | 450 | opcode behavior, loader/CRC, comms, storage, CLI, pulses |
+| Runtime | `test_c_runtime.c` | 465+ | opcode behavior, loader/CRC, comms, storage, NVRAM wear leveling, CLI, pulses |
 | Compiler | `test_compiler.cpp` | 47 tests | JSON -> bytecode pipeline, optimizer, aliases, gate decomposition, error paths |
 | Assembly | `test_element_assembly.c` | 80 oracle rows | element -> opcode emission parity |
+| Host Comms | `test_host_comms.c` | 45 | host framing, CCITT CRC16, chunk uploader, caps parser, execution control |
 
 ## Opcode coverage
 
@@ -61,6 +62,8 @@ circuit compiles into expected bytecode/state.
 | Float edge cases | test_float_edge_cases + test_scale_opcode_with_state |
 | Arena access | test_arena_boundary_access + test_arena_unaligned_reject |
 | Storage integrity | test_storage_corrupt_slot - corruption detected, siblings isolated |
+| NVRAM wear leveling | test_nvram_journal_compaction - circular sector rollover, monotonic sequence, crash recovery |
+| NVRAM slot isolation | test_nvram_slot_isolation - independent retentive register setpoints per config slot |
 | CLI surface | test_cli_new_surface - force mnemonics, pulse durations, junk input |
 
 ## Compiler coverage (expansion)

@@ -47,7 +47,8 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         node.raw_json = el;
 
         // Classify roots and stateful elements
-        if (type == "DIGITALOUTPUT" || type == "OUTPUT" || (type == "LE_NODE_DIGITAL" && (name.rfind("OUT", 0) == 0 || name.rfind("DO", 0) == 0))) {
+        if (type == "DIGITALOUTPUT" || type == "OUTPUT" || (type == "LE_NODE_DIGITAL" && (name.rfind("OUT", 0) == 0 || name.rfind("DO", 0) == 0)) ||
+            type == "ANALOGOUTPUT" || type == "LE_ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "AOUT") {
             node.is_root = true;
         } else if (type == "BOOLREGISTER" || type == "LE_BOOLREGISTER" ||
                    type == "INTREGISTER" || type == "LE_INTREGISTER" ||
@@ -280,6 +281,8 @@ void Optimizer::pass_dead_code_elimination()
         if (kv.second.is_root || kv.second.is_stateful ||
             kv.second.type == "DIGITALINPUT" || kv.second.type == "INPUT" ||
             kv.second.type == "ANALOGINPUT" || kv.second.type == "LE_ANALOG_INPUT" ||
+            kv.second.type == "ANALOGOUTPUT" || kv.second.type == "LE_ANALOGOUTPUT" ||
+            kv.second.type == "LE_ANALOG_OUTPUT" || kv.second.type == "AOUT" ||
             (kv.second.type == "LE_NODE_DIGITAL" && (kv.first.rfind("IN", 0) == 0 || kv.first.rfind("DI", 0) == 0))) {
             reachable.insert(kv.first);
             worklist.push_back(kv.first);
@@ -639,10 +642,12 @@ void Optimizer::pass_direct_destination_coalescing()
 
         bool is_dout = (out_node.type == "DIGITALOUTPUT" || out_node.type == "OUTPUT" ||
                        (out_node.type == "LE_NODE_DIGITAL" && (out_node.name.rfind("OUT", 0) == 0 || out_node.name.rfind("DO", 0) == 0)));
+        bool is_aout = (out_node.type == "ANALOGOUTPUT" || out_node.type == "LE_ANALOGOUTPUT" ||
+                       out_node.type == "LE_ANALOG_OUTPUT" || out_node.type == "AOUT");
         bool is_bool_reg = (out_node.type == "BOOLREGISTER" || out_node.type == "LE_BOOLREGISTER");
         bool is_float_reg = (out_node.type == "FLOATREGISTER" || out_node.type == "LE_FLOATREGISTER");
 
-        if (!is_dout && !is_bool_reg && !is_float_reg) continue;
+        if (!is_dout && !is_aout && !is_bool_reg && !is_float_reg) continue;
 
         if (out_node.inputs.empty()) continue;
         std::string src_name = out_node.inputs.begin()->second;
@@ -662,7 +667,7 @@ void Optimizer::pass_direct_destination_coalescing()
                                 producer.opcode == LE_OP_MUX ||
                                 (producer.opcode >= LE_OP_CMP_GT && producer.opcode <= LE_OP_CMP_NE);
             if (!is_bool_prod) continue;
-        } else if (is_float_reg) {
+        } else if (is_float_reg || is_aout) {
             bool is_float_prod = (producer.opcode >= LE_OP_MOVE_F && producer.opcode <= LE_OP_MAX_F);
             if (!is_float_prod) continue;
         }

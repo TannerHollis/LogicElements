@@ -5,6 +5,7 @@
 
 #include "le_hal.h"
 #include "le_storage.h"
+#include "le_nvram.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -27,7 +28,9 @@ void le_hal_set(const le_hal_t* hal)
 static bool s_sim_gpio[64] = {0};
 static float s_sim_adc[16] = {0.0f};
 static uint32_t s_sim_adc_raw[16] = {0};
+static float s_sim_dac[16] = {0.0f};
 static uint8_t s_sim_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
+static uint8_t s_sim_nvram[LE_NVRAM_TOTAL_BYTES] = {0};
 
 #if LE_ENABLE_SERIAL_BUS
 static uint8_t s_sim_i2c_last_startup[16] = {0};
@@ -46,7 +49,9 @@ static bool sim_init(void)
     memset(s_sim_gpio, 0, sizeof(s_sim_gpio));
     memset(s_sim_adc, 0, sizeof(s_sim_adc));
     memset(s_sim_adc_raw, 0, sizeof(s_sim_adc_raw));
+    memset(s_sim_dac, 0, sizeof(s_sim_dac));
     memset(s_sim_flash, 0, sizeof(s_sim_flash));
+    memset(s_sim_nvram, 0, sizeof(s_sim_nvram));
 #if LE_ENABLE_SERIAL_BUS
     s_sim_i2c_transfers = 0;
     s_sim_i2c_startup_len = 0;
@@ -90,8 +95,7 @@ static uint32_t sim_adc_read_raw(uint8_t channel)
 
 static void sim_dac_write(uint8_t channel, float value)
 {
-    (void)channel;
-    (void)value;
+    if (channel < 16) s_sim_dac[channel] = value;
 }
 
 static uint32_t sim_get_time_ms(void)
@@ -189,6 +193,33 @@ static bool sim_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
     return false;
 }
 
+static bool sim_nvram_read(uint32_t offset, uint8_t* buf, size_t len)
+{
+    if (offset + len <= sizeof(s_sim_nvram)) {
+        memcpy(buf, &s_sim_nvram[offset], len);
+        return true;
+    }
+    return false;
+}
+
+static bool sim_nvram_write(uint32_t offset, const uint8_t* buf, size_t len)
+{
+    if (offset + len <= sizeof(s_sim_nvram)) {
+        memcpy(&s_sim_nvram[offset], buf, len);
+        return true;
+    }
+    return false;
+}
+
+static bool sim_nvram_erase(uint32_t offset, size_t len)
+{
+    if (offset + len <= sizeof(s_sim_nvram)) {
+        memset(&s_sim_nvram[offset], 0, len);
+        return true;
+    }
+    return false;
+}
+
 #if LE_ENABLE_SERIAL_BUS
 static bool sim_i2c_write(uint8_t addr_7bit, const uint8_t* tx_data, size_t len)
 {
@@ -271,6 +302,17 @@ void le_sim_set_adc_raw(uint8_t channel, uint32_t value)
     if (channel < 16) {
         s_sim_adc_raw[channel] = value;
     }
+}
+
+float le_sim_get_dac(uint8_t channel)
+{
+    if (channel < 16) return s_sim_dac[channel];
+    return 0.0f;
+}
+
+void le_sim_set_dac(uint8_t channel, float value)
+{
+    if (channel < 16) s_sim_dac[channel] = value;
 }
 
 static le_status_t sim_ext_call(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
@@ -364,6 +406,9 @@ static const le_hal_t s_sim_hal = {
     .uart_write = sim_uart_write,
     .storage_read = sim_storage_read,
     .storage_write = sim_storage_write,
+    .nvram_read = sim_nvram_read,
+    .nvram_write = sim_nvram_write,
+    .nvram_erase = sim_nvram_erase,
 #if LE_ENABLE_SERIAL_BUS
     .i2c_write = sim_i2c_write,
     .i2c_read = sim_i2c_read,

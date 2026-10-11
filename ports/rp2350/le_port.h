@@ -28,9 +28,11 @@
  *
  *   -DLE_RAM_WORKSPACE_BYTES=262144          RP2350 has 520 KB SRAM; the profile
  *                                           declares a 256 KB unified workspace
- *   -DLE_MAX_DIGITAL_IN=24 -DLE_MAX_DIGITAL_OUT=24 -DLE_MAX_BOOL_REGS=256
- *   -DLE_MAX_FLOATS=128    -DLE_MAX_INT_REGS=128 -DLE_MAX_ANALOG_IN=4
+ *   -DLE_MAX_DIGITAL_IN=24 -DLE_MAX_DIGITAL_OUT=24
+ *   -DLE_MAX_ANALOG_IN=4   -DLE_MAX_ANALOG_OUT=4
  *   -DLE_MAX_CONFIG_SLOTS=2 -DLE_SLOT_SIZE_BYTES=4096
+ *   -DLE_NVRAM_TOTAL_BYTES=16384 -DLE_NVRAM_BLOCK_SIZE=4096 -DLE_NVRAM_PAGE_SIZE=256
+ *   -DLE_NVRAM_REGS_BYTES=1024 -DLE_NVRAM_SER_BYTES=3072
  *   -DLE_NS_PER_ABSTRACT_CYCLE=250          (RP2350 Cortex-M33 @ 150 MHz cost
  *                                           model - the board only calibrates
  *                                           this estimate; the scan rate is
@@ -106,6 +108,40 @@ void le_port_deenergize_outputs(void);
  * pushed to the USB CDC FIFO without writers blocking on USB throughput.
  */
 void le_port_cdc_flush(void);
+
+/**
+ * @brief Reads a byte buffer from Non-Volatile RAM (NV registers, SER, Event Recorder).
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param buf Destination buffer pointer.
+ * @param len Number of bytes to read.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_read(uint32_t offset, void* buf, size_t len);
+
+/**
+ * @brief Writes a byte buffer to Non-Volatile RAM (NV registers, SER, Event Recorder).
+ *
+ * If backed by external SPI FRAM / EEPROM / battery SRAM, writes are directly committed.
+ * If backed by raw on-chip Flash, uses the runtime wear-leveling engine to protect flash sectors.
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param buf Source data buffer pointer.
+ * @param len Number of bytes to write.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len);
+
+/**
+ * @brief Erases a region of Non-Volatile RAM, or formats the entire NVRAM partition.
+ *
+ * If offset is 0 and len >= LE_NVRAM_TOTAL_BYTES, this triggers a full format/wipe.
+ *
+ * @param offset Logical byte offset in NVRAM partition space.
+ * @param len Number of bytes to erase.
+ * @return True on success; false on failure or out-of-bounds.
+ */
+bool le_port_nvram_erase(uint32_t offset, size_t len);
 
 #ifdef __cplusplus
 }

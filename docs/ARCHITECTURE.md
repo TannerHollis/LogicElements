@@ -68,20 +68,24 @@ two** (MUX, phasor conversions, custom nodes) use `LE_OP_BLOCK` and a
 
 A fixed memory table of registers and per-region status bits:
 
-| Region | Address mask | Contents |
+| Region | Address Range | Contents |
 | :--- | :--- | :--- |
-| `0x0000` | DIN | Digital inputs `%I` (bit-packed) |
-| `0x1000` | DOUT | Digital outputs `%Q` (bit-packed) |
-| `0x2000`/`0x3000` | BOOL | Boolean coils `%M` |
-| `0x4000`–`0x7000` | FLOAT | Float registers `%R` |
-| `0x8000` | TIMER | Timer status bits |
-| `0x9000` | COUNTER | Counter status bits |
-| `0xA000` | INT | Integer registers |
-| `0xB000` | AIN | Analog input channels |
-| `0xC000` | CONST / LITERAL | `FALSE`, `TRUE`, `0.0f`, `1.0f` |
+| `0x0000` | `0x0000 - 0x0FFF` | Digital inputs `%IN` (bit-packed, up to 4,096) |
+| `0x1000` | `0x1000 - 0x1FFF` | Digital outputs `%OUT` (bit-packed, up to 4,096) |
+| `0x2000` | `0x2000 - 0x2FFF` | Analog inputs `%AIN` (32-bit floats, up to 4,096) |
+| `0x3000` | `0x3000 - 0x3FFF` | Analog outputs `%AOUT` (32-bit floats, up to 4,096) |
+| `0x4000`–`0x5000` | `0x4000 - 0x5FFF` | Boolean registers `%B` / `T_B` (bit-packed, up to 8,192) |
+| `0x6000`–`0x7000` | `0x6000 - 0x7FFF` | Integer registers `%I` / `T_I` (32-bit signed, up to 8,192) |
+| `0x8000`–`0x9000` | `0x8000 - 0x9FFF` | Float registers `%F` / `T_F` (32-bit IEEE 754, up to 8,192) |
+| `0xA000` | `0xA000 - 0xAFFF` | Complex registers `%C` / `T_C` (real+imag pairs, up to 4,096) |
+| `0xC000` | `0xC000 - 0xCFFF` | Predefined immediate literals (`FALSE`, `TRUE`, `0.0f`, `1.0f`, `60.0f`, `0+0j`) |
+| `0xFFFF` | `0xFFFF` | Sentinel / Unused (`LE_ADDR_UNUSED`) |
+
+> [!NOTE]
+> **Timers and Counters**: Starting in binary version 12, timers and counters do not have dedicated virtual address regions. Their internal states reside in the unified state image (allocated in the RAM workspace), indexed by the instruction's `modifier` field. Their boolean output flags write directly to normal boolean destinations (`%B` or `%OUT`).
 
 Accessors (`le_process_image_get_bool/float`, `set_bool/float`, and the
-timer/counter/kind resolvers) are the single funnel through which handlers and
+kind resolvers) are the single funnel through which handlers and
 consumers read/write registers and workspace-backed state.
 ---
 
@@ -139,7 +143,7 @@ loader carves it into two contiguous slices:
 1. **Register arena** (front) — the packed process-image registers only, sized
    from the `.lebin`'s declared register counts: a contiguous bit bucket (DIN
    bits, then DOUT, then BOOL), followed by 4-byte-aligned float, int, complex,
-   and analog buckets. A 8-coil / 1-float program therefore uses a handful of
+   analog in, and analog out buckets. An 8-coil / 1-float program therefore uses a handful of
    bytes, not fixed per-type arrays.
 2. **State workspace** (back) — `le_rt_workspace()`, a slice the loader fills by
    memcpy'ing a **preconfigured state image** carried in the `.lebin`. The
@@ -177,7 +181,7 @@ for state and vice versa); still *zero heap* at runtime.
 
 ---
 
-## Loader & storage (`le_loader.c`, `le_storage.c`)
+## Loader, storage & NVRAM (`le_loader.c`, `le_storage.c`, `le_nvram.c`)
 
 `le_loader_validate()` checks the `LEB1` magic, version, resource bounds, all
 table sizes, and the IEEE 802.3 **CRC32** over the whole payload.
@@ -185,7 +189,15 @@ table sizes, and the IEEE 802.3 **CRC32** over the whole payload.
 slices, and config, then autostarts if flagged.
 
 `le_storage` manages **multi-slot** flash/EEPROM partitions and slot
-activation, so several independent programs can be stored and switched live.
+activation with a hidden **phantom slot** for atomic, CRC32-verified uploads,
+allowing several independent programs to be stored and switched live.
+
+`le_nvram` provides persistent storage for:
+1. **Retentive process-image registers** (`%B`, `%I`, `%F`, `%C`), isolated **per configuration slot** (`LE_NVRAM_REGS_BYTES`) so program setpoints never collide.
+2. **Sequence of Events (SER)** transition logs with microsecond timestamps.
+3. **Event Recorder (Oscillography)** waveform fault captures.
+Supports direct byte-addressable NVRAM (FRAM, EEPROM, battery SRAM) or plain on-chip/external Flash via a built-in log-structured wear-leveling journal.
+
 ---
 
 ## Compiler (`src/compiler`)
@@ -194,7 +206,7 @@ activation, so several independent programs can be stored and switched live.
 
 ```
 circuit.json + board.json
-  1. Parse & validate elements/nets, map %I/%Q/%M/%R pins & aliases
+  1. Parse & validate elements/nets, map %DIN/%DOUT/%AIN/%AOUT/%B/%I/%F/%C pins & aliases
   2. Build net graph & tags
   3. Optimizer (fixed-point passes: constant folding, inversion folding,
      CSE, direct-destination coalescing, dead-code elimination)
@@ -228,11 +240,12 @@ tests lock in.
 | Analog | `adc_read`, `adc_read_raw`, `dac_write` |
 | Time | `get_time_ms`, `get_time_us` |
 | UART | `uart_available`, `uart_read`, `uart_write` |
-| Storage | `storage_read`, `storage_write` |
+| Program Storage | `storage_read`, `storage_write` |
+| NVRAM / Persistent | `nvram_read`, `nvram_write`, `nvram_erase` |
 | Bus (optional) | `i2c_*`, `spi_transfer` |
 | Custom nodes | `ext_call(func_id, args, in_count, out_count, img)`, `get_custom_nodes_json` |
 
-See [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for porting.
+See [PORTS.md](PORTS.md) and [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for porting.
 
 ---
 
@@ -242,15 +255,17 @@ See [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for porting.
   `le_disasm.py`).
 - `tools/sim/main.c` — simulator runner / interactive CLI.
 - `le_compile` — standalone compiler CLI.
+- `le` — unified host CLI suite (`le compile`, `le disasm`, `le upload`, `le monitor`, `le sim`, `le board`).
 
 ---
 
 ## Testing
 
-The repository ships three automated suites (see root `CMakeLists.txt`):
+The repository ships four automated test suites (see root `CMakeLists.txt`):
 
 | Suite | Coverage |
 | :--- | :--- |
-| `test_c_runtime` | Process image, opcodes, timers/counters, DSP, protection, loader/storage, comms, serial bus, blocks, phasors, workspace. |
+| `test_c_runtime` | Process image, opcodes, timers/counters, DSP, protection, loader/storage, NVRAM wear leveling, comms, serial bus, blocks, phasors, workspace. |
 | `test_compiler` | Compilation, optimizer passes, multi-output selection, state-image binding, workspace-backed timer execution. |
-| `test_element_assembly` | One fixture per element -> compile + parse disassembly for the exact opcode (see [ElementFixtures.md](ElementFixtures.md)). |
+| `test_element_assembly` | One fixture per element -> compile + parse disassembly for the exact opcode (see [ELEMENT_FIXTURES.md](ELEMENT_FIXTURES.md)). |
+| `test_host_comms` | Host-side packet framing, command dispatch, capabilities parsing, and UART transport layer. |

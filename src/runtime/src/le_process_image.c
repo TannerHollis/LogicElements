@@ -37,13 +37,15 @@ uint32_t le_process_image_regs_len(const le_header_t* h)
     uint32_t ints    = h->int_reg_count;
     uint32_t cmplx   = h->complex_reg_count;
     uint32_t ain     = h->analog_in_count;
+    uint32_t aout    = h->analog_out_count;
 
     uint32_t bits_bytes = (din + dout + boolc + 7u) / 8u;
     uint32_t floats_off = (bits_bytes + 3u) & ~3u;
     uint32_t ints_off   = (floats_off + floats * 4u + 3u) & ~3u;
     uint32_t cmplx_off  = (ints_off   + ints   * 4u + 3u) & ~3u;
     uint32_t ain_off    = (cmplx_off  + cmplx  * 8u + 3u) & ~3u;
-    return ain_off + ain * 8u;
+    uint32_t aout_off   = (ain_off    + ain    * 8u + 3u) & ~3u;
+    return aout_off + aout * 4u;
 }
 
 le_status_t le_process_image_bind(le_process_image_t* img, uint8_t* arena, uint32_t arena_bytes,
@@ -68,6 +70,7 @@ le_status_t le_process_image_bind(le_process_image_t* img, uint8_t* arena, uint3
     uint32_t ints    = h->int_reg_count;
     uint32_t cmplx   = h->complex_reg_count;
     uint32_t ain     = h->analog_in_count;
+    uint32_t aout    = h->analog_out_count;
     uint32_t bits_bytes = (din + dout + boolc + 7u) / 8u;
 
     img->regs        = arena;
@@ -78,11 +81,13 @@ le_status_t le_process_image_bind(le_process_image_t* img, uint8_t* arena, uint3
     img->int_count   = (uint16_t)ints;
     img->cmplx_count = (uint16_t)cmplx;
     img->ain_count   = (uint16_t)ain;
+    img->aout_count  = (uint16_t)aout;
 
     img->floats_off  = (uint16_t)((bits_bytes   + 3u) & ~3u);
     img->ints_off    = (uint16_t)((img->floats_off + floats * 4u + 3u) & ~3u);
     img->cmplx_off   = (uint16_t)((img->ints_off   + ints   * 4u + 3u) & ~3u);
     img->ain_off     = (uint16_t)((img->cmplx_off  + cmplx  * 8u + 3u) & ~3u);
+    img->aout_off    = (uint16_t)((img->ain_off    + ain    * 8u + 3u) & ~3u);
 
     /* Typed bucket pointers for the hot accessors (all 4-byte aligned). */
     img->floats      = (float*)        (arena + img->floats_off);
@@ -90,6 +95,7 @@ le_status_t le_process_image_bind(le_process_image_t* img, uint8_t* arena, uint3
     img->cmplx       = (le_complex_t*) (arena + img->cmplx_off);
     img->ain_raw     = (int32_t*)      (arena + img->ain_off);
     img->ain_vals    = (float*)        (arena + img->ain_off + ain * 4u);
+    img->aout_vals   = (float*)        (arena + img->aout_off);
 
     if (out_regs_len) *out_regs_len = len;
     return LE_OK;
@@ -110,6 +116,18 @@ uint8_t* le_process_image_kind_state(const le_process_image_t* img, uint8_t kind
     return le_rt_state(kind, idx);
 }
 
+float le_pi_get_aout(const le_process_image_t* img, uint16_t ch)
+{
+    if (!img || !img->aout_vals || ch >= img->aout_count) return 0.0f;
+    return img->aout_vals[ch];
+}
+
+void le_pi_set_aout(le_process_image_t* img, uint16_t ch, float val)
+{
+    if (!img || !img->aout_vals || ch >= img->aout_count) return;
+    img->aout_vals[ch] = val;
+}
+
 bool le_process_image_get_bool(const le_process_image_t* img, uint16_t addr)
 {
     if (!img || addr == LE_ADDR_UNUSED) return false;
@@ -120,49 +138,26 @@ bool le_process_image_get_bool(const le_process_image_t* img, uint16_t addr)
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
     const uint8_t* regs = img->regs;
 
-    switch (region)
-    {
-        case LE_REGION_DIN:
-            if (regs && idx < img->din_count) {
-                return (regs[idx >> 3] & (1U << (idx & 7))) != 0;
-            }
-            break;
-
-        case LE_REGION_DOUT:
-            if (regs && idx < img->dout_count) {
-                uint32_t bit = (uint32_t)img->din_count + idx;
-                return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
-            }
-            break;
-
-        case LE_REGION_BOOL_REG:
-        case LE_REGION_BOOL_REG_EXT: {
-            uint16_t bool_idx = addr & 0x1FFF;
-            if (regs && bool_idx < img->bool_count) {
-                uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
-                return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
-            }
-            break;
+    if (region == LE_REGION_DIN) {
+        if (regs && idx < img->din_count) {
+            return (regs[idx >> 3] & (1U << (idx & 7))) != 0;
         }
-
-        case LE_REGION_TIMER: {
-            le_timer_state_t* t = le_process_image_timer(img, idx);
-            if (t) return t->q;
-            break;
+    } else if (region == LE_REGION_DOUT) {
+        if (regs && idx < img->dout_count) {
+            uint32_t bit = (uint32_t)img->din_count + idx;
+            return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
         }
-
-        case LE_REGION_COUNTER: {
-            le_counter_state_t* c = le_process_image_counter(img, idx);
-            if (c) return c->qu;
-            break;
+    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        uint16_t bool_idx = addr & 0x1FFF;
+        if (regs && bool_idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
+            return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
         }
-
-        default:
-            break;
     }
 
     return false;
 }
+
 void le_process_image_set_bool(le_process_image_t* img, uint16_t addr, bool val)
 {
     if (!img || addr == LE_ADDR_UNUSED) return;
@@ -171,57 +166,33 @@ void le_process_image_set_bool(le_process_image_t* img, uint16_t addr, bool val)
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
     uint8_t* regs = img->regs;
 
-    switch (region)
-    {
-        case LE_REGION_DIN:
-            if (regs && idx < img->din_count) {
-                if (val) {
-                    regs[idx >> 3] |= (uint8_t)(1U << (idx & 7));
-                } else {
-                    regs[idx >> 3] &= (uint8_t)~(1U << (idx & 7));
-                }
+    if (region == LE_REGION_DIN) {
+        if (regs && idx < img->din_count) {
+            if (val) {
+                regs[idx >> 3] |= (uint8_t)(1U << (idx & 7));
+            } else {
+                regs[idx >> 3] &= (uint8_t)~(1U << (idx & 7));
             }
-            break;
-
-        case LE_REGION_DOUT:
-            if (regs && idx < img->dout_count) {
-                uint32_t bit = (uint32_t)img->din_count + idx;
-                if (val) {
-                    regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
-                } else {
-                    regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
-                }
+        }
+    } else if (region == LE_REGION_DOUT) {
+        if (regs && idx < img->dout_count) {
+            uint32_t bit = (uint32_t)img->din_count + idx;
+            if (val) {
+                regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            } else {
+                regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
             }
-            break;
-
-        case LE_REGION_BOOL_REG:
-        case LE_REGION_BOOL_REG_EXT: {
-            uint16_t bool_idx = addr & 0x1FFF;
-            if (regs && bool_idx < img->bool_count) {
-                uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
-                if (val) {
-                    regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
-                } else {
-                    regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
-                }
+        }
+    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        uint16_t bool_idx = addr & 0x1FFF;
+        if (regs && bool_idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
+            if (val) {
+                regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            } else {
+                regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
             }
-            break;
         }
-
-        case LE_REGION_TIMER: {
-            le_timer_state_t* t = le_process_image_timer(img, idx);
-            if (t) t->q = val;
-            break;
-        }
-
-        case LE_REGION_COUNTER: {
-            le_counter_state_t* c = le_process_image_counter(img, idx);
-            if (c) c->qu = val;
-            break;
-        }
-
-        default:
-            break;
     }
 }
 
@@ -234,14 +205,18 @@ float le_process_image_get_float(const le_process_image_t* img, uint16_t addr)
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
 
-    if (region >= LE_REGION_FLOAT && region <= LE_REGION_FLOAT_EXT3) {
-        if (img->floats && idx < img->float_count) return img->floats[idx];
+    if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t f_idx = addr & 0x1FFF;
+        if (img->floats && f_idx < img->float_count) return img->floats[f_idx];
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
         if (img->ain_vals && idx < img->ain_count) return img->ain_vals[idx];
     }
 #endif
+    else if (region == LE_REGION_AOUT) {
+        if (img->aout_vals && idx < img->aout_count) return img->aout_vals[idx];
+    }
 
     return 0.0f;
 }
@@ -253,8 +228,9 @@ void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float va
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
 
-    if (region >= LE_REGION_FLOAT && region <= LE_REGION_FLOAT_EXT3) {
-        if (img->floats && idx < img->float_count) img->floats[idx] = val;
+    if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t f_idx = addr & 0x1FFF;
+        if (img->floats && f_idx < img->float_count) img->floats[f_idx] = val;
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
@@ -264,7 +240,13 @@ void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float va
         }
     }
 #endif
+    else if (region == LE_REGION_AOUT) {
+        if (img->aout_vals && idx < img->aout_count) {
+            img->aout_vals[idx] = val;
+        }
+    }
 }
+
 int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
 {
     if (!img || addr == LE_ADDR_UNUSED) return 0;
@@ -272,18 +254,15 @@ int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
 
-    if (region == LE_REGION_INT_REG) {
-        if (img->ints && idx < img->int_count) return img->ints[idx];
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t i_idx = addr & 0x1FFF;
+        if (img->ints && i_idx < img->int_count) return img->ints[i_idx];
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
         if (img->ain_raw && idx < img->ain_count) return img->ain_raw[idx];
     }
 #endif
-    else if (region == LE_REGION_COUNTER) {
-        le_counter_state_t* c = le_process_image_counter(img, idx);
-        if (c) return c->count;
-    }
     return 0;
 }
 
@@ -294,8 +273,9 @@ void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t va
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
 
-    if (region == LE_REGION_INT_REG) {
-        if (img->ints && idx < img->int_count) img->ints[idx] = val;
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t i_idx = addr & 0x1FFF;
+        if (img->ints && i_idx < img->int_count) img->ints[i_idx] = val;
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
@@ -305,10 +285,6 @@ void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t va
         }
     }
 #endif
-    else if (region == LE_REGION_COUNTER) {
-        le_counter_state_t* c = le_process_image_counter(img, idx);
-        if (c) c->count = val;
-    }
 }
 
 #if LE_ENABLE_COMPLEX
@@ -340,36 +316,24 @@ void le_process_image_set_active(le_process_image_t* img, uint16_t addr, bool ac
 {
     if (!img || addr == LE_ADDR_UNUSED) return;
     uint16_t region = addr & LE_ADDR_REGION_MASK;
-    switch (region)
-    {
-        case LE_REGION_DIN:
-        case LE_REGION_DOUT:
-        case LE_REGION_BOOL_REG:
-        case LE_REGION_BOOL_REG_EXT:
-            le_process_image_set_bool(img, addr, active);
-            break;
-        case LE_REGION_FLOAT:
-        case LE_REGION_FLOAT_EXT1:
-        case LE_REGION_FLOAT_EXT2:
-        case LE_REGION_FLOAT_EXT3:
-            le_process_image_set_float(img, addr, active ? 1.0f : 0.0f);
-            break;
-        case LE_REGION_INT_REG:
-            le_process_image_set_int(img, addr, active ? 1 : 0);
-            break;
+    if (region == LE_REGION_DIN || region == LE_REGION_DOUT ||
+        (addr & 0xE000) == LE_REGION_BOOL_REG) {
+        le_process_image_set_bool(img, addr, active);
+    } else if ((addr & 0xE000) == LE_REGION_FLOAT || region == LE_REGION_AOUT) {
+        le_process_image_set_float(img, addr, active ? 1.0f : 0.0f);
+    } else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        le_process_image_set_int(img, addr, active ? 1 : 0);
+    }
 #if LE_ENABLE_ANALOG
-        case LE_REGION_AIN:
-            le_process_image_set_int(img, addr, active ? 1 : 0);
-            break;
+    else if (region == LE_REGION_AIN) {
+        le_process_image_set_int(img, addr, active ? 1 : 0);
+    }
 #endif
 #if LE_ENABLE_COMPLEX
-        case LE_REGION_CMPLX:
-            le_process_image_set_complex(img, addr, le_c_make(active ? 1.0f : 0.0f, 0.0f));
-            break;
-#endif
-        default:
-            break;
+    else if (region == LE_REGION_CMPLX) {
+        le_process_image_set_complex(img, addr, le_c_make(active ? 1.0f : 0.0f, 0.0f));
     }
+#endif
 }void le_process_image_set_scaler(le_process_image_t* img, uint8_t idx,
                                  float raw_min, float raw_max,
                                  float scale_min, float scale_max,

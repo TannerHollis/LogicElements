@@ -15,131 +15,7 @@
 extern "C" {
 #endif
 
-/* ========================================================================== */
-/* Compile-Time Capacity Limits (Configurable per target microcontroller)    */
-/* ========================================================================== */
-
-#ifndef LE_MAX_DIGITAL_IN
-#define LE_MAX_DIGITAL_IN       64      /* Up to 64 digital inputs */
-#endif
-
-#ifndef LE_MAX_DIGITAL_OUT
-#define LE_MAX_DIGITAL_OUT      64      /* Up to 64 digital outputs */
-#endif
-
-#ifndef LE_MAX_BOOL_REGS
-#define LE_MAX_BOOL_REGS        256     /* Up to 256 internal boolean registers */
-#endif
-
-#ifndef LE_MAX_FLOATS
-#define LE_MAX_FLOATS           128     /* Up to 128 32-bit float registers */
-#endif
-
-#ifndef LE_MAX_INT_REGS
-#define LE_MAX_INT_REGS         64      /* Up to 64 32-bit integer registers */
-#endif
-
-/* ========================================================================== */
-/* Optional Capability Switches                                               */
-/* A board designer can reduce the runtime down toward boolean-only by setting */
-/* every subsystem switch to 0; each guarded block then contributes no state,  */
-/* opcodes, or registers.                                                      */
-/*                                                                             */
-/* Dependencies are AUTOMATICALLY satisfied - a subsystem cannot be built      */
-/* without its prerequisites, so enabling a higher layer forces its lower      */
-/* layers ON:                                                                  */
-/*     LE_ENABLE_PROTECTION  =>  LE_ENABLE_COMPLEX  =>  LE_ENABLE_ANALOG       */
-/*     LE_ENABLE_DSP         =>  LE_ENABLE_ANALOG                              */
-/* Complex phasors / %C registers require analog channels to acquire their     */
-/* signals; protection relays operate on phasors; DSP filters mix sampled      */
-/* (analog) channels. Prerequisites are forced ON by the higher layer's own    */
-/* switch - the higher-layer switch is the master control.                     */
-/* ========================================================================== */
-#ifndef LE_ENABLE_PROTECTION
-#define LE_ENABLE_PROTECTION    1       /* P&C relay opcodes (OVERCURRENT, PID, PHASOR_1P, SYM_COMP, DIST_21, DIFF_87, PHASE_COMP) */
-#endif
-
-#ifndef LE_ENABLE_COMPLEX
-#define LE_ENABLE_COMPLEX       1       /* Complex arithmetic, %C registers & conversions */
-#endif
-
-#ifndef LE_ENABLE_ANALOG
-#define LE_ENABLE_ANALOG        1       /* Analog input channels (%AIN) and scaling */
-#endif
-
-#ifndef LE_ENABLE_SERIAL_BUS
-#define LE_ENABLE_SERIAL_BUS    1       /* I2C and SPI bus opcodes */
-#endif
-
-#ifndef LE_ENABLE_DSP
-#define LE_ENABLE_DSP           1       /* DSP and filter opcodes */
-#endif
-
-/* ---- Prerequisite implication: lower layers are forced ON ---------------- */
-#if LE_ENABLE_PROTECTION
-#undef  LE_ENABLE_COMPLEX
-#define LE_ENABLE_COMPLEX       1       /* protection runs on phasors -> complex must compile */
-#endif
-#if LE_ENABLE_COMPLEX
-#undef  LE_ENABLE_ANALOG
-#define LE_ENABLE_ANALOG        1       /* complex phasors need analog acquisition -> analog must compile */
-#endif
-#if LE_ENABLE_DSP
-#undef  LE_ENABLE_ANALOG
-#define LE_ENABLE_ANALOG        1       /* DSP filters mix sampled channels -> analog must compile */
-#endif
-
-/* ========================================================================== */
-/* Subsystem capacity limits (only defined when the subsystem is enabled)      */
-/* ========================================================================== */
-#if LE_ENABLE_ANALOG
-#ifndef LE_MAX_ANALOG_IN
-#define LE_MAX_ANALOG_IN        16      /* Up to 16 Analog Inputs (ADC channels) */
-#endif
-#endif
-
-#if LE_ENABLE_COMPLEX
-#ifndef LE_MAX_COMPLEX
-#define LE_MAX_COMPLEX          64      /* Up to 64 complex registers (%C, real+imag pairs) */
-#endif
-#endif
-
-#if LE_ENABLE_PROTECTION
-#ifndef LE_MAX_RAW_SAMPLES
-#define LE_MAX_RAW_SAMPLES 64           /* Raw sample buffer for high-rate acquisition (DFT window upper bound) */
-#endif
-#ifndef LE_MAX_SAMPLES_PER_CYCLE
-#define LE_MAX_SAMPLES_PER_CYCLE LE_MAX_RAW_SAMPLES /* Backwards-compatible alias */
-#endif
-#endif
-
-#ifndef LE_MAX_ALIASES
-#define LE_MAX_ALIASES          32      /* Up to 32 user-declared register aliases (+ board aliases) */
-#endif
-
-#if LE_ENABLE_SERIAL_BUS
-/* No static device-count limits: serial-bus device state is baked into the
- * preconfigured state image and copied into the state workspace at load,
- * bounded only by LE_RAM_WORKSPACE_BYTES. */
-#endif
-
-#if LE_ENABLE_DSP
-#ifndef LE_MOVING_AVG_MAX_WINDOW
-#define LE_MOVING_AVG_MAX_WINDOW 32     /* Samples window buffer inside a moving-avg state */
-#endif
-
-#ifndef LE_RMS_MAX_WINDOW
-#define LE_RMS_MAX_WINDOW       32      /* Samples window buffer inside a True RMS state */
-#endif
-
-#ifndef LE_MAX_MEDIAN_WINDOW
-#define LE_MAX_MEDIAN_WINDOW    9       /* Samples window buffer inside a median filter state */
-#endif
-
-#ifndef LE_MAX_LUT_POINTS
-#define LE_MAX_LUT_POINTS       16      /* Breakpoints buffer inside a 1D lookup table state */
-#endif
-#endif
+#include "le_board_config.h"
 
 
 /* ========================================================================== */
@@ -147,7 +23,7 @@ extern "C" {
 /* ========================================================================== */
 
 #define LE_BIN_MAGIC            0x4C454231  /* ASCII "LEB1" */
-#define LE_BIN_VERSION          11  // Incremented for PHASOR_1P dynamic freq input support
+#define LE_BIN_VERSION          12  // Incremented for reorganized virtual address space & %AOUT support
 
 /* Alias table limits: an alias name is at most 7 characters (LE_ALIAS_NAME_MAX),
  * matching le_alias_t::name. Runtime pulse slots bound concurrent aliased pulses. */
@@ -198,17 +74,24 @@ extern "C" {
 #define LE_FLAG_WATCHDOG_EN     (1U << 1)
 
 /* ========================================================================== */
-/* Memory Address Encoding (16-bit)                                           */
-/* Bits 15..12 encode the region type:                                       */
-/*   0x0000 - 0x0FFF : Digital Inputs  (%IN)                                  */
-/*   0x1000 - 0x1FFF : Digital Outputs (%OUT)                                 */
-/*   0x2000 - 0x3FFF : Bool Registers  (%B)                                   */
-/*   0x4000 - 0x7FFF : Float Registers (%F)                                   */
-/*   0x8000 - 0x8FFF : Timer Status / Output Bits                            */
-/*   0x9000 - 0x9FFF : Counter Status / Output Bits                          */
-/*   0xA000 - 0xAFFF : Integer Registers (%I)                                */
-/*   0xB000 - 0xBFFF : Analog Inputs    (%AIN)                               */
-/*   0xC000 - 0xFFFF : Constants / Literals                                  */
+/* Memory Address Encoding (16-bit Virtual Operand Space)                     */
+/* Physical I/O Space (4,096 channels each):                                  */
+/*   0x0000 - 0x0FFF : Physical Digital Inputs   (%IN[i])                     */
+/*   0x1000 - 0x1FFF : Physical Digital Outputs  (%OUT[i])                    */
+/*   0x2000 - 0x2FFF : Physical Analog Inputs    (%AIN[i], ADC)               */
+/*   0x3000 - 0x3FFF : Physical Analog Outputs   (%AOUT[i], DAC)              */
+/* Variable / Memory Space:                                                   */
+/*   0x4000 - 0x5FFF : User Boolean Bits         (%B[i], 8,192 capacity)      */
+/*   0x6000 - 0x7FFF : Signed 32-bit Integers    (%I[i], 8,192 capacity)      */
+/*   0x8000 - 0x9FFF : 32-bit IEEE 754 Floats    (%F[i], 8,192 capacity)      */
+/*   0xA000 - 0xAFFF : Complex Phasors           (%C[i], 4,096 capacity)      */
+/* Special & Future Space:                                                    */
+/*   0xB000 - 0xBFFF : Reserved for Future Primitives (e.g. %L int64)         */
+/*   0xC000 - 0xCFFF : Immediate Literals / Predefined Constants              */
+/*   0xD000 - 0xDFFF : Reserved for Future Structs (e.g. %D double64)         */
+/*   0xE000 - 0xEFFF : Reserved for System / Diagnostic Variables (%SYS)      */
+/*   0xF000 - 0xFFFE : Reserved                                               */
+/*   0xFFFF          : Sentinel / Unused         (LE_ADDR_UNUSED)             */
 /* ========================================================================== */
 
 #define LE_ADDR_REGION_MASK     0xF000
@@ -216,20 +99,18 @@ extern "C" {
 
 #define LE_REGION_DIN           0x0000
 #define LE_REGION_DOUT          0x1000
-#define LE_REGION_BOOL_REG      0x2000
-#define LE_REGION_BOOL_REG_EXT  0x3000
-#define LE_REGION_FLOAT         0x4000
-#define LE_REGION_FLOAT_EXT1    0x5000
-#define LE_REGION_FLOAT_EXT2    0x6000
-#define LE_REGION_FLOAT_EXT3    0x7000
-#define LE_REGION_TIMER         0x8000
-#define LE_REGION_COUNTER       0x9000
-#define LE_REGION_INT_REG       0xA000
-#define LE_REGION_AIN           0xB000
-#define LE_REGION_CONST         0xC000
+#define LE_REGION_AIN           0x2000
+#define LE_REGION_AOUT          0x3000
+#define LE_REGION_BOOL_REG      0x4000
+#define LE_REGION_BOOL_REG_EXT  0x5000
+#define LE_REGION_INT_REG       0x6000
+#define LE_REGION_INT_REG_EXT   0x7000
+#define LE_REGION_FLOAT         0x8000
+#define LE_REGION_FLOAT_EXT     0x9000
 #if LE_ENABLE_COMPLEX
-#define LE_REGION_CMPLX         0xD000   /* Complex registers (%C): 12-bit index, real+imag pair each */
+#define LE_REGION_CMPLX         0xA000
 #endif
+#define LE_REGION_CONST         0xC000
 
 /* Predefined Constants */
 #define LE_CONST_FALSE          0xC000
@@ -245,16 +126,38 @@ extern "C" {
 /* Helper Macros for Address Construction */
 #define LE_ADDR_MAKE_DIN(idx)      ((uint16_t)(LE_REGION_DIN | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_DOUT(idx)     ((uint16_t)(LE_REGION_DOUT | ((idx) & LE_ADDR_INDEX_MASK)))
-#define LE_ADDR_MAKE_BOOL_REG(idx) ((uint16_t)(LE_REGION_BOOL_REG | ((idx) & 0x1FFF)))
-#define LE_ADDR_MAKE_FLOAT(idx)    ((uint16_t)(LE_REGION_FLOAT | ((idx) & 0x3FFF)))
-#define LE_ADDR_MAKE_INT_REG(idx)  ((uint16_t)(LE_REGION_INT_REG | ((idx) & LE_ADDR_INDEX_MASK)))
-#define LE_ADDR_MAKE_TIMER(idx)    ((uint16_t)(LE_REGION_TIMER | ((idx) & LE_ADDR_INDEX_MASK)))
-#define LE_ADDR_MAKE_COUNTER(idx)  ((uint16_t)(LE_REGION_COUNTER | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_AIN(idx)      ((uint16_t)(LE_REGION_AIN | ((idx) & LE_ADDR_INDEX_MASK)))
+#define LE_ADDR_MAKE_AOUT(idx)     ((uint16_t)(LE_REGION_AOUT | ((idx) & LE_ADDR_INDEX_MASK)))
+#define LE_ADDR_MAKE_BOOL_REG(idx) ((uint16_t)(LE_REGION_BOOL_REG | ((idx) & 0x1FFF)))
+#define LE_ADDR_MAKE_INT_REG(idx)  ((uint16_t)(LE_REGION_INT_REG | ((idx) & 0x1FFF)))
+#define LE_ADDR_MAKE_FLOAT(idx)    ((uint16_t)(LE_REGION_FLOAT | ((idx) & 0x1FFF)))
 #if LE_ENABLE_COMPLEX
 #define LE_ADDR_MAKE_CMPLX(idx)    ((uint16_t)(LE_REGION_CMPLX | ((idx) & LE_ADDR_INDEX_MASK)))
 #define LE_ADDR_MAKE_CMPLX_PAIR(idx) ((uint16_t)(LE_REGION_CMPLX | (((idx) & 0x0FFE))))  /* even index */
 #endif
+
+/* Type Test Macros */
+#define LE_ADDR_IS_DIN(addr)       (((addr) & 0xF000U) == LE_REGION_DIN)
+#define LE_ADDR_IS_DOUT(addr)      (((addr) & 0xF000U) == LE_REGION_DOUT)
+#define LE_ADDR_IS_AIN(addr)       (((addr) & 0xF000U) == LE_REGION_AIN)
+#define LE_ADDR_IS_AOUT(addr)      (((addr) & 0xF000U) == LE_REGION_AOUT)
+#define LE_ADDR_IS_BOOL(addr)      (((addr) & 0xE000U) == LE_REGION_BOOL_REG)
+#define LE_ADDR_IS_INT(addr)       (((addr) & 0xE000U) == LE_REGION_INT_REG)
+#define LE_ADDR_IS_FLOAT(addr)     (((addr) & 0xE000U) == LE_REGION_FLOAT)
+#if LE_ENABLE_COMPLEX
+#define LE_ADDR_IS_CMPLX(addr)     (((addr) & 0xF000U) == LE_REGION_CMPLX)
+#endif
+#define LE_ADDR_IS_CONST(addr)     (((addr) & 0xF000U) == LE_REGION_CONST)
+
+/* Architectural 16-bit Address Region Limits */
+#define LE_ARCH_MAX_DIN         4096U
+#define LE_ARCH_MAX_DOUT        4096U
+#define LE_ARCH_MAX_AIN         4096U
+#define LE_ARCH_MAX_AOUT        4096U
+#define LE_ARCH_MAX_BOOL_REGS   8192U   /* 13-bit index (0x4000-0x5FFF) */
+#define LE_ARCH_MAX_INT_REGS    8192U   /* 13-bit index (0x6000-0x7FFF) */
+#define LE_ARCH_MAX_FLOATS      8192U   /* 13-bit index (0x8000-0x9FFF) */
+#define LE_ARCH_MAX_COMPLEX     4096U   /* 12-bit index (0xA000-0xAFFF) */
 
 /* ========================================================================== */
 /* Opcodes                                                                    */
@@ -784,21 +687,23 @@ typedef struct {
  */
 typedef struct {
     uint32_t magic;             /**< Magic identifier: 0x4C454231 (ASCII "LEB1"). */
-    uint16_t version;           /**< Binary format version number (currently 8). */
+    uint16_t version;           /**< Binary format version number (currently 12). */
     uint16_t flags;             /**< Program execution flags (for example, LE_FLAG_AUTOSTART). */
     uint16_t instruction_count; /**< Total number of instructions in the bytecode payload. */
-    uint16_t digital_in_count;  /**< Number of digital input channels (%I) required. */
-    uint16_t digital_out_count; /**< Number of digital output channels (%Q) required. */
-    uint16_t bool_reg_count;    /**< Number of internal boolean registers (%M) required. */
-    uint16_t float_reg_count;   /**< Number of float registers (%R) required. */
+    uint16_t digital_in_count;  /**< Number of digital input channels (%IN) required. */
+    uint16_t digital_out_count; /**< Number of digital output channels (%OUT) required. */
+    uint16_t bool_reg_count;    /**< Number of internal boolean registers (%B) required. */
+    uint16_t float_reg_count;   /**< Number of float registers (%F) required. */
     uint16_t complex_reg_count; /**< Number of complex registers (%C, real+imag pairs) required. */
     uint16_t int_reg_count;     /**< Number of int registers (%I) required. */
     uint16_t analog_in_count;   /**< Number of analog input channels (%AIN) required. */
+    uint16_t analog_out_count;  /**< Number of analog output channels (%AOUT) required. */
     uint16_t block_count;       /**< Number of variable-arity block descriptors in the payload. */
     uint16_t state_desc_count;  /**< Number of state-group records (kinds present) in the payload. */
     uint32_t state_img_len;     /**< Bytes of the preconfigured state image (copied to RAM at load). */
     uint16_t alias_count;       /**< Number of user-declared register aliases (le_alias_t entries) appended after the state image. */
-    uint16_t timing_count;      /**< 1 when an 8-byte le_timing_desc_t follows the alias table (0 otherwise). Pads the header to a multiple of 4 bytes so the zero-copy instruction array that follows is 4-byte aligned for in-flash execution. */
+    uint16_t timing_count;      /**< 1 when an 8-byte le_timing_desc_t follows the alias table (0 otherwise). */
+    uint16_t reserved;          /**< Reserved / padding to keep header aligned to 44 bytes (multiple of 4). */
     uint32_t crc32;             /**< IEEE 802.3 CRC32 of the whole payload (instructions + block + state + state image + aliases + timing). */
 } le_header_t;
 

@@ -7,14 +7,20 @@
   "limits": {
     "digital_inputs": 24,
     "digital_outputs": 24,
-    "coils": 256,
-    "floats": 128,
+    "coils": 8192,
+    "floats": 16384,
     "complex_registers": 128,
     "analog_inputs": 4,
     "workspace_bytes": 262144,
     "config_slots": 2,
     "slot_size_bytes": 4096,
-    "ns_per_abstract_cycle": 250
+    "ns_per_abstract_cycle": 250,
+    "nvram_total_bytes": 16384,
+    "nvram_block_size": 4096,
+    "nvram_page_size": 256,
+    "nvram_regs_bytes": 1024,
+    "nvram_ser_bytes": 3072,
+    "nvram_event_rec_bytes": 11200
   },
   "features": {
     "protection": true,
