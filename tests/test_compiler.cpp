@@ -4048,9 +4048,226 @@ void test_code_block_documentation_examples()
     ), "Doc Ex 9: Bitwise operations");
 }
 
+void test_code_block_hdl_multi_driver_warning()
+{
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+
+    // 1. Multiple drivers on output net (unconditional overwrite)
+    const char* multi_driver_output_json = R"({
+        "name": "CbMultiOut",
+        "elements": [
+            { "name": "IN_A", "type": "FLOATREGISTER" },
+            { "name": "IN_B", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "in_a", "type": "float" }, { "name": "in_b", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "out = in_a;\nout = in_b;"
+            },
+            { "name": "OUT", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "IN_B", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_b" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res1;
+    int rc1 = le_compile_json_ex(multi_driver_output_json, nullptr, &opts, &res1);
+    TEST_ASSERT(rc1 == 0 && res1.success == 1, "Multi-driver output compiles with warning");
+    TEST_ASSERT(res1.warnings != nullptr && std::string(res1.warnings).find("multiple unconditional drivers for net 'out'") != std::string::npos,
+                "Warning emitted for multi-driver output net");
+    le_compile_result_free(&res1);
+
+    // 2. Multiple drivers on local variable
+    const char* multi_driver_local_json = R"({
+        "name": "CbMultiLocal",
+        "elements": [
+            { "name": "IN_A", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "in_a", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "float x = in_a;\nx = in_a * 2.0f;\nout = x;"
+            },
+            { "name": "OUT", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res2;
+    int rc2 = le_compile_json_ex(multi_driver_local_json, nullptr, &opts, &res2);
+    TEST_ASSERT(rc2 == 0 && res2.success == 1, "Multi-driver local compiles with warning");
+    TEST_ASSERT(res2.warnings != nullptr && std::string(res2.warnings).find("multiple unconditional drivers for net 'x'") != std::string::npos,
+                "Warning emitted for multi-driver local net");
+    le_compile_result_free(&res2);
+
+    // 3. Multi-driver scalar in loop iterations
+    const char* multi_driver_loop_json = R"({
+        "name": "CbMultiLoop",
+        "elements": [
+            { "name": "IN_A", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "in_a", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "for (int i = 0; i < 3; i++) { out = in_a; }"
+            },
+            { "name": "OUT", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res3;
+    int rc3 = le_compile_json_ex(multi_driver_loop_json, nullptr, &opts, &res3);
+    TEST_ASSERT(rc3 == 0 && res3.success == 1, "Loop multi-driver compiles with warning");
+    TEST_ASSERT(res3.warnings != nullptr && std::string(res3.warnings).find("multiple unconditional drivers for net 'out' across loop iterations") != std::string::npos,
+                "Warning emitted for loop multi-driver net");
+    le_compile_result_free(&res3);
+
+    // 4. Multiplexer (if/else) has NO multi-driver warning
+    const char* mux_valid_json = R"({
+        "name": "CbMuxValid",
+        "elements": [
+            { "name": "COND", "type": "BOOLREGISTER" },
+            { "name": "IN_A", "type": "FLOATREGISTER" },
+            { "name": "IN_B", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "cond", "type": "bool" }, { "name": "in_a", "type": "float" }, { "name": "in_b", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "if (cond) { out = in_a; } else { out = in_b; }"
+            },
+            { "name": "OUT", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "COND", "port": "out" }, "inputs": [ { "name": "CB", "port": "cond" } ] },
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "IN_B", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_b" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res4;
+    int rc4 = le_compile_json_ex(mux_valid_json, nullptr, &opts, &res4);
+    TEST_ASSERT(rc4 == 0 && res4.success == 1, "Mux compiles cleanly");
+    TEST_ASSERT(res4.warnings == nullptr || std::string(res4.warnings).find("multiple unconditional drivers") == std::string::npos,
+                "Clean MUX does not trigger multi-driver warning");
+    le_compile_result_free(&res4);
+}
+
+void test_code_block_hdl_unused_and_undriven_ports()
+{
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+
+    // Unused input pin 'in_unused' and undriven output pin 'out_undriven'
+    const char* ports_json = R"({
+        "name": "CbPorts",
+        "elements": [
+            { "name": "IN_A", "type": "FLOATREGISTER" },
+            { "name": "IN_UNUSED", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "in_a", "type": "float" },
+                    { "name": "in_unused", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "out_driven", "type": "float" },
+                    { "name": "out_undriven", "type": "float" }
+                ],
+                "code": "out_driven = in_a * 2.0f;"
+            },
+            { "name": "OUT", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "IN_UNUSED", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_unused" } ] },
+            { "output": { "name": "CB", "port": "out_driven" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(ports_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Ports circuit compiles with diagnostics");
+    TEST_ASSERT(res.warnings != nullptr, "Diagnostics emitted for unused/undriven ports");
+
+    std::string warn_str = res.warnings;
+    TEST_ASSERT(warn_str.find("[NOTICE] Code block 'CB': input pin 'in_unused' is declared in the interface but never referenced") != std::string::npos,
+                "Unused input pin notice emitted");
+    TEST_ASSERT(warn_str.find("[WARNING] Code block 'CB': output pin 'out_undriven' is declared in the interface but never driven") != std::string::npos,
+                "Undriven output pin warning emitted");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_hdl_bitwise_type_validation()
+{
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+
+    // 1. Bitwise AND on float
+    const char* bitwise_float_json = R"({
+        "name": "CbBitwiseFloat",
+        "elements": [
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "a", "type": "float" }, { "name": "b", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "out = a & b;"
+            }
+        ],
+        "nets": []
+    })";
+
+    le_compile_result_t res1;
+    int rc1 = le_compile_json_ex(bitwise_float_json, nullptr, &opts, &res1);
+    TEST_ASSERT(rc1 != 0 || res1.success == 0, "Bitwise AND on float rejected");
+    TEST_ASSERT(res1.error_message != nullptr && std::string(res1.error_message).find("Bitwise operations (&, |, ^) are only supported on 'int' or 'bool'") != std::string::npos,
+                "Error explains bitwise operations require int or bool");
+    le_compile_result_free(&res1);
+
+    // 2. Bitwise NOT on float
+    const char* bitwise_not_float_json = R"({
+        "name": "CbBitwiseNotFloat",
+        "elements": [
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [ { "name": "a", "type": "float" } ],
+                "outputs": [ { "name": "out", "type": "float" } ],
+                "code": "out = ~a;"
+            }
+        ],
+        "nets": []
+    })";
+
+    le_compile_result_t res2;
+    int rc2 = le_compile_json_ex(bitwise_not_float_json, nullptr, &opts, &res2);
+    TEST_ASSERT(rc2 != 0 || res2.success == 0, "Bitwise NOT on float rejected");
+    TEST_ASSERT(res2.error_message != nullptr && std::string(res2.error_message).find("Bitwise NOT (~) is only supported on 'int' type") != std::string::npos,
+                "Error explains bitwise NOT requires int");
+    le_compile_result_free(&res2);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
+    RUN_TEST(test_code_block_hdl_multi_driver_warning);
+    RUN_TEST(test_code_block_hdl_unused_and_undriven_ports);
+    RUN_TEST(test_code_block_hdl_bitwise_type_validation);
     RUN_TEST(test_code_block_documentation_examples);
     RUN_TEST(test_code_block_static_array_order_independence);
     RUN_TEST(test_basic_and_circuit);

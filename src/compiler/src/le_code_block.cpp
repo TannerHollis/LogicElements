@@ -1122,6 +1122,9 @@ public:
             else if (op == TokenType::Pipe) elem_type = "OR";
             else if (op == TokenType::Caret) elem_type = "XOR";
         } else {
+            if (op == TokenType::Amp || op == TokenType::Pipe || op == TokenType::Caret) {
+                throw std::runtime_error("Bitwise operations (&, |, ^) are only supported on 'int' or 'bool' types, not floating-point or complex");
+            }
             res_kind = TypeKind::Float;
             dt_str = "float";
             if (op == TokenType::Plus) elem_type = "ADD";
@@ -1205,6 +1208,8 @@ public:
             add_element(el);
             add_net(a, ename, "a");
             return {TypeKind::Int, false, false, 0, 0.0f, 0.0f, 0.0f, ename, "out"};
+        } else if (op == TokenType::Tilde) {
+            throw std::runtime_error("Bitwise NOT (~) is only supported on 'int' type, not floating-point or complex");
         }
 
         throw std::runtime_error("Unsupported unary operator");
@@ -1246,8 +1251,8 @@ public:
         return out;
     }
 
-    void emit_warning(const std::string& msg) {
-        m_warnings.push_back("Warning: Code block '" + m_block_name + "': " + msg);
+    void emit_warning(const std::string& msg, const std::string& level = "WARNING") {
+        m_warnings.push_back("[" + level + "] Code block '" + m_block_name + "': " + msg);
     }
 
 private:
@@ -1271,6 +1276,41 @@ public:
     std::map<std::string, WireRef> env;
     std::set<std::string> declared_static;
     std::set<std::string> defined_in_scan;
+
+    std::set<std::string> m_referenced_identifiers;
+    std::set<std::string> m_assigned_keys;
+    std::set<std::string> m_loop_vars;
+    std::vector<std::map<std::string, int>> m_scope_assignment_counts;
+    std::vector<std::set<std::string>> m_loop_assigned_scalars_stack;
+    std::vector<std::set<std::string>> m_loop_warned_scalars_stack;
+
+    void record_assignment(const std::string& key) {
+        m_assigned_keys.insert(key);
+
+        if (m_loop_vars.count(key) > 0) {
+            return;
+        }
+
+        if (!m_scope_assignment_counts.empty()) {
+            int& count = m_scope_assignment_counts.back()[key];
+            count++;
+            if (count == 2) {
+                m_ctx.emit_warning("multiple unconditional drivers for net '" + key + "'. In circuit synthesis, each net can only have one driver per execution path.");
+            }
+        }
+
+        for (size_t i = 0; i < m_loop_assigned_scalars_stack.size(); ++i) {
+            auto& loop_set = m_loop_assigned_scalars_stack[i];
+            auto& warned_set = m_loop_warned_scalars_stack[i];
+            if (loop_set.count(key) > 0) {
+                if (warned_set.insert(key).second) {
+                    m_ctx.emit_warning("multiple unconditional drivers for net '" + key + "' across loop iterations. In circuit synthesis, each net can only have one driver.");
+                }
+            } else {
+                loop_set.insert(key);
+            }
+        }
+    }
 
     WireRef eval_expr(const std::shared_ptr<Expr>& expr) {
         if (auto lit = std::dynamic_pointer_cast<LiteralExpr>(expr)) {
@@ -1508,6 +1548,7 @@ public:
         if (!stmt) return;
 
         if (auto bs = std::dynamic_pointer_cast<BlockStmt>(stmt)) {
+            m_scope_assignment_counts.emplace_back();
             for (const auto& s : bs->stmts) {
                 execute_stmt(s);
                 auto it_has = env.find("__has_returned");
@@ -1515,6 +1556,7 @@ public:
                     break;
                 }
             }
+            m_scope_assignment_counts.pop_back();
             return;
         }
 
@@ -1532,11 +1574,15 @@ public:
                         declared_static.insert(key);
                         declared_static.insert(ds->name);
                         WireRef init_w;
-                        if (ds->init_expr) init_w = eval_expr(ds->init_expr);
+                        if (ds->init_expr) {
+                            init_w = eval_expr(ds->init_expr);
+                            record_assignment(key);
+                        }
                         WireRef reg = get_or_create_feedback_register(key, ds->type.kind, ds->init_expr ? &init_w : nullptr);
                         env[key] = reg;
                     } else if (ds->init_expr) {
                         env[key] = eval_expr(ds->init_expr);
+                        record_assignment(key);
                         defined_in_scan.insert(key);
                     } else {
                         env[key] = default_value_for(ds->type.kind);
@@ -1547,11 +1593,15 @@ public:
                 if (ds->is_static) {
                     declared_static.insert(ds->name);
                     WireRef init_w;
-                    if (ds->init_expr) init_w = eval_expr(ds->init_expr);
+                    if (ds->init_expr) {
+                        init_w = eval_expr(ds->init_expr);
+                        record_assignment(ds->name);
+                    }
                     WireRef reg = get_or_create_feedback_register(ds->name, ds->type.kind, ds->init_expr ? &init_w : nullptr);
                     env[ds->name] = reg;
                 } else if (ds->init_expr) {
                     env[ds->name] = eval_expr(ds->init_expr);
+                    record_assignment(ds->name);
                     defined_in_scan.insert(ds->name);
                 } else {
                     env[ds->name] = default_value_for(ds->type.kind);
@@ -1581,6 +1631,7 @@ public:
                             TokenType bin_op = assign_op_to_binary(as->op);
                             updated_val = m_ctx.synthesize_binary_op(bin_op, cur, rhs_val);
                         }
+                        record_assignment(key);
                         env[key] = m_ctx.synthesize_mux(eq_w, updated_val, cur);
                         defined_in_scan.insert(key);
                     }
@@ -1654,7 +1705,19 @@ public:
         if (auto fs = std::dynamic_pointer_cast<ForStmt>(stmt)) {
             // Unroll for-loop
             // Must have constant bounds
+            std::string loop_var_name;
+            if (auto vds = std::dynamic_pointer_cast<VarDeclStmt>(fs->init_stmt)) {
+                loop_var_name = vds->name;
+                m_loop_vars.insert(loop_var_name);
+            } else if (auto as = std::dynamic_pointer_cast<AssignStmt>(fs->init_stmt)) {
+                loop_var_name = as->name;
+                m_loop_vars.insert(loop_var_name);
+            }
+
             execute_stmt(fs->init_stmt);
+            m_loop_assigned_scalars_stack.emplace_back();
+            m_loop_warned_scalars_stack.emplace_back();
+
             int loop_iterations = 0;
             const int MAX_UNROLL = 1024;
             while (true) {
@@ -1672,6 +1735,12 @@ public:
                 if (fs->inc_stmt) {
                     execute_stmt(fs->inc_stmt);
                 }
+            }
+
+            m_loop_assigned_scalars_stack.pop_back();
+            m_loop_warned_scalars_stack.pop_back();
+            if (!loop_var_name.empty()) {
+                m_loop_vars.erase(loop_var_name);
             }
             return;
         }
@@ -1737,6 +1806,7 @@ public:
 
 private:
     WireRef lookup_var(const std::string& name) {
+        m_referenced_identifiers.insert(name);
         if (declared_static.find(name) != declared_static.end()) {
             auto it_reg = m_feedback_registers.find(name);
             if (it_reg != m_feedback_registers.end()) {
@@ -1749,13 +1819,14 @@ private:
         // If variable has not been initialized yet, treat as registered feedback state
         WireRef reg = get_or_create_feedback_register(name, TypeKind::Float);
         if (declared_static.find(name) == declared_static.end()) {
-            m_ctx.emit_warning("inferred latch for uninitialized variable '" + name + "'");
+            m_ctx.emit_warning("inferred latch for uninitialized variable '" + name + "'. Combinatorial nets cannot feed back without clocked storage; declare as 'static' to create a dedicated register.");
         }
         env[name] = reg;
         return reg;
     }
 
     void apply_assignment(const std::string& key, TokenType op, const WireRef& rhs_val) {
+        record_assignment(key);
         if (op == TokenType::Equal) {
             env[key] = rhs_val;
         } else {
@@ -1956,8 +2027,40 @@ bool CodeBlockExpander::expand_code_blocks(JsonValue& circuit_doc, std::string& 
             }
 
             // Execute all statements
+            evaluator.m_scope_assignment_counts.emplace_back();
             for (const auto& stmt : top_stmts) {
                 evaluator.execute_stmt(stmt);
+            }
+            evaluator.m_scope_assignment_counts.pop_back();
+
+            // HDL Lints: Check for unused input pins
+            if (cb_el.contains("inputs") && cb_el.get("inputs").is_array()) {
+                for (const auto& inp : cb_el.get("inputs").as_array()) {
+                    std::string in_name = inp.get("name").as_string();
+                    if (evaluator.m_referenced_identifiers.count(in_name) == 0) {
+                        ctx.emit_warning("input pin '" + in_name + "' is declared in the interface but never referenced in the circuit.", "NOTICE");
+                    }
+                }
+            }
+
+            // HDL Lints: Check for undriven output pins
+            if (cb_el.contains("outputs") && cb_el.get("outputs").is_array()) {
+                for (const auto& out_spec : cb_el.get("outputs").as_array()) {
+                    std::string out_name = out_spec.get("name").as_string();
+                    int arr_len = evaluator.get_array_length(out_name);
+                    if (arr_len > 0) {
+                        for (int k = 0; k < arr_len; ++k) {
+                            std::string k_key = out_name + "_" + std::to_string(k);
+                            if (evaluator.m_assigned_keys.count(k_key) == 0 && evaluator.env.find(k_key) == evaluator.env.end()) {
+                                ctx.emit_warning("output pin '" + out_name + "[" + std::to_string(k) + "]' is declared in the interface but never driven in the circuit.");
+                            }
+                        }
+                    } else {
+                        if (evaluator.m_assigned_keys.count(out_name) == 0 && evaluator.env.find(out_name) == evaluator.env.end()) {
+                            ctx.emit_warning("output pin '" + out_name + "' is declared in the interface but never driven in the circuit.");
+                        }
+                    }
+                }
             }
 
             // Close feedback loop for state registers
