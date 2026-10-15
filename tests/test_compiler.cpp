@@ -3910,9 +3910,148 @@ void test_code_block_static_array_order_independence()
     le_compile_result_free(&res2);
 }
 
+void test_code_block_documentation_examples()
+{
+    auto test_compile_cb = [](const std::string& code, const std::string& inputs_json, const std::string& outputs_json) -> bool {
+        std::string escaped_code;
+        for (char c : code) {
+            if (c == '"') escaped_code += "\\\"";
+            else if (c == '\\') escaped_code += "\\\\";
+            else if (c == '\n') escaped_code += "\\n";
+            else if (c == '\r') continue;
+            else if (c == '\t') escaped_code += "\\t";
+            else escaped_code += c;
+        }
+        std::string circuit_json = "{\n"
+            "  \"name\": \"DocTest\",\n"
+            "  \"elements\": [\n"
+            "    {\n"
+            "      \"name\": \"CB\",\n"
+            "      \"type\": \"CODE_BLOCK\",\n"
+            "      \"inputs\": " + inputs_json + ",\n"
+            "      \"outputs\": " + outputs_json + ",\n"
+            "      \"code\": \"" + escaped_code + "\"\n"
+            "    }\n"
+            "  ],\n"
+            "  \"nets\": []\n"
+            "}";
+        le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+        le_compile_result_t res;
+        int rc = le_compile_json_ex(circuit_json.c_str(), nullptr, &opts, &res);
+        bool ok = (rc == 0 && res.success == 1);
+        if (!ok && res.error_message) {
+            std::cout << "Doc test compile failed for code:\n" << code << "\nError: " << res.error_message << "\n";
+        }
+        le_compile_result_free(&res);
+        return ok;
+    };
+
+    // Ex 1: Signal Conditioning & Clamping
+    TEST_ASSERT(test_compile_cb(
+        "float scaled = in_val * gain + offset;\n"
+        "out_val = clamp(scaled, min_limit, max_limit);",
+        R"([{"name":"in_val","type":"float"},{"name":"gain","type":"float"},{"name":"offset","type":"float"},{"name":"min_limit","type":"float"},{"name":"max_limit","type":"float"}])",
+        R"([{"name":"out_val","type":"float"}])"
+    ), "Doc Ex 1: Signal conditioning");
+
+    // Ex 2: Mode Selector Multiplexer
+    TEST_ASSERT(test_compile_cb(
+        "if (manual_mode) {\n"
+        "    out_ctrl = manual_cmd;\n"
+        "} else if (auto_enable) {\n"
+        "    out_ctrl = auto_target;\n"
+        "} else {\n"
+        "    out_ctrl = 0.0;\n"
+        "}",
+        R"([{"name":"manual_mode","type":"bool"},{"name":"manual_cmd","type":"float"},{"name":"auto_enable","type":"bool"},{"name":"auto_target","type":"float"}])",
+        R"([{"name":"out_ctrl","type":"float"}])"
+    ), "Doc Ex 2: Mode selector MUX");
+
+    // Ex 3: Unrolled Array FIR / Weighted Sum
+    TEST_ASSERT(test_compile_cb(
+        "float weights[4];\n"
+        "weights[0] = 0.4;\n"
+        "weights[1] = 0.3;\n"
+        "weights[2] = 0.2;\n"
+        "weights[3] = 0.1;\n"
+        "float acc = 0.0;\n"
+        "for (int i = 0; i < 4; i++) {\n"
+        "    acc += samples[i] * weights[i];\n"
+        "}\n"
+        "out_filtered = acc;",
+        R"([{"name":"samples","type":"float[4]"}])",
+        R"([{"name":"out_filtered","type":"float"}])"
+    ), "Doc Ex 3: FIR filter unrolled loop");
+
+    // Ex 4: Stateful Shift Register Pipeline
+    TEST_ASSERT(test_compile_cb(
+        "static bool s[5];\n"
+        "out = s[4];\n"
+        "for (int i = 4; i > 0; i--) {\n"
+        "    s[i] = s[i - 1];\n"
+        "}\n"
+        "s[0] = in_a && in_b;",
+        R"([{"name":"in_a","type":"bool"},{"name":"in_b","type":"bool"}])",
+        R"([{"name":"out","type":"bool"}])"
+    ), "Doc Ex 4: Shift register pipeline");
+
+    // Ex 5: Stateful Rising Edge Detector
+    TEST_ASSERT(test_compile_cb(
+        "static bool prev = false;\n"
+        "pulse = trigger && !prev;\n"
+        "prev = trigger;",
+        R"([{"name":"trigger","type":"bool"}])",
+        R"([{"name":"pulse","type":"bool"}])"
+    ), "Doc Ex 5: Rising edge detector");
+
+    // Ex 6: Stateful Counter / Accumulator with Reset
+    TEST_ASSERT(test_compile_cb(
+        "static int count = 0;\n"
+        "if (reset) {\n"
+        "    count = 0;\n"
+        "} else if (enable) {\n"
+        "    count = count + 1;\n"
+        "}\n"
+        "out_count = count;",
+        R"([{"name":"reset","type":"bool"},{"name":"enable","type":"bool"}])",
+        R"([{"name":"out_count","type":"int"}])"
+    ), "Doc Ex 6: Accumulator with reset");
+
+    // Ex 7: Inlined User Helper Function
+    TEST_ASSERT(test_compile_cb(
+        "float deadband(float val, float thresh) {\n"
+        "    if (abs(val) < thresh) return 0.0;\n"
+        "    return val;\n"
+        "}\n"
+        "out_a = deadband(in_a, 0.1);\n"
+        "out_b = deadband(in_b, 0.1);",
+        R"([{"name":"in_a","type":"float"},{"name":"in_b","type":"float"}])",
+        R"([{"name":"out_a","type":"float"},{"name":"out_b","type":"float"}])"
+    ), "Doc Ex 7: Inlined user function");
+
+    // Ex 8: Complex Phasor Math (Polar Conversion)
+    TEST_ASSERT(test_compile_cb(
+        "float mag = sqrt(in_phasor.real * in_phasor.real + in_phasor.imag * in_phasor.imag);\n"
+        "float angle = atan2(in_phasor.imag, in_phasor.real);\n"
+        "out_mag = mag;\n"
+        "out_phase = angle;",
+        R"([{"name":"in_phasor","type":"complex"}])",
+        R"([{"name":"out_mag","type":"float"},{"name":"out_phase","type":"float"}])"
+    ), "Doc Ex 8: Complex polar conversion");
+
+    // Ex 9: Bitwise Masking Operations
+    TEST_ASSERT(test_compile_cb(
+        "int masked = (in_bits & mask) ^ 15;\n"
+        "out_bits = masked | 128;",
+        R"([{"name":"in_bits","type":"int"},{"name":"mask","type":"int"}])",
+        R"([{"name":"out_bits","type":"int"}])"
+    ), "Doc Ex 9: Bitwise operations");
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
+    RUN_TEST(test_code_block_documentation_examples);
     RUN_TEST(test_code_block_static_array_order_independence);
     RUN_TEST(test_basic_and_circuit);
     RUN_TEST(test_float_math_circuit);
