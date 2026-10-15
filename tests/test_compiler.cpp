@@ -2159,15 +2159,20 @@ void test_circuit_owns_scan_rate(void)
  */
 void test_opcode_enum_density(void)
 {
+    TEST_ASSERT(LE_OP_LOAD_I == 0x1E, "LOAD_I opcode present at 0x1E");
     TEST_ASSERT(LE_OP_RESERVED_1F == 0x1F, "reserved block 1F present");
-    TEST_ASSERT(LE_OP_RESERVED_50 == 0x50, "reserved block 50 present");
+    TEST_ASSERT(LE_OP_FMA_F == 0x50, "FMA_F opcode present at 0x50");
+    TEST_ASSERT(LE_OP_FMS_F == 0x51, "FMS_F opcode present at 0x51");
+    TEST_ASSERT(LE_OP_LOAD_F == 0x52, "LOAD_F opcode present at 0x52");
+    TEST_ASSERT(LE_OP_SQRT_F == 0x53, "SQRT_F opcode present at 0x53");
+    TEST_ASSERT(LE_OP_RESERVED_5F == 0x5F, "reserved block 5F present");
     TEST_ASSERT(LE_OP_RESERVED_9F == 0x9F, "reserved block 9F present");
     TEST_ASSERT(LE_OP_RESERVED_FE == 0xFE, "reserved block FE present");
     TEST_ASSERT(LE_OP_END == 0xFF, "END remains the table sentinel");
 
     le_process_image_t img;
     le_process_image_init(&img);
-    le_instruction_t inst = { (uint8_t)LE_OP_RESERVED_50, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
+    le_instruction_t inst = { (uint8_t)LE_OP_RESERVED_5F, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED, LE_ADDR_UNUSED };
     TEST_ASSERT(le_exec_instruction(&inst, &img, 0) == LE_ERR_UNKNOWN_OPCODE,
                 "reserved opcode rejected as unknown");
 }
@@ -2462,9 +2467,1453 @@ void test_analog_output_pipeline()
     le_compile_result_free(&res);
 }
 
+void test_sparse_io_addressing_accommodated()
+{
+    // Circuit uses only %I4 and %Q5 (no lower inputs/outputs declared)
+    const char* circuit_json = R"({
+        "name": "SparseIOCircuit",
+        "elements": [
+            { "name": "BTN4", "type": "DIGITALINPUT", "address": "%I4" },
+            { "name": "OUT5", "type": "DIGITALOUTPUT", "address": "%Q5" }
+        ],
+        "nets": [
+            { "output": { "name": "BTN4", "port": "out" }, "inputs": [ { "name": "OUT5", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res;
+    int rc = le_compile_json(circuit_json, nullptr, &res);
+    TEST_ASSERT(rc == 0 && res.success, "sparse I/O circuit compiles");
+
+    le_header_t h;
+    TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "sparse binary validates");
+    TEST_ASSERT(h.digital_in_count >= 5, "header allocates at least 5 DIN for %I4");
+    TEST_ASSERT(h.digital_out_count >= 6, "header allocates at least 6 DOUT for %Q5");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "sparse binary loads into VM");
+
+    // %I4 can be written and read through process image
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(4), true);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(4)) == true, "%I4 readback is true");
+
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm step succeeds");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(5)) == true, "%Q5 is set by %I4");
+
+    le_compile_result_free(&res);
+
+    // Now test with board profile declaring 16 digital inputs
+    const char* board_json = R"({
+        "device": { "name": "Board16" },
+        "limits": { "digital_inputs": 16, "digital_outputs": 16 }
+    })";
+    rc = le_compile_json(circuit_json, board_json, &res);
+    TEST_ASSERT(rc == 0 && res.success, "sparse I/O with board compiles");
+    TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "board binary validates");
+    TEST_ASSERT(h.digital_in_count >= 16, "header allocates all 16 board inputs");
+    TEST_ASSERT(h.digital_out_count >= 16, "header allocates all 16 board outputs");
+    le_compile_result_free(&res);
+}
+
+void test_rs_latch_feedback_register()
+{
+    const char* circuit_json = R"({
+        "name": "RS_Latch_Test",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT" },
+            { "name": "IN4", "type": "DIGITALINPUT" },
+            { "name": "OR", "type": "OR" },
+            { "name": "AND", "type": "AND" },
+            { "name": "NOT", "type": "NOT" },
+            { "name": "B_REG1", "type": "BOOLREGISTER" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT" }
+        ],
+        "nets": [
+            { "output": { "name": "IN4", "port": "out" }, "inputs": [ { "name": "NOT", "port": "in" } ] },
+            { "output": { "name": "NOT", "port": "out" }, "inputs": [ { "name": "AND", "port": "b" } ] },
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "OR", "port": "b" } ] },
+            { "output": { "name": "B_REG1", "port": "out" }, "inputs": [ { "name": "OR", "port": "a" }, { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "OR", "port": "out" }, "inputs": [ { "name": "AND", "port": "a" } ] },
+            { "output": { "name": "AND", "port": "out" }, "inputs": [ { "name": "B_REG1", "port": "in" } ] }
+        ]
+    })";
+
+    // 1. Test with LE_OPT_NONE (-O0)
+    le_compiler_options_t opts_none = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res_none;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts_none, &res_none);
+    TEST_ASSERT(rc == 0 && res_none.success, "RS latch compiles at -O0");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res_none.binary_data, res_none.binary_size) == LE_OK, "RS latch loads");
+    le_vm_start(&vm);
+
+    // Step 1: Set=1, Reset=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "step 1");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == true, "B_REG1 is set");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT1 is set");
+
+    // Step 2: Set=0, Reset=0 -> Must stay latched!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "step 2");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == true, "B_REG1 remains latched");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT1 remains latched");
+
+    // Step 3: Set=0, Reset=1 -> Must reset!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
+    TEST_ASSERT(le_vm_step(&vm, 2) == LE_OK, "step 3");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == false, "B_REG1 resets");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT1 resets");
+
+    le_compile_result_free(&res_none);
+
+    // 2. Test with LE_OPT_FULL (-O2)
+    le_compiler_options_t opts_full = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res_full;
+    rc = le_compile_json_ex(circuit_json, nullptr, &opts_full, &res_full);
+    TEST_ASSERT(rc == 0 && res_full.success, "RS latch compiles at -O2");
+
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res_full.binary_data, res_full.binary_size) == LE_OK, "RS latch loads (opt)");
+    le_vm_start(&vm);
+
+    // Step 1: Set=1, Reset=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "opt step 1");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == true, "opt B_REG1 is set");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "opt OUT1 is set");
+
+    // Step 2: Set=0, Reset=0 -> Must stay latched!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "opt step 2");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == true, "opt B_REG1 remains latched");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "opt OUT1 remains latched");
+
+    // Step 3: Set=0, Reset=1 -> Must reset!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
+    TEST_ASSERT(le_vm_step(&vm, 2) == LE_OK, "opt step 3");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0)) == false, "opt B_REG1 resets");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "opt OUT1 resets");
+
+    le_compile_result_free(&res_full);
+}
+
+void test_dedicated_latch_node_state_retention()
+{
+    // A circuit with a LATCH (RS) element, followed by downstream logic (AND, OR)
+    // that uses temporary boolean registers. The latch MUST retain its state across
+    // scans even when downstream nodes acquire and overwrite temporary boolean registers.
+    const char* circuit_json = R"({
+        "name": "Dedicated_Latch_Circuit",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN4", "type": "DIGITALINPUT", "address": "%I4" },
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I2" },
+            { "name": "L1", "type": "LATCH" },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%Q0" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q1" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "L1", "port": "s" } ] },
+            { "output": { "name": "IN4", "port": "out" }, "inputs": [ { "name": "L1", "port": "r" } ] },
+            { "output": { "name": "L1", "port": "q" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "Dedicated LATCH circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Dedicated LATCH circuit loads");
+    le_vm_start(&vm);
+
+    // Scan 1: Set=1, Reset=0 -> Latch Q becomes 1, OUT0 becomes 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(4), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "latch scan 1");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT0 set to 1");
+
+    // Scan 2: Set=0, Reset=0 -> Latch MUST REMAIN 1 across scan!
+    // Downstream gates (AND1, OR1) will execute, but should NOT clobber the latch state!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(4), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "latch scan 2");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT0 remains latched at 1");
+
+    // Scan 3: Set=0, Reset=1 -> Latch resets to 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(4), true);
+    TEST_ASSERT(le_vm_step(&vm, 2) == LE_OK, "latch scan 3");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT0 reset to 0");
+
+    // Scan 4: Set=0, Reset=0 -> Latch remains 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(4), false);
+    TEST_ASSERT(le_vm_step(&vm, 3) == LE_OK, "latch scan 4");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT0 remains 0");
+
+    le_compile_result_free(&res);
+}
+
+void test_cross_coupled_latch_auto_feedback()
+{
+    // Discrete cross-coupled RS latch without an explicit BOOLREGISTER element:
+    // OR <-> AND combinatorial loop. The compiler automatically synthesizes a
+    // persistent feedback register to hold state across scans.
+    const char* circuit_json = R"({
+        "name": "CrossCoupled_RS",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT" },
+            { "name": "IN4", "type": "DIGITALINPUT" },
+            { "name": "OR", "type": "OR" },
+            { "name": "NOT", "type": "NOT" },
+            { "name": "AND", "type": "AND" },
+            { "name": "OUT0", "type": "DIGITALOUTPUT" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "OR", "port": "a" } ] },
+            { "output": { "name": "OR", "port": "out" }, "inputs": [ { "name": "OUT0", "port": "in" }, { "name": "AND", "port": "a" } ] },
+            { "output": { "name": "IN4", "port": "out" }, "inputs": [ { "name": "NOT", "port": "in" } ] },
+            { "output": { "name": "NOT", "port": "out" }, "inputs": [ { "name": "AND", "port": "b" } ] },
+            { "output": { "name": "AND", "port": "out" }, "inputs": [ { "name": "OR", "port": "b" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "cross-coupled latch compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "cross-coupled latch loads");
+    le_vm_start(&vm);
+
+    // Step 1: Set=1, Reset=0 -> Output=1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "cc step 1");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT0 is set");
+
+    // Step 2: Set=0, Reset=0 -> Must stay latched!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "cc step 2");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT0 remains latched");
+
+    // Step 3: Set=0, Reset=1 -> Resets to 0!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
+    TEST_ASSERT(le_vm_step(&vm, 2) == LE_OK, "cc step 3");
+    // Step 4: After reset propagation, output is 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    TEST_ASSERT(le_vm_step(&vm, 3) == LE_OK, "cc step 4");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT0 is reset");
+
+    le_compile_result_free(&res);
+}
+
+void test_boolean_simplification_annihilation()
+{
+    // A && !A -> FALSE
+    const char* circuit_and = R"({
+        "name": "AnnihilationAnd",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "NOT1", "type": "NOT" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "NOT1", "port": "in" }, { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "NOT1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opt_full = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res_and;
+    int rc = le_compile_json_ex(circuit_and, nullptr, &opt_full, &res_and);
+    TEST_ASSERT(rc == 0 && res_and.success == 1, "Annihilation AND compile failed");
+    // AND1 and NOT1 should both be eliminated, collapsing to a single MOVE FALSE -> %OUT[0]
+    TEST_ASSERT(res_and.instruction_count == 1, "Expected 1 instruction (constant FALSE write)");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm_init failed");
+    TEST_ASSERT(le_loader_load(&vm, res_and.binary_data, res_and.binary_size) == LE_OK, "load failed");
+
+    // Test with IN1 = true -> OUT1 should be false
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT1 must be false");
+
+    // Test with IN1 = false -> OUT1 should be false
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT1 must be false");
+    le_compile_result_free(&res_and);
+
+    // A || !A -> TRUE
+    const char* circuit_or = R"({
+        "name": "AnnihilationOr",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "NOT1", "type": "NOT" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "NOT1", "port": "in" }, { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "NOT1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res_or;
+    rc = le_compile_json_ex(circuit_or, nullptr, &opt_full, &res_or);
+    TEST_ASSERT(rc == 0 && res_or.success == 1, "Annihilation OR compile failed");
+    TEST_ASSERT(res_or.instruction_count == 1, "Expected 1 instruction (constant TRUE write)");
+
+    TEST_ASSERT(le_loader_load(&vm, res_or.binary_data, res_or.binary_size) == LE_OK, "load failed");
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT1 must be true for !0 || 0");
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT1 must be true for !1 || 1");
+    le_compile_result_free(&res_or);
+}
+
+void test_boolean_simplification_idempotence()
+{
+    // A && A -> A
+    const char* circuit_and = R"({
+        "name": "IdempotenceAnd",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" }, { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opt_full = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res_and;
+    int rc = le_compile_json_ex(circuit_and, nullptr, &opt_full, &res_and);
+    TEST_ASSERT(rc == 0 && res_and.success == 1, "Idempotence AND compile failed");
+    // AND1 eliminated, direct move IN1 -> OUT1
+    TEST_ASSERT(res_and.instruction_count == 1, "Expected 1 instruction (MOVE IN1 -> OUT1)");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm_init failed");
+    TEST_ASSERT(le_loader_load(&vm, res_and.binary_data, res_and.binary_size) == LE_OK, "load failed");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "OUT1 must be true");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "vm_step failed");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == false, "OUT1 must be false");
+    le_compile_result_free(&res_and);
+
+    // A ^ A -> FALSE
+    const char* circuit_xor = R"({
+        "name": "IdempotenceXor",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "XOR1", "type": "XOR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "XOR1", "port": "a" }, { "name": "XOR1", "port": "b" } ] },
+            { "output": { "name": "XOR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res_xor;
+    rc = le_compile_json_ex(circuit_xor, nullptr, &opt_full, &res_xor);
+    TEST_ASSERT(rc == 0 && res_xor.success == 1, "Idempotence XOR compile failed");
+    TEST_ASSERT(res_xor.instruction_count == 1, "Expected 1 instruction (constant FALSE write)");
+    le_compile_result_free(&res_xor);
+}
+
+void test_boolean_simplification_absorption()
+{
+    // A || (A && B) -> A
+    const char* circuit_abs = R"({
+        "name": "AbsorptionTest",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" }, { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opt_full = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_abs, nullptr, &opt_full, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Absorption compile failed");
+    // Both AND1 and OR1 eliminated, leaving MOVE IN1 -> OUT1
+    TEST_ASSERT(res.instruction_count == 1, "Expected 1 instruction after absorption (MOVE IN1 -> OUT1)");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm_init failed");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "load failed");
+
+    // All 4 input combinations: OUT1 must equal IN1
+    for (int in1 = 0; in1 <= 1; in1++) {
+        for (int in2 = 0; in2 <= 1; in2++) {
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), in1 != 0);
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), in2 != 0);
+            TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+            bool expected = (in1 != 0);
+            TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == expected,
+                        "Absorption logic truth table mismatch");
+        }
+    }
+    le_compile_result_free(&res);
+
+    // Redundancy / Simplification: A || (!A && B) -> A || B
+    const char* circuit_red = R"({
+        "name": "RedundancyTest",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "NOT1", "type": "NOT" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "NOT1", "port": "in" }, { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "NOT1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res_red;
+    rc = le_compile_json_ex(circuit_red, nullptr, &opt_full, &res_red);
+    TEST_ASSERT(rc == 0 && res_red.success == 1, "Redundancy compile failed");
+    // A || (!A && B) simplifies to A || B, which coalesces into 1 instruction OR(IN1, IN2) -> OUT1
+    TEST_ASSERT(res_red.instruction_count == 1, "Expected 1 fused OR instruction for A || B");
+
+    TEST_ASSERT(le_loader_load(&vm, res_red.binary_data, res_red.binary_size) == LE_OK, "load failed");
+    for (int in1 = 0; in1 <= 1; in1++) {
+        for (int in2 = 0; in2 <= 1; in2++) {
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), in1 != 0);
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), in2 != 0);
+            TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+            bool expected = (in1 != 0) || (in2 != 0);
+            TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == expected,
+                        "Redundancy logic truth table mismatch");
+        }
+    }
+    le_compile_result_free(&res_red);
+}
+
+void test_boolean_simplification_complementary_merging()
+{
+    // (A && B) || (A && !B) -> A
+    const char* circuit_cm = R"({
+        "name": "ComplementaryMergingTest",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "NOT1", "type": "NOT" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "AND2", "type": "AND" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" }, { "name": "AND2", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND1", "port": "b" }, { "name": "NOT1", "port": "in" } ] },
+            { "output": { "name": "NOT1", "port": "out" }, "inputs": [ { "name": "AND2", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "AND2", "port": "out" }, "inputs": [ { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opt_full = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_cm, nullptr, &opt_full, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Complementary merging compile failed");
+    // (A && B) || (A && !B) simplifies directly to A (MOVE IN1 -> OUT1)
+    TEST_ASSERT(res.instruction_count == 1, "Expected 1 instruction after complementary merging (MOVE IN1 -> OUT1)");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "vm_init failed");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "load failed");
+
+    for (int in1 = 0; in1 <= 1; in1++) {
+        for (int in2 = 0; in2 <= 1; in2++) {
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), in1 != 0);
+            le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), in2 != 0);
+            TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "vm_step failed");
+            bool expected = (in1 != 0);
+            TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == expected,
+                        "Complementary merging truth table mismatch");
+        }
+    }
+    le_compile_result_free(&res);
+}
+
+void test_ring_oscillator_hazard_warning()
+{
+    // 3-inverter ring oscillator: NOT1 -> NOT2 -> NOT3 -> NOT1 (odd inversion parity = 3)
+    const char* ring_json = R"({
+        "name": "RingOscillator",
+        "elements": [
+            { "name": "N1", "type": "NOT" },
+            { "name": "N2", "type": "NOT" },
+            { "name": "N3", "type": "NOT" },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" }
+        ],
+        "nets": [
+            { "output": { "name": "N1", "port": "out" }, "inputs": [ { "name": "N2", "port": "in" } ] },
+            { "output": { "name": "N2", "port": "out" }, "inputs": [ { "name": "N3", "port": "in" } ] },
+            { "output": { "name": "N3", "port": "out" }, "inputs": [ { "name": "N1", "port": "in" }, { "name": "OUT0", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(ring_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Ring oscillator compiles safely");
+    TEST_ASSERT(res.warnings != nullptr, "Expected compiler warnings for ring oscillator");
+    TEST_ASSERT(std::strstr(res.warnings, "ring oscillator") != nullptr,
+                "Warning must mention combinatorial ring oscillator hazard");
+
+    // Verify VM executes deterministically using synthesized unit-delay register
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "ring oscillator loads");
+    le_vm_start(&vm);
+
+    // Initial state: first scan computes output
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "step 0");
+    bool v0 = le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0));
+    // Second scan: inverting feedback toggles output!
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "step 1");
+    bool v1 = le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0));
+    TEST_ASSERT(v0 != v1, "Ring oscillator output toggles deterministically per scan");
+
+    le_compile_result_free(&res);
+}
+
+void test_instruction_fusion_fma()
+{
+    // A * B + C fused into FMA
+    const char* circuit_json = R"({
+        "name": "FmaTest",
+        "elements": [
+            { "name": "A", "type": "FLOATREGISTER" },
+            { "name": "B", "type": "FLOATREGISTER" },
+            { "name": "C", "type": "FLOATREGISTER" },
+            { "name": "M", "type": "MUL" },
+            { "name": "ADD1", "type": "ADD" },
+            { "name": "OUT_F", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "A", "port": "out" }, "inputs": [ { "name": "M", "port": "a" } ] },
+            { "output": { "name": "B", "port": "out" }, "inputs": [ { "name": "M", "port": "b" } ] },
+            { "output": { "name": "M", "port": "out" }, "inputs": [ { "name": "ADD1", "port": "a" } ] },
+            { "output": { "name": "C", "port": "out" }, "inputs": [ { "name": "ADD1", "port": "b" } ] },
+            { "output": { "name": "ADD1", "port": "out" }, "inputs": [ { "name": "OUT_F", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "FMA circuit compiles");
+
+    // Load and test VM execution
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "FMA program loads");
+
+    // Set A = 3.0, B = 4.0, C = 5.0
+    // Float registers: A (%F0), B (%F1), C (%F2), OUT_F (%F3)
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 3.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 4.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(2), 5.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "FMA step succeeds");
+
+    // 3.0 * 4.0 + 5.0 = 17.0
+    float out_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3));
+    TEST_ASSERT(fabsf(out_val - 17.0f) < 1e-4f, "FMA computes 3*4 + 5 = 17.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_instruction_fusion_fms()
+{
+    // C - (A * B) fused into FMS
+    const char* circuit_json = R"({
+        "name": "FmsTest",
+        "elements": [
+            { "name": "A", "type": "FLOATREGISTER" },
+            { "name": "B", "type": "FLOATREGISTER" },
+            { "name": "C", "type": "FLOATREGISTER" },
+            { "name": "M", "type": "MUL" },
+            { "name": "SUB1", "type": "SUB" },
+            { "name": "OUT_F", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "A", "port": "out" }, "inputs": [ { "name": "M", "port": "a" } ] },
+            { "output": { "name": "B", "port": "out" }, "inputs": [ { "name": "M", "port": "b" } ] },
+            { "output": { "name": "C", "port": "out" }, "inputs": [ { "name": "SUB1", "port": "a" } ] },
+            { "output": { "name": "M", "port": "out" }, "inputs": [ { "name": "SUB1", "port": "b" } ] },
+            { "output": { "name": "SUB1", "port": "out" }, "inputs": [ { "name": "OUT_F", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "FMS circuit compiles");
+
+    // Load and test VM execution
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "FMS program loads");
+
+    // Set A = 2.5, B = 4.0, C = 20.0
+    // Float registers: A (%F0), B (%F1), C (%F2), OUT_F (%F3)
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 2.5f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 4.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(2), 20.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "FMS step succeeds");
+
+    // 20.0 - (2.5 * 4.0) = 10.0
+    float out_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3));
+    TEST_ASSERT(fabsf(out_val - 10.0f) < 1e-4f, "FMS computes 20 - (2.5*4) = 10.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_chunked_container_emission()
+{
+    const char* circuit_json = R"({
+        "name": "TestChunkedEmit",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "OR1", "type": "OR" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "OR1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "OR1", "port": "b" } ] },
+            { "output": { "name": "OR1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t options = le_compiler_options_init_default();
+    options.emit_chunked_container = 1;
+
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &options, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Compilation with emit_chunked_container succeeds");
+    TEST_ASSERT(res.binary_data != nullptr && res.binary_size > sizeof(le_container_header_t), "Binary emitted");
+
+    // Verify container header magic is LEB2
+    uint32_t magic = *(const uint32_t*)res.binary_data;
+    TEST_ASSERT(magic == LE_BIN_MAGIC_V2, "Emitted binary magic is LEB2 (0x4C454232)");
+
+    // Disassembly contains chunked container banner
+    TEST_ASSERT(res.disassembly_text != nullptr, "Disassembly generated");
+    std::string disasm(res.disassembly_text);
+    TEST_ASSERT(disasm.find("LOGICELEMENTS CONTAINER DISASSEMBLY (.lebin v13 Chunked)") != std::string::npos,
+                "Disassembly identifies chunked container format");
+
+    // Load into VM and verify
+    le_vm_t vm;
+    std::memset(&vm, 0, sizeof(vm));
+    le_status_t st = le_loader_load(&vm, res.binary_data, res.binary_size);
+    TEST_ASSERT(st == LE_OK, "le_loader_load accepts emitted chunked container");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true,
+                "Logic executes correctly from emitted chunked container");
+
+    le_compile_result_free(&res);
+}
+
+void test_multi_rate_compilation_and_execution()
+{
+    // Fast logic (AND -> OUT0), Medium logic (LPF -> OUT_F0), Slow logic (TOTALIZER -> OUT_F1)
+    const char* circuit_json = R"({
+        "name": "TestMultiRateCircuit",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "IN2", "type": "DIGITALINPUT", "address": "%I1" },
+            { "name": "AND1", "type": "AND" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" },
+            { "name": "AIN1", "type": "ANALOGINPUT", "address": "%AIN0" },
+            { "name": "LPF1", "type": "LPF", "cutoff_hz": 10.0 },
+            { "name": "OUT_F0", "type": "FLOATREGISTER", "address": "%F0" },
+            { "name": "TOT1", "type": "TOTALIZER", "scale": 1.0 },
+            { "name": "OUT_F1", "type": "FLOATREGISTER", "address": "%F1" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "AND1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "AND1", "port": "b" } ] },
+            { "output": { "name": "AND1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "AIN1", "port": "out" }, "inputs": [ { "name": "LPF1", "port": "in" } ] },
+            { "output": { "name": "LPF1", "port": "out" }, "inputs": [ { "name": "OUT_F0", "port": "in" } ] },
+            { "output": { "name": "AIN1", "port": "out" }, "inputs": [ { "name": "TOT1", "port": "in" } ] },
+            { "output": { "name": "TOT1", "port": "out" }, "inputs": [ { "name": "OUT_F1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t options = le_compiler_options_init_default();
+    options.enable_multi_rate = 1;
+    options.rate_med_div = 10;
+    options.rate_slow_div = 100;
+
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &options, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Compilation with enable_multi_rate succeeds");
+    TEST_ASSERT(res.binary_data != nullptr, "Binary data produced");
+
+    // Must be chunked container with RATE chunk
+    le_chunked_view_t view;
+    le_status_t st = le_loader_parse_chunks(res.binary_data, res.binary_size, &view);
+    TEST_ASSERT(st == LE_OK, "Parsed chunks from multi-rate binary");
+    TEST_ASSERT(view.rate != nullptr, "RATE chunk present in container");
+    TEST_ASSERT(view.rate->rate_fast_count > 0, "rate_fast_count > 0");
+    TEST_ASSERT(view.rate->rate_med_count > 0, "rate_med_count > 0");
+    TEST_ASSERT(view.rate->rate_med_div == 10, "rate_med_div == 10");
+    TEST_ASSERT(view.rate->rate_slow_div == 100, "rate_slow_div == 100");
+
+    // Check disassembly mentions Execution Rates
+    std::string disasm(res.disassembly_text);
+    TEST_ASSERT(disasm.find("Execution Rates:") != std::string::npos, "Disassembly reports Execution Rates");
+
+    // Load into VM
+    le_vm_t vm;
+    std::memset(&vm, 0, sizeof(vm));
+    st = le_loader_load(&vm, res.binary_data, res.binary_size);
+    TEST_ASSERT(st == LE_OK, "VM successfully loaded multi-rate container");
+    TEST_ASSERT(vm.rate_fast_count == view.rate->rate_fast_count, "VM fast count matches");
+    TEST_ASSERT(vm.rate_med_count == view.rate->rate_med_count, "VM med count matches");
+    TEST_ASSERT(vm.rate_med_div == 10, "VM med divisor matches");
+    TEST_ASSERT(vm.rate_slow_div == 100, "VM slow divisor matches");
+
+    le_compile_result_free(&res);
+}
+
+void test_cryptographic_signing_api()
+{
+    const char* circuit_json = R"({
+        "name": "TestSignedCircuit",
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "NOT1", "type": "NOT" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "NOT1", "port": "in" } ] },
+            { "output": { "name": "NOT1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t options = le_compiler_options_init_default();
+    options.emit_chunked_container = 1;
+
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &options, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Compilation succeeds");
+
+    // Keygen
+    uint8_t seed[32] = { 0x42, 0x13, 0x37, 0x99 };
+    uint8_t pk[32], sk[64];
+    rc = le_compiler_keygen(pk, sk, seed);
+    TEST_ASSERT(rc == 0, "le_compiler_keygen succeeds");
+
+    // Sign container
+    std::vector<uint8_t> signed_container(res.binary_size + 512);
+    size_t signed_size = 0;
+    rc = le_compiler_sign_container(res.binary_data, res.binary_size, sk,
+                                   signed_container.data(), signed_container.size(), &signed_size);
+    TEST_ASSERT(rc == 0 && signed_size > res.binary_size, "le_compiler_sign_container succeeds");
+
+    // Validate with correct public key
+    le_header_t hdr;
+    le_status_t st = le_loader_validate_signed(signed_container.data(), signed_size, pk, &hdr);
+    TEST_ASSERT(st == LE_OK, "le_loader_validate_signed accepts container signed by compiler API");
+
+    // Validate with wrong public key
+    uint8_t wrong_pk[32];
+    std::memcpy(wrong_pk, pk, 32);
+    wrong_pk[0] ^= 0xAA;
+    st = le_loader_validate_signed(signed_container.data(), signed_size, wrong_pk, &hdr);
+    TEST_ASSERT(st == LE_ERR_SIGNATURE_INVALID, "le_loader_validate_signed rejects wrong public key");
+
+    // Verify disassembler recognizes SIGN chunk
+    char* dis_signed = nullptr;
+    char* err_signed = nullptr;
+    rc = le_disassemble_bin(signed_container.data(), signed_size, -1, -1, -1, nullptr, &dis_signed, &err_signed);
+    TEST_ASSERT(rc == 0 && dis_signed != nullptr, "Disassembly of signed container succeeds");
+    std::string dis_str(dis_signed);
+    TEST_ASSERT(dis_str.find("SIGN") != std::string::npos || dis_str.find("Signature") != std::string::npos,
+                "Disassembly mentions signature chunk");
+    le_compiler_free_buffer(dis_signed);
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_basic_arithmetic()
+{
+    const char* circuit_json = R"({
+        "name": "CbArith",
+        "elements": [
+            { "name": "IN1", "type": "FLOATREGISTER" },
+            { "name": "IN2", "type": "FLOATREGISTER" },
+            {
+                "name": "CB1",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "a", "type": "float" },
+                    { "name": "b", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "c", "type": "float" }
+                ],
+                "code": "float c = a * 2.0f + b;"
+            },
+            { "name": "OUT1", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "CB1", "port": "a" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "CB1", "port": "b" } ] },
+            { "output": { "name": "CB1", "port": "c" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Code block arithmetic compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Code block binary loads");
+
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 5.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 3.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Code block VM step succeeds");
+
+    float out_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(2));
+    if (res.disassembly_text) { std::cout << "DISASM:\n" << res.disassembly_text << "\n"; }
+    std::cout << "out_val=" << out_val << "\n";
+    TEST_ASSERT(fabsf(out_val - 13.0f) < 1e-4f, "Code block computes 5*2 + 3 = 13.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_heterogeneous_io()
+{
+    const char* circuit_json = R"({
+        "name": "CbHetero",
+        "elements": [
+            { "name": "EN", "type": "BOOLREGISTER" },
+            { "name": "COUNT", "type": "INTREGISTER" },
+            { "name": "VAL", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "en", "type": "bool" },
+                    { "name": "count", "type": "int" },
+                    { "name": "val", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "trip", "type": "bool" },
+                    { "name": "next_count", "type": "int" },
+                    { "name": "scaled_val", "type": "float" }
+                ],
+                "code": "bool trip = en && (val > 10.0f); int next_count = count + 5; float scaled_val = val * 0.5f;"
+            },
+            { "name": "OUT_TRIP", "type": "BOOLREGISTER" },
+            { "name": "OUT_NEXT", "type": "INTREGISTER" },
+            { "name": "OUT_SCALED", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "EN", "port": "out" }, "inputs": [ { "name": "CB", "port": "en" } ] },
+            { "output": { "name": "COUNT", "port": "out" }, "inputs": [ { "name": "CB", "port": "count" } ] },
+            { "output": { "name": "VAL", "port": "out" }, "inputs": [ { "name": "CB", "port": "val" } ] },
+            { "output": { "name": "CB", "port": "trip" }, "inputs": [ { "name": "OUT_TRIP", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "next_count" }, "inputs": [ { "name": "OUT_NEXT", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "scaled_val" }, "inputs": [ { "name": "OUT_SCALED", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Heterogeneous code block compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Heterogeneous binary loads");
+
+    // EN = true (%B0), COUNT = 10 (%I0), VAL = 14.0f (%F0)
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0), true);
+    le_process_image_set_int(&vm.image, LE_ADDR_MAKE_INT_REG(0), 10);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 14.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Heterogeneous VM step succeeds");
+
+    if (res.disassembly_text) {
+        std::cout << "HETERO DISASM:\n" << res.disassembly_text << "\n";
+    }
+
+    bool trip_val = le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(1));
+    int32_t count_val = le_process_image_get_int(&vm.image, LE_ADDR_MAKE_INT_REG(1));
+    float scaled_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    std::cout << "trip_val=" << trip_val << " count_val=" << count_val << " scaled_val=" << scaled_val << "\n";
+
+    TEST_ASSERT(trip_val == true, "trip is true when en=true and val=14 > 10");
+    TEST_ASSERT(count_val == 15, "next_count is 10 + 5 = 15");
+    TEST_ASSERT(fabsf(scaled_val - 7.0f) < 1e-4f, "scaled_val is 14 * 0.5 = 7.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_arrays_and_loops()
+{
+    const char* circuit_json = R"({
+        "name": "CbArrays",
+        "elements": [
+            { "name": "S0", "type": "FLOATREGISTER" },
+            { "name": "S1", "type": "FLOATREGISTER" },
+            { "name": "S2", "type": "FLOATREGISTER" },
+            { "name": "S3", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "samples", "type": "float[4]" }
+                ],
+                "outputs": [
+                    { "name": "sum", "type": "float" },
+                    { "name": "picked", "type": "float" }
+                ],
+                "code": "float sum = 0.0f; for (int i = 0; i < 4; i++) { sum += samples[i]; } int k = 2; float picked = samples[k];"
+            },
+            { "name": "OUT_SUM", "type": "FLOATREGISTER" },
+            { "name": "OUT_PICKED", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "S0", "port": "out" }, "inputs": [ { "name": "CB", "port": "samples_0" } ] },
+            { "output": { "name": "S1", "port": "out" }, "inputs": [ { "name": "CB", "port": "samples_1" } ] },
+            { "output": { "name": "S2", "port": "out" }, "inputs": [ { "name": "CB", "port": "samples_2" } ] },
+            { "output": { "name": "S3", "port": "out" }, "inputs": [ { "name": "CB", "port": "samples_3" } ] },
+            { "output": { "name": "CB", "port": "sum" }, "inputs": [ { "name": "OUT_SUM", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "picked" }, "inputs": [ { "name": "OUT_PICKED", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Array and loop code block compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Array program loads");
+
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 10.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 20.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(2), 30.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(3), 40.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Array VM step succeeds");
+
+    float sum_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(4));
+    float picked_val = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(5));
+
+    if (res.disassembly_text) {
+        std::cout << "ARRAYS DISASM:\n" << res.disassembly_text << "\n";
+    }
+    std::cout << "sum_val=" << sum_val << " picked_val=" << picked_val << "\n";
+
+    TEST_ASSERT(fabsf(sum_val - 100.0f) < 1e-4f, "Sum over unrolled loop is 100.0f");
+    TEST_ASSERT(fabsf(picked_val - 30.0f) < 1e-4f, "Picked dynamic indexed element is 30.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_conditional_and_inferred_latch()
+{
+    // Part 1: Inferred latch warning
+    const char* circuit_json = R"({
+        "name": "CbLatch",
+        "elements": [
+            { "name": "EN", "type": "BOOLREGISTER" },
+            { "name": "IN_VAL", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "en", "type": "bool" },
+                    { "name": "in_val", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "hold_val", "type": "float" }
+                ],
+                "code": "if (en) { hold_val = in_val; }"
+            },
+            { "name": "OUT_VAL", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "EN", "port": "out" }, "inputs": [ { "name": "CB", "port": "en" } ] },
+            { "output": { "name": "IN_VAL", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_val" } ] },
+            { "output": { "name": "CB", "port": "hold_val" }, "inputs": [ { "name": "OUT_VAL", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Inferred latch compiles successfully");
+    TEST_ASSERT(res.warnings != nullptr && std::string(res.warnings).find("inferred latch for variable 'hold_val'") != std::string::npos,
+                "Non-fatal compiler warning generated for inferred latch");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Latch program loads");
+
+    // Scan 1: en = true, in_val = 42.0f
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0), true);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 42.0f);
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Scan 1 succeeds");
+    float out1 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    TEST_ASSERT(fabsf(out1 - 42.0f) < 1e-4f, "Scan 1 latches 42.0f");
+
+    // Scan 2: en = false, in_val = 99.0f -> should retain 42.0f!
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(0), false);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 99.0f);
+    TEST_ASSERT(le_vm_step(&vm, 1) == LE_OK, "Scan 2 succeeds");
+    float out2 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    TEST_ASSERT(fabsf(out2 - 42.0f) < 1e-4f, "Scan 2 retains 42.0f across cycle via inferred latch");
+
+    le_compile_result_free(&res);
+
+    // Part 2: Explicit static variable suppresses warning
+    const char* circuit_static_json = R"({
+        "name": "CbStatic",
+        "elements": [
+            { "name": "EN", "type": "BOOLREGISTER" },
+            { "name": "IN_VAL", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "en", "type": "bool" },
+                    { "name": "in_val", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "hold_val", "type": "float" }
+                ],
+                "code": "static float hold_val = 0.0f; if (en) { hold_val = in_val; }"
+            },
+            { "name": "OUT_VAL", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "EN", "port": "out" }, "inputs": [ { "name": "CB", "port": "en" } ] },
+            { "output": { "name": "IN_VAL", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_val" } ] },
+            { "output": { "name": "CB", "port": "hold_val" }, "inputs": [ { "name": "OUT_VAL", "port": "in" } ] }
+        ]
+    })";
+
+    le_compile_result_t res_static;
+    rc = le_compile_json_ex(circuit_static_json, nullptr, &opts, &res_static);
+    TEST_ASSERT(rc == 0 && res_static.success == 1, "Static circuit compiles");
+    TEST_ASSERT(res_static.warnings == nullptr || std::string(res_static.warnings).find("inferred latch") == std::string::npos,
+                "Explicit static suppresses inferred latch warning");
+    le_compile_result_free(&res_static);
+}
+
+void test_code_block_user_functions()
+{
+    const char* circuit_json = R"({
+        "name": "CbFunc",
+        "elements": [
+            { "name": "IN1", "type": "FLOATREGISTER" },
+            { "name": "IN2", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "in1", "type": "float" },
+                    { "name": "in2", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "out1", "type": "float" },
+                    { "name": "out2", "type": "float" }
+                ],
+                "code": "float deadband(float x, float thresh) { if (x > thresh) return x - thresh; if (x < -thresh) return x + thresh; return 0.0f; } float out1 = deadband(in1, 2.0f); float out2 = deadband(in2, 2.0f);"
+            },
+            { "name": "OUT1", "type": "FLOATREGISTER" },
+            { "name": "OUT2", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "CB", "port": "in1" } ] },
+            { "output": { "name": "IN2", "port": "out" }, "inputs": [ { "name": "CB", "port": "in2" } ] },
+            { "output": { "name": "CB", "port": "out1" }, "inputs": [ { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "out2" }, "inputs": [ { "name": "OUT2", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "User-defined function code block compiles cleanly");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Function program loads");
+
+    // IN1 = 5.0f (beyond threshold 2.0 -> 3.0), IN2 = 1.0f (within threshold -> 0.0)
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 5.0f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 1.0f);
+
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Function VM step succeeds");
+
+    float o1 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(2));
+    float o2 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3));
+    if (res.disassembly_text) {
+        std::cout << "FUNC DISASM:\n" << res.disassembly_text << "\n";
+    }
+    std::cout << "o1=" << o1 << " o2=" << o2 << "\n";
+
+    TEST_ASSERT(fabsf(o1 - 3.0f) < 1e-4f, "deadband(5.0, 2.0) = 3.0f");
+    TEST_ASSERT(fabsf(o2 - 0.0f) < 1e-4f, "deadband(1.0, 2.0) = 0.0f");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_error_paths()
+{
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+
+    // 1. Syntax Error
+    const char* bad_syntax_json = R"({
+        "name": "BadSyntax",
+        "elements": [
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "code": "float x = * * 5;"
+            }
+        ],
+        "nets": []
+    })";
+    le_compile_result_t res1;
+    int rc1 = le_compile_json_ex(bad_syntax_json, nullptr, &opts, &res1);
+    TEST_ASSERT(rc1 != 0 || res1.success == 0, "Bad syntax rejected");
+    le_compile_result_free(&res1);
+
+    // 2. Recursive function call rejection
+    const char* recursive_json = R"({
+        "name": "Recursive",
+        "elements": [
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "code": "float fact(float n) { return n * fact(n - 1.0f); } float x = fact(5.0f);"
+            }
+        ],
+        "nets": []
+    })";
+    le_compile_result_t res2;
+    int rc2 = le_compile_json_ex(recursive_json, nullptr, &opts, &res2);
+    TEST_ASSERT(rc2 != 0 || res2.success == 0, "Recursive function rejected");
+    TEST_ASSERT(res2.error_message != nullptr && std::string(res2.error_message).find("Recursion is prohibited") != std::string::npos,
+                "Error message specifies recursion prohibition");
+    le_compile_result_free(&res2);
+}
+
+void test_code_block_trig_and_math()
+{
+    // 1. Compile-time constant folding in code block
+    const char* const_folding_json = R"({
+        "name": "ConstMathBlock",
+        "elements": [
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "outputs": [
+                    { "name": "v_sin", "type": "float" },
+                    { "name": "v_cos", "type": "float" },
+                    { "name": "v_sqrt", "type": "float" },
+                    { "name": "v_exp", "type": "float" },
+                    { "name": "v_pow", "type": "float" },
+                    { "name": "v_atan2", "type": "float" },
+                    { "name": "v_clamp", "type": "float" }
+                ],
+                "code": "v_sin = sin(0.0f); v_cos = cos(0.0f); v_sqrt = sqrt(16.0f); v_exp = exp(0.0f); v_pow = pow(2.0f, 3.0f); v_atan2 = atan2(1.0f, 1.0f); v_clamp = clamp(15.0f, 0.0f, 10.0f);"
+            },
+            { "name": "OUT_SIN", "type": "FLOATREGISTER" },
+            { "name": "OUT_COS", "type": "FLOATREGISTER" },
+            { "name": "OUT_SQRT", "type": "FLOATREGISTER" },
+            { "name": "OUT_EXP", "type": "FLOATREGISTER" },
+            { "name": "OUT_POW", "type": "FLOATREGISTER" },
+            { "name": "OUT_ATAN2", "type": "FLOATREGISTER" },
+            { "name": "OUT_CLAMP", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "CB", "port": "v_sin" }, "inputs": [ { "name": "OUT_SIN", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_cos" }, "inputs": [ { "name": "OUT_COS", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_sqrt" }, "inputs": [ { "name": "OUT_SQRT", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_exp" }, "inputs": [ { "name": "OUT_EXP", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_pow" }, "inputs": [ { "name": "OUT_POW", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_atan2" }, "inputs": [ { "name": "OUT_ATAN2", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "v_clamp" }, "inputs": [ { "name": "OUT_CLAMP", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(const_folding_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Const math circuit compiles");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Const math loads");
+    le_vm_start(&vm);
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Const math step succeeds");
+
+    float out_sin = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(0));
+    float out_cos = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    float out_sqrt = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(2));
+    float out_exp = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3));
+    float out_pow = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(4));
+    float out_atan2 = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(5));
+    float out_clamp = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(6));
+
+    TEST_ASSERT(fabsf(out_sin - 0.0f) < 1e-4f, "sin(0) folded to 0");
+    TEST_ASSERT(fabsf(out_cos - 1.0f) < 1e-4f, "cos(0) folded to 1");
+    TEST_ASSERT(fabsf(out_sqrt - 4.0f) < 1e-4f, "sqrt(16) folded to 4");
+    TEST_ASSERT(fabsf(out_exp - 1.0f) < 1e-4f, "exp(0) folded to 1");
+    TEST_ASSERT(fabsf(out_pow - 8.0f) < 1e-4f, "pow(2, 3) folded to 8");
+    TEST_ASSERT(fabsf(out_atan2 - 0.785398f) < 1e-3f, "atan2(1, 1) folded to pi/4");
+    TEST_ASSERT(fabsf(out_clamp - 10.0f) < 1e-4f, "clamp(15, 0, 10) folded to 10");
+    le_compile_result_free(&res);
+
+    // 2. Dynamic runtime evaluation in code block
+    const char* dynamic_json = R"({
+        "name": "DynamicMathBlock",
+        "elements": [
+            { "name": "IN_THETA", "type": "FLOATREGISTER" },
+            { "name": "IN_VAL", "type": "FLOATREGISTER" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "theta", "type": "float" },
+                    { "name": "val", "type": "float" }
+                ],
+                "outputs": [
+                    { "name": "out_s", "type": "float" },
+                    { "name": "out_c", "type": "float" },
+                    { "name": "out_sq", "type": "float" },
+                    { "name": "out_pw", "type": "float" },
+                    { "name": "out_cl", "type": "float" }
+                ],
+                "code": "out_s = sin(theta); out_c = cos(theta); out_sq = sqrt(val); out_pw = pow(val, 2.0f); out_cl = clamp(val, 2.0f, 8.0f);"
+            },
+            { "name": "RES_S", "type": "FLOATREGISTER" },
+            { "name": "RES_C", "type": "FLOATREGISTER" },
+            { "name": "RES_SQ", "type": "FLOATREGISTER" },
+            { "name": "RES_PW", "type": "FLOATREGISTER" },
+            { "name": "RES_CL", "type": "FLOATREGISTER" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_THETA", "port": "out" }, "inputs": [ { "name": "CB", "port": "theta" } ] },
+            { "output": { "name": "IN_VAL", "port": "out" }, "inputs": [ { "name": "CB", "port": "val" } ] },
+            { "output": { "name": "CB", "port": "out_s" }, "inputs": [ { "name": "RES_S", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "out_c" }, "inputs": [ { "name": "RES_C", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "out_sq" }, "inputs": [ { "name": "RES_SQ", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "out_pw" }, "inputs": [ { "name": "RES_PW", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "out_cl" }, "inputs": [ { "name": "RES_CL", "port": "in" } ] }
+        ]
+    })";
+
+    rc = le_compile_json_ex(dynamic_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Dynamic math circuit compiles");
+
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "Dynamic math loads");
+    le_vm_start(&vm);
+
+    // Set theta = 0.52359877f (~pi/6 = 30 deg), val = 9.0f
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(0), 0.52359877f);
+    le_process_image_set_float(&vm.image, LE_ADDR_MAKE_FLOAT(1), 9.0f);
+
+    TEST_ASSERT(le_vm_step(&vm, 0) == LE_OK, "Dynamic math step succeeds");
+
+    float d_s = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(2));
+    float d_c = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(3));
+    float d_sq = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(4));
+    float d_pw = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(5));
+    float d_cl = le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(6));
+
+    TEST_ASSERT(fabsf(d_s - 0.5f) < 1e-3f, "sin(pi/6) dynamic matches ~0.5");
+    TEST_ASSERT(fabsf(d_c - 0.866025f) < 1e-3f, "cos(pi/6) dynamic matches ~0.866");
+    TEST_ASSERT(fabsf(d_sq - 3.0f) < 1e-3f, "sqrt(9.0) dynamic matches 3.0");
+    TEST_ASSERT(fabsf(d_pw - 81.0f) < 1e-2f, "pow(9.0, 2.0) dynamic matches 81.0");
+    TEST_ASSERT(fabsf(d_cl - 8.0f) < 1e-3f, "clamp(9.0, 2.0, 8.0) dynamic matches 8.0");
+
+    le_compile_result_free(&res);
+}
+
+void test_code_block_static_array_order_independence()
+{
+    const char* circuit1_json = R"({
+        "name": "CbOrder1",
+        "elements": [
+            { "name": "IN_A", "type": "DIGITALINPUT" },
+            { "name": "IN_B", "type": "DIGITALINPUT" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "in_a", "type": "bool" },
+                    { "name": "in_b", "type": "bool" }
+                ],
+                "outputs": [
+                    { "name": "out", "type": "bool" }
+                ],
+                "code": "static bool[5] s;\nfor(int i = 4; i > 0; i--) { s[i] = s[i - 1]; }\ns[0] = in_a && in_b;\nout = s[4];"
+            },
+            { "name": "OUT", "type": "DIGITALOUTPUT" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "IN_B", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_b" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    const char* circuit2_json = R"({
+        "name": "CbOrder2",
+        "elements": [
+            { "name": "IN_A", "type": "DIGITALINPUT" },
+            { "name": "IN_B", "type": "DIGITALINPUT" },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "inputs": [
+                    { "name": "in_a", "type": "bool" },
+                    { "name": "in_b", "type": "bool" }
+                ],
+                "outputs": [
+                    { "name": "out", "type": "bool" }
+                ],
+                "code": "static bool[5] s;\nout = s[4];\nfor(int i = 4; i > 0; i--) { s[i] = s[i - 1]; }\ns[0] = in_a && in_b;"
+            },
+            { "name": "OUT", "type": "DIGITALOUTPUT" }
+        ],
+        "nets": [
+            { "output": { "name": "IN_A", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "IN_B", "port": "out" }, "inputs": [ { "name": "CB", "port": "in_b" } ] },
+            { "output": { "name": "CB", "port": "out" }, "inputs": [ { "name": "OUT", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res1, res2;
+    int rc1 = le_compile_json_ex(circuit1_json, nullptr, &opts, &res1);
+    int rc2 = le_compile_json_ex(circuit2_json, nullptr, &opts, &res2);
+
+    TEST_ASSERT(rc1 == 0 && res1.success == 1, "Circuit 1 (out after loop) compiles successfully");
+    TEST_ASSERT(rc2 == 0 && res2.success == 1, "Circuit 2 (out before loop) compiles successfully");
+    TEST_ASSERT(res1.instruction_count == res2.instruction_count, "Instruction count matches between both definitions");
+    TEST_ASSERT(res1.binary_size == res2.binary_size, "Binary size matches between both definitions");
+
+    std::string disasm1 = res1.disassembly_text ? res1.disassembly_text : "";
+    std::string disasm2 = res2.disassembly_text ? res2.disassembly_text : "";
+
+    std::cout << "DISASM 1 (out after loop):\n" << disasm1 << "\n";
+    std::cout << "DISASM 2 (out before loop):\n" << disasm2 << "\n";
+
+    // Both should end by moving %B[22] -> %OUT[0]
+    TEST_ASSERT(disasm1.find("%OUT[0]") != std::string::npos, "Disassembly 1 outputs to %OUT[0]");
+    TEST_ASSERT(disasm2.find("%OUT[0]") != std::string::npos, "Disassembly 2 outputs to %OUT[0]");
+
+    // Verify both disassemblies have the identical last move operand into %OUT[0]
+    auto extract_out_source = [](const std::string& dis) -> std::string {
+        size_t pos = dis.find("-> %OUT[0]");
+        if (pos == std::string::npos) return "";
+        size_t line_start = dis.rfind('\n', pos);
+        if (line_start == std::string::npos) line_start = 0;
+        return dis.substr(line_start, pos - line_start);
+    };
+
+    std::string src1 = extract_out_source(disasm1);
+    std::string src2 = extract_out_source(disasm2);
+    TEST_ASSERT(!src1.empty() && src1 == src2, "Output wire source matches between both definitions");
+
+    le_compile_result_free(&res1);
+    le_compile_result_free(&res2);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
+    RUN_TEST(test_code_block_static_array_order_independence);
     RUN_TEST(test_basic_and_circuit);
     RUN_TEST(test_float_math_circuit);
     RUN_TEST(test_board_limits_validation);
@@ -2513,6 +3962,27 @@ int main()
     RUN_TEST(test_register_limits_load_reject);
     RUN_TEST(test_comms_upload_endtoend);
     RUN_TEST(test_analog_output_pipeline);
+    RUN_TEST(test_sparse_io_addressing_accommodated);
+    RUN_TEST(test_rs_latch_feedback_register);
+    RUN_TEST(test_dedicated_latch_node_state_retention);
+    RUN_TEST(test_cross_coupled_latch_auto_feedback);
+    RUN_TEST(test_boolean_simplification_annihilation);
+    RUN_TEST(test_boolean_simplification_idempotence);
+    RUN_TEST(test_boolean_simplification_absorption);
+    RUN_TEST(test_boolean_simplification_complementary_merging);
+    RUN_TEST(test_ring_oscillator_hazard_warning);
+    RUN_TEST(test_instruction_fusion_fma);
+    RUN_TEST(test_instruction_fusion_fms);
+    RUN_TEST(test_chunked_container_emission);
+    RUN_TEST(test_multi_rate_compilation_and_execution);
+    RUN_TEST(test_cryptographic_signing_api);
+    RUN_TEST(test_code_block_basic_arithmetic);
+    RUN_TEST(test_code_block_heterogeneous_io);
+    RUN_TEST(test_code_block_arrays_and_loops);
+    RUN_TEST(test_code_block_conditional_and_inferred_latch);
+    RUN_TEST(test_code_block_user_functions);
+    RUN_TEST(test_code_block_error_paths);
+    RUN_TEST(test_code_block_trig_and_math);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";
