@@ -7,6 +7,7 @@
 #include "le_opcodes.h"
 #include "le_comms.h"
 #include "le_hal.h"
+#include "le_nvram.h"
 #include <iostream>
 #include <cassert>
 #include <cstring>
@@ -4262,6 +4263,564 @@ void test_code_block_hdl_bitwise_type_validation()
     le_compile_result_free(&res2);
 }
 
+static void test_counter_cv_output()
+{
+    const char* circuit_json = R"({
+        "name": "CounterCVTest",
+        "elements": [
+            { "name": "IN0", "type": "DigitalInput", "address": "%I0" },
+            { "name": "C1", "type": "CTU", "preset": 4 },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "code": "a = in_a == 1;\nb = in_a == 2;\nc = in_a == 3;\nd = in_a == 4;",
+                "inputs": [ { "name": "in_a", "type": "int" } ],
+                "outputs": [
+                    { "name": "a", "type": "bool" },
+                    { "name": "b", "type": "bool" },
+                    { "name": "c", "type": "bool" },
+                    { "name": "d", "type": "bool" }
+                ]
+            },
+            { "name": "OUT0", "type": "DigitalOutput", "address": "%Q0" },
+            { "name": "OUT1", "type": "DigitalOutput", "address": "%Q1" },
+            { "name": "OUT2", "type": "DigitalOutput", "address": "%Q2" },
+            { "name": "OUT3", "type": "DigitalOutput", "address": "%Q3" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "C1", "port": "cu" } ] },
+            { "output": { "name": "C1", "port": "cv" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "CB", "port": "a" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "b" }, "inputs": [ { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "c" }, "inputs": [ { "name": "OUT2", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "d" }, "inputs": [ { "name": "OUT3", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "CounterCVTest compiles successfully");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "CounterCVTest loads");
+
+    // Scan 0: count = 0, all outputs 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 0: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 0: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 0: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 0: OUT3 false");
+
+    // Pulse 1: count = 1 -> OUT0 = 1, OUT1..3 = 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 1: OUT0 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 1: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 1: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 1: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 20);
+
+    // Pulse 2: count = 2 -> OUT1 = 1, others = 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 30);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 2: OUT0 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 2: OUT1 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 2: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 2: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 40);
+
+    // Pulse 3: count = 3 -> OUT2 = 1, others = 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 50);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 3: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 3: OUT1 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 3: OUT2 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 3: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 60);
+
+    // Pulse 4: count = 4 -> OUT3 = 1, others = 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 70);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 4: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 4: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 4: OUT2 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 4: OUT3 true");
+
+    le_compile_result_free(&res);
+}
+
+static void test_ctd_counter_cv_output()
+{
+    const char* circuit_json = R"({
+        "name": "CTDCounterCVTest",
+        "elements": [
+            { "name": "IN0", "type": "DigitalInput", "address": "%I0" },
+            { "name": "IN1", "type": "DigitalInput", "address": "%I1" },
+            { "name": "C1", "type": "CTD", "preset": 4 },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "code": "a = in_a == 1;\nb = in_a == 2;\nc = in_a == 3;\nd = in_a == 4;",
+                "inputs": [ { "name": "in_a", "type": "int" } ],
+                "outputs": [
+                    { "name": "a", "type": "bool" },
+                    { "name": "b", "type": "bool" },
+                    { "name": "c", "type": "bool" },
+                    { "name": "d", "type": "bool" }
+                ]
+            },
+            { "name": "OUT0", "type": "DigitalOutput", "address": "%Q0" },
+            { "name": "OUT1", "type": "DigitalOutput", "address": "%Q1" },
+            { "name": "OUT2", "type": "DigitalOutput", "address": "%Q2" },
+            { "name": "OUT3", "type": "DigitalOutput", "address": "%Q3" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "C1", "port": "cd" } ] },
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "C1", "port": "load" } ] },
+            { "output": { "name": "C1", "port": "cv" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "CB", "port": "a" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "b" }, "inputs": [ { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "c" }, "inputs": [ { "name": "OUT2", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "d" }, "inputs": [ { "name": "OUT3", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_NONE);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success, "CTDCounterCVTest compiles successfully");
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "CTDCounterCVTest loads");
+
+    // Scan 0: CTD starts with count = preset = 4 -> OUT3 = 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), false);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "init 4: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "init 4: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "init 4: OUT2 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "init 4: OUT3 true (preset=4)");
+
+    // Pulse 1 on CD: count decrements 4 -> 3 -> OUT2 = 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 3: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 3: OUT1 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 3: OUT2 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 3: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 20);
+
+    // Pulse 2 on CD: count decrements 3 -> 2 -> OUT1 = 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 30);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 2: OUT0 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 2: OUT1 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 2: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 2: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 40);
+
+    // Pulse 3 on CD: count decrements 2 -> 1 -> OUT0 = 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 50);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 1: OUT0 true");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 1: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 1: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 1: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 60);
+
+    // Pulse 4 on CD: count decrements 1 -> 0 -> all outputs false
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 70);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "count 0: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "count 0: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "count 0: OUT2 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "count 0: OUT3 false");
+
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 80);
+
+    // Pulse 5 on Load: count reloads to preset 4 -> OUT3 = 1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(1), true);
+    le_vm_step(&vm, 90);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "reloaded: OUT0 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "reloaded: OUT1 false");
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "reloaded: OUT2 false");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "reloaded: OUT3 true (preset=4)");
+
+    le_compile_result_free(&res);
+}
+
+void test_timer_inputs_and_outputs()
+{
+    // Test 1: TON with Q and ET output
+    const char* ton_json = R"({
+        "name": "TimerTestTON",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "T1", "type": "TON", "preset_ms": 100 },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "ET0", "type": "INTREGISTER", "address": "%I0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "IN" } ] },
+            { "output": { "name": "T1", "port": "Q" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "ET" }, "inputs": [ { "name": "ET0", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init(LE_OPT_FULL);
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(ton_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "TON with ET compiles successfully");
+
+    le_vm_t vm;
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "VM init success");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "VM load success");
+
+    // t=0, IN=0 -> Q=0, ET=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TON: Q false at t=0");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TON: ET=0 at t=0");
+
+    // t=10, IN=1 (rising edge) -> Q=0, ET=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TON: Q false at t=10");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TON: ET=0 at t=10");
+
+    // t=50, IN=1 -> elapsed = 40ms -> Q=0, ET=40
+    le_vm_step(&vm, 50);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TON: Q false at t=50");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 40, "TON: ET=40 at t=50");
+
+    // t=110, IN=1 -> elapsed = 100ms >= preset -> Q=1, ET=100
+    le_vm_step(&vm, 110);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TON: Q true at t=110");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 100, "TON: ET=100 at t=110");
+
+    // t=150, IN=0 -> resets -> Q=0, ET=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 150);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TON: Q false after reset");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TON: ET=0 after reset");
+
+    le_compile_result_free(&res);
+
+    // Test 2: TON with dynamic PT input
+    const char* ton_pt_json = R"({
+        "name": "TimerTestPT",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "PT_REG", "type": "INTREGISTER", "address": "%I0" },
+            { "name": "T1", "type": "TON", "preset_ms": 1000 },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "ET0", "type": "INTREGISTER", "address": "%I1" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "IN" } ] },
+            { "output": { "name": "PT_REG", "port": "out" }, "inputs": [ { "name": "T1", "port": "PT" } ] },
+            { "output": { "name": "T1", "port": "Q" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "ET" }, "inputs": [ { "name": "ET0", "port": "in" } ] }
+        ]
+    })";
+
+    rc = le_compile_json_ex(ton_pt_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "TON with dynamic PT compiles successfully");
+
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "VM init success");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "VM load success");
+
+    // Set dynamic PT = 200ms
+    le_pi_set_int_fast(&vm.image, LE_REGION_INT_REG | 0, 200);
+
+    // t=10, IN=1
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "Dynamic PT: Q false at t=10");
+
+    // t=120 (110ms elapsed, less than 200ms preset)
+    le_vm_step(&vm, 120);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "Dynamic PT: Q false at t=120");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 1) == 110, "Dynamic PT: ET=110 at t=120");
+
+    // t=210 (200ms elapsed >= 200ms)
+    le_vm_step(&vm, 210);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "Dynamic PT: Q true at t=210");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 1) == 200, "Dynamic PT: ET=200 at t=210");
+
+    le_compile_result_free(&res);
+
+    // Test 3: TOF with Q and ET
+    const char* tof_json = R"({
+        "name": "TimerTestTOF",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "T1", "type": "TOF", "preset_ms": 100 },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "ET0", "type": "INTREGISTER", "address": "%I0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "IN" } ] },
+            { "output": { "name": "T1", "port": "Q" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "ET" }, "inputs": [ { "name": "ET0", "port": "in" } ] }
+        ]
+    })";
+
+    rc = le_compile_json_ex(tof_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "TOF compiles successfully");
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "VM init success");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "VM load success");
+
+    // IN=1 -> Q=1, ET=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TOF: Q true while IN true");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TOF: ET=0 while IN true");
+
+    // IN drops to 0 at t=20 -> falling edge starts timing
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 20);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TOF: Q remains true at start of off-delay");
+
+    // t=60 (elapsed 40ms < 100ms)
+    le_vm_step(&vm, 60);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TOF: Q true during delay");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 40, "TOF: ET=40 at t=60");
+
+    // t=120 (elapsed 100ms >= 100ms) -> Q drops to 0
+    le_vm_step(&vm, 120);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TOF: Q false after delay expires");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 100, "TOF: ET=100 after delay expires");
+
+    le_compile_result_free(&res);
+
+    // Test 4: TP (Pulse Timer) with Q and ET
+    const char* tp_json = R"({
+        "name": "TimerTestTP",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "T1", "type": "TP", "preset_ms": 50 },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "ET0", "type": "INTREGISTER", "address": "%I0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "IN" } ] },
+            { "output": { "name": "T1", "port": "Q" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "ET" }, "inputs": [ { "name": "ET0", "port": "in" } ] }
+        ]
+    })";
+
+    rc = le_compile_json_ex(tp_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "TP compiles successfully");
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "VM init success");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "VM load success");
+
+    // Rising edge at t=10 -> pulse starts, Q=1, ET=0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 10);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TP: Q true at pulse start");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TP: ET=0 at pulse start");
+
+    // t=30 (elapsed 20ms < 50ms)
+    le_vm_step(&vm, 30);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TP: Q true during pulse");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 20, "TP: ET=20 at t=30");
+
+    // t=60 (elapsed 50ms >= 50ms) -> pulse ends, Q=0, ET held at 50 because IN is still true
+    le_vm_step(&vm, 60);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TP: Q false after pulse expires");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 50, "TP: ET=50 while IN still true");
+
+    // IN drops at t=70 -> ET resets to 0
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), false);
+    le_vm_step(&vm, 70);
+    TEST_ASSERT(!le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "TP: Q false");
+    TEST_ASSERT(le_pi_get_int_fast(&vm.image, LE_REGION_INT_REG | 0) == 0, "TP: ET=0 after IN dropped");
+
+    le_compile_result_free(&res);
+
+    // Test 5: TON with CODE_BLOCK (thresholds at 480 Hz scan rate)
+    const char* cb_timer_json = R"({
+        "name": "TimerTestCB",
+        "elements": [
+            { "name": "IN0", "type": "DIGITALINPUT", "address": "%IN0" },
+            { "name": "T1", "type": "TON", "preset": 10000 },
+            {
+                "name": "CB",
+                "type": "CODE_BLOCK",
+                "code": "a = in_a >= 2500;\nb = in_a >= 5000;\nc = in_a >= 7500;\nd = in_a >= 9000;",
+                "inputs": [ { "name": "in_a", "type": "int" } ],
+                "outputs": [
+                    { "name": "a", "type": "bool" },
+                    { "name": "b", "type": "bool" },
+                    { "name": "c", "type": "bool" },
+                    { "name": "d", "type": "bool" }
+                ]
+            },
+            { "name": "OUT0", "type": "DIGITALOUTPUT", "address": "%OUT0" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%OUT1" },
+            { "name": "OUT2", "type": "DIGITALOUTPUT", "address": "%OUT2" },
+            { "name": "OUT3", "type": "DIGITALOUTPUT", "address": "%OUT3" }
+        ],
+        "nets": [
+            { "output": { "name": "IN0", "port": "out" }, "inputs": [ { "name": "T1", "port": "in" } ] },
+            { "output": { "name": "T1", "port": "et" }, "inputs": [ { "name": "CB", "port": "in_a" } ] },
+            { "output": { "name": "CB", "port": "a" }, "inputs": [ { "name": "OUT0", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "b" }, "inputs": [ { "name": "OUT1", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "c" }, "inputs": [ { "name": "OUT2", "port": "in" } ] },
+            { "output": { "name": "CB", "port": "d" }, "inputs": [ { "name": "OUT3", "port": "in" } ] }
+        ]
+    })";
+
+    rc = le_compile_json_ex(cb_timer_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Timer with CODE_BLOCK compiles successfully");
+    TEST_ASSERT(le_vm_init(&vm) == LE_OK, "VM init success");
+    TEST_ASSERT(le_loader_load(&vm, res.binary_data, res.binary_size) == LE_OK, "VM load success");
+
+    // Hold input true
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+
+    // Simulate at 480 Hz (step by 2083 us per cycle)
+    uint32_t t_us = 0;
+    for (int i = 0; i < 4800; i++) { // ~10 seconds
+        t_us += 2083;
+        le_vm_step_us(&vm, t_us);
+    }
+    // At t=10s, all outputs a, b, c, d must be true!
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "CB: OUT0 (>=2500) true at 10s");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)), "CB: OUT1 (>=5000) true at 10s");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(2)), "CB: OUT2 (>=7500) true at 10s");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(3)), "CB: OUT3 (>=9000) true at 10s");
+
+    le_compile_result_free(&res);
+}
+
+void test_circuit_driven_nvram_compilation()
+{
+    const char* circuit_json = R"({
+        "name": "CircuitDrivenNVRAM",
+        "nvram": {
+            "retentive_registers": ["%B0-%B7", "%F0", "%I0"],
+            "ser_records": 100,
+            "event_records": 20
+        },
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init_default();
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Circuit-driven NVRAM compilation succeeds");
+    TEST_ASSERT(res.binary_data != nullptr && res.binary_size > 0, "Binary emitted");
+
+    le_chunked_view_t view;
+    le_status_t st = le_loader_parse_chunks(res.binary_data, res.binary_size, &view);
+    TEST_ASSERT(st == LE_OK, "parse container chunks succeeds");
+    TEST_ASSERT(view.nvmd != nullptr, "NVMD chunk present in container");
+    TEST_ASSERT(view.nvmd->ser_records == 100, "NVMD ser_records matches declaration");
+    TEST_ASSERT(view.nvmd->event_records == 20, "NVMD event_records matches declaration");
+    TEST_ASSERT(view.nvmd->retentive_range_count >= 1, "NVMD contains retentive ranges");
+    TEST_ASSERT(view.nvmd->retentive_bytes > 0, "NVMD retentive_bytes calculated");
+
+    le_vm_t vm;
+    std::memset(&vm, 0, sizeof(vm));
+    st = le_loader_load(&vm, res.binary_data, res.binary_size);
+    TEST_ASSERT(st == LE_OK, "le_loader_load dynamically configures NVRAM and succeeds");
+    TEST_ASSERT(le_nvram_get_ser_bytes() == view.nvmd->ser_bytes, "Runtime NVRAM SER layout matches NVMD chunk");
+
+    le_compile_result_free(&res);
+}
+
+void test_circuit_driven_nvram_board_overflow()
+{
+    const char* circuit_json = R"({
+        "name": "HugeNVRAMCircuit",
+        "nvram": {
+            "ser_records": 5000
+        },
+        "elements": [
+            { "name": "IN1", "type": "DIGITALINPUT", "address": "%I0" },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "IN1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    const char* board_json = R"({
+        "device": { "name": "ConstrainedBoard", "firmware_version": "1.0", "protocol_version": 1 },
+        "limits": {
+            "nvram_total_bytes": 16384,
+            "slot_size_bytes": 1048576,
+            "workspace_bytes": 65536
+        }
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init_default();
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, board_json, &opts, &res);
+    TEST_ASSERT(rc != 0 || res.success == 0, "Compilation fails when NVRAM exceeds board capacity");
+    TEST_ASSERT(res.error_message != nullptr, "Error message provided");
+    std::string err(res.error_message);
+    TEST_ASSERT(err.find("Circuit requires") != std::string::npos, "Error mentions required NVRAM");
+    TEST_ASSERT(err.find("bytes of NVRAM") != std::string::npos, "Error indicates NVRAM overflow");
+
+    le_compile_result_free(&res);
+}
+
+void test_circuit_inline_element_retentive()
+{
+    const char* circuit_json = R"({
+        "name": "InlineRetentiveElement",
+        "elements": [
+            { "id": "reg1", "name": "reg1", "type": "BOOLREGISTER", "retentive": true },
+            { "name": "OUT1", "type": "DIGITALOUTPUT", "address": "%Q0" }
+        ],
+        "nets": [
+            { "output": { "name": "reg1", "port": "out" }, "inputs": [ { "name": "OUT1", "port": "in" } ] }
+        ]
+    })";
+
+    le_compiler_options_t opts = le_compiler_options_init_default();
+    le_compile_result_t res;
+    int rc = le_compile_json_ex(circuit_json, nullptr, &opts, &res);
+    TEST_ASSERT(rc == 0 && res.success == 1, "Inline retentive element circuit compiles");
+    TEST_ASSERT(res.binary_data != nullptr, "Binary data produced");
+
+    le_chunked_view_t view;
+    le_status_t st = le_loader_parse_chunks(res.binary_data, res.binary_size, &view);
+    TEST_ASSERT(st == LE_OK, "parse chunks succeeds");
+    TEST_ASSERT(view.nvmd != nullptr, "NVMD chunk generated for inline retentive element");
+    TEST_ASSERT(view.nvmd->retentive_range_count >= 1, "At least one retentive range generated");
+    TEST_ASSERT(view.nvmd->retentive_bytes > 0, "Retentive bytes allocated");
+
+    le_compile_result_free(&res);
+}
+
 int main()
 {
     std::cout << "=== Running LogicElements Compiler Unit Tests ===\n";
@@ -4339,6 +4898,12 @@ int main()
     RUN_TEST(test_code_block_user_functions);
     RUN_TEST(test_code_block_error_paths);
     RUN_TEST(test_code_block_trig_and_math);
+    RUN_TEST(test_counter_cv_output);
+    RUN_TEST(test_ctd_counter_cv_output);
+    RUN_TEST(test_timer_inputs_and_outputs);
+    RUN_TEST(test_circuit_driven_nvram_compilation);
+    RUN_TEST(test_circuit_driven_nvram_board_overflow);
+    RUN_TEST(test_circuit_inline_element_retentive);
 
     std::cout << "=================================================\n";
     std::cout << "Summary: " << g_tests_passed << " Passed, " << g_tests_failed << " Failed.\n";

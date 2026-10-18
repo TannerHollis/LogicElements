@@ -27,6 +27,9 @@ set(LOGIC_ELEMENTS_SOURCES
     src/runtime/src/le_event_rec.c
     src/runtime/src/le_cli.c
     src/runtime/src/le_comms.c
+    src/runtime/src/le_crypto.c
+    src/runtime/src/le_config.c
+    src/runtime/src/le_ringbuf.c
     src/hal/le_hal_sim.c
 )
 
@@ -47,6 +50,7 @@ endif()
 # Canonical Compiler Library (C++17 Core with C ABI)
 # ==============================================================================
 set(LE_COMPILER_SOURCES
+    src/compiler/src/le_code_block.cpp
     src/compiler/src/le_optimizer.cpp
     src/compiler/src/le_compiler_core.cpp
     src/compiler/src/le_disasm_core.cpp
@@ -63,6 +67,7 @@ target_include_directories(le_compiler PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
 )
 target_compile_definitions(le_compiler PRIVATE LE_COMPILER_EXPORTS)
+target_link_libraries(le_compiler PRIVATE LogicElements)
 
 # Static library for direct embedding without runtime DLL dependencies
 add_library(le_compiler_static STATIC ${LE_COMPILER_SOURCES})
@@ -74,10 +79,11 @@ target_include_directories(le_compiler_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
 )
 target_compile_definitions(le_compiler_static PUBLIC LE_COMPILER_STATIC)
+target_link_libraries(le_compiler_static PUBLIC LogicElements)
 
 # Standalone Compiler CLI Executable
 add_executable(le_compile src/compiler/tools/le_compile_main.cpp)
-target_link_libraries(le_compile PRIVATE le_compiler_static)
+target_link_libraries(le_compile PRIVATE le_compiler_static LogicElements)
 target_include_directories(le_compile PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
 )

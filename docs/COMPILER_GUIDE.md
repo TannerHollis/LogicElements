@@ -349,10 +349,7 @@ Target board profiles define physical microcontroller limits and configuration:
     "ns_per_abstract_cycle": 600,
     "nvram_total_bytes": 16384,
     "nvram_block_size": 4096,
-    "nvram_page_size": 256,
-    "nvram_regs_bytes": 1024,
-    "nvram_ser_bytes": 3072,
-    "nvram_event_rec_bytes": 10176
+    "nvram_page_size": 256
   },
   "features": {
     "protection": true,
@@ -388,7 +385,7 @@ Target board profiles define physical microcontroller limits and configuration:
 
 ## C API reference
 
-Header: [`include/le_compiler.h`](file:///C:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/compiler/include/le_compiler.h)
+Header: [`src/compiler/include/le_compiler.h`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/compiler/include/le_compiler.h)
 
 ### `le_compile_json_ex`
 
@@ -880,5 +877,5 @@ The compiler validates circuit element usage against target `.leconfig` board pr
 
 ## Related guides
 
-- [Platform Integration Guide](../PLATFORM_GUIDE.md): Microcontroller porting, flash storage partitions, and UART upload protocols.
+- [Platform Integration Guide](PLATFORM_GUIDE.md): Microcontroller porting, flash storage partitions, and UART upload protocols.
 - [Custom Nodes Guide](CUSTOM_NODES_GUIDE.md): Designing, declaring, and implementing custom hardware nodes (`LE_OP_BLOCK` with a custom function id).

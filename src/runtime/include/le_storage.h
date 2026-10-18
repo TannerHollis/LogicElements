@@ -14,34 +14,49 @@
 extern "C" {
 #endif
 
-/* ========================================================================== */
-/* Adopter-configurable storage capacity                                      */
-/* ========================================================================== */
+/* Slot capacities and partitioning strategies are configured in le_config.h */
 
-#ifndef LE_MAX_CONFIG_SLOTS
-/** @brief Default number of non-volatile configuration slots. */
-#define LE_MAX_CONFIG_SLOTS     3
+#ifndef LE_SLOT_PHANTOM
+#define LE_SLOT_PHANTOM                 0xFFU
 #endif
 
-#ifndef LE_SLOT_SIZE_BYTES
-/** @brief Default byte capacity allocated per configuration slot. */
-#define LE_SLOT_SIZE_BYTES      2048
-#endif
-
-#ifndef LE_PHYSICAL_SLOT_COUNT
 /**
- * @brief Number of physical storage partitions held in RAM.
- *
- * This is always `LE_MAX_CONFIG_SLOTS + 1`: the storage manager keeps one
- * hidden **phantom** (scratch) partition at index `LE_MAX_CONFIG_SLOTS` so an
- * upload is streamed and fully CRC-validated before it may overwrite a live
- * config. The phantom is internal to the storage/comms layer — circuit
- * designers, the compiler, and the caps/CLI all still see `LE_MAX_CONFIG_SLOTS`.
- * The phantom costs the *board designer* one extra slot of flash, which must be
- * reserved (i.e. `(LE_MAX_CONFIG_SLOTS + 1) * LE_SLOT_SIZE_BYTES`).
+ * @brief Physical backing medium for a storage or NVRAM partition.
  */
-#define LE_PHYSICAL_SLOT_COUNT  (LE_MAX_CONFIG_SLOTS + 1)
-#endif
+typedef enum {
+    LE_MEDIUM_RAM = 0,             /**< In-memory SRAM (zero erase, byte-writable) */
+    LE_MEDIUM_INTERNAL_FLASH,      /**< On-chip MCU NOR Flash (sector erase + word/page program) */
+    LE_MEDIUM_EXTERNAL_FLASH,      /**< External SPI/QSPI/OSPI NOR Flash (sector erase + page program) */
+    LE_MEDIUM_DIRECT_NVRAM,        /**< External byte-addressable NVRAM (FRAM, MRAM, battery SRAM) */
+} le_media_type_t;
+
+/**
+ * @brief Declarative descriptor for a single storage slot or NVRAM partition.
+ */
+typedef struct le_storage_sector_s {
+    uint8_t         slot_id;       /**< 0, 1, ... or LE_SLOT_PHANTOM (0xFF) */
+    le_media_type_t medium;        /**< Physical medium type */
+    uint32_t        phys_addr;     /**< Physical base address or memory-mapped base */
+    uint32_t        size_bytes;    /**< Total slot capacity in bytes */
+    uint32_t        erase_size;    /**< Sector/block erase size (e.g. 4096 or 131072; 0 for RAM/FRAM) */
+    uint16_t        page_size;     /**< Flash page programming size (e.g. 256 for SPI, 32 for STM32, 1 for RAM) */
+    uint16_t        hw_sector_id;  /**< Hardware sector/bank identifier (e.g. FLASH_SECTOR_6 on STM32) */
+} le_storage_sector_t;
+
+/**
+ * @brief Board-provided storage sector descriptors defined in le_config.c.
+ */
+extern const le_storage_sector_t g_board_storage_sectors[];
+extern const size_t g_board_storage_sector_count;
+extern const le_storage_sector_t g_board_nvram_sector;
+
+/**
+ * @brief Finds the storage sector descriptor for a given slot index.
+ *
+ * @param slot Slot index (0..LE_MAX_CONFIG_SLOTS - 1, or LE_SLOT_PHANTOM / LE_MAX_CONFIG_SLOTS).
+ * @return Pointer to matching le_storage_sector_t, or a default synthesized descriptor if not found.
+ */
+const le_storage_sector_t* le_storage_get_sector(uint8_t slot);
 
 /**
  * @brief Metadata descriptor for an individual configuration slot.
@@ -61,7 +76,9 @@ typedef struct {
 typedef struct {
     const le_hal_t* hal;                                                    /**< Pointer to hardware callbacks (or NULL for RAM-only). */
     uint8_t         active_slot;                                            /**< Index of the currently loaded and active slot. */
+#if LE_PHYSICAL_SLOT_COUNT > 0
     uint8_t         ram_partitions[LE_PHYSICAL_SLOT_COUNT][LE_SLOT_SIZE_BYTES]; /**< In-memory storage partitions (last index = hidden phantom scratch). */
+#endif
 } le_storage_t;
 
 /**
@@ -143,6 +160,20 @@ uint8_t le_storage_get_active_slot(const le_storage_t* storage);
 bool le_storage_activate_slot(le_storage_t* storage, uint8_t slot, le_vm_t* vm);
 
 /**
+ * @brief Performs a bump-free online swap to a configuration slot, preserving live state.
+ *
+ * Validates the target slot, captures live outputs (%DOUT, %AOUT), common direct registers,
+ * re-mapped symbolic alias values, and live internal state blocks (timers, counters, filters, PID),
+ * loads the program from @p slot, and restores live state into the running virtual machine.
+ *
+ * @param storage Pointer to the storage instance.
+ * @param slot Zero-based target slot index to activate.
+ * @param vm Pointer to the virtual machine instance to swap into.
+ * @return Returns `true` if the swap succeeded; otherwise, `false`.
+ */
+bool le_storage_swap_slot_online(le_storage_t* storage, uint8_t slot, le_vm_t* vm);
+
+/**
  * @brief Returns the index of the hidden phantom (scratch) slot.
  *
  * The phantom slot is always `LE_MAX_CONFIG_SLOTS`. It is used internally to
@@ -172,6 +203,33 @@ uint8_t le_storage_get_phantom_slot(const le_storage_t* storage);
  *         @ref le_status_t validation error from the phantom (e.g. @ref LE_ERR_CRC_MISMATCH).
  */
 le_status_t le_storage_commit_upload(le_storage_t* storage, uint8_t target_slot, size_t expected_size);
+
+/**
+ * @brief Boot helper that attempts to load and run a configuration slot, falling
+ * back to an embedded demo program if the slot is empty or unformatted.
+ *
+ * Execution flow:
+ *   1. Tries to activate @p default_slot (typically Slot 0) via @ref le_storage_activate_slot.
+ *      If successful, starts the VM via @ref le_vm_start and sets @p out_source_desc
+ *      to a descriptive string (e.g. "Storage Slot 0").
+ *   2. If the slot has not been flashed or fails verification, attempts to load
+ *      @p demo_prog via @ref le_loader_load. If successful, starts the VM and
+ *      sets @p out_source_desc (e.g. "Embedded Demo ROM").
+ *   3. If both fail, leaves the VM stopped and returns @ref LE_ERR_STORAGE.
+ *
+ * @param[in,out] vm Pointer to the virtual machine instance.
+ * @param[in,out] storage Pointer to the storage instance (may be NULL if no storage).
+ * @param[in] default_slot Slot index to attempt to boot from (usually 0).
+ * @param[in] demo_prog Optional pointer to embedded fallback bytecode array (may be NULL).
+ * @param[in] demo_len Length of fallback bytecode array in bytes.
+ * @param[out] out_source_desc Optional pointer to receive a human-readable description
+ *                             of which source was activated (may be NULL).
+ * @return `LE_OK` if a program was loaded and the VM started; otherwise error code.
+ */
+le_status_t le_storage_autostart_or_demo(le_vm_t* vm, le_storage_t* storage,
+                                        uint8_t default_slot,
+                                        const uint8_t* demo_prog, size_t demo_len,
+                                        const char** out_source_desc);
 
 #ifdef __cplusplus
 }

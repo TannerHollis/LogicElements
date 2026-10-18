@@ -1,16 +1,16 @@
-﻿# Per-element compiler assembly fixtures
+# Per-element compiler assembly fixtures
 
-Each `<SPEC>.json` in this directory is a **minimal, canonical LogicElements
+Each `<SPEC>.json` in `tests/element_fixtures/` is a **minimal, canonical LogicElements
 circuit** whose nominal element is derived from the filename. The test suite
-`../test_element_assembly.c` compiles every fixture through the C compiler API
+[`tests/test_element_assembly.c`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/tests/test_element_assembly.c) compiles every fixture through the C compiler API
 at `-O0` (the 1:1 schematic-to-bytecode mapping), parses the emitted
 disassembly, and asserts that the *exactly expected* opcode mnemonic appears —
 and that no-op elements emit zero instructions.
 
 These fixtures are the regression oracle for the compiler's
 element->bytecode mapping. If a new element type is added to the runtime, add
-its fixture here **and** an entry to the `g_oracle[]` table in
-`test_element_assembly.c`, or the coverage gate will report it.
+its fixture in `tests/element_fixtures/` **and** an entry to the `g_oracle[]` table in
+`tests/test_element_assembly.c`, or the coverage gate will report it.
 
 ## Regenerating
 

@@ -56,7 +56,39 @@ typedef struct {
     uint16_t                  timing_margin_pct;  /**< Compiler safety multiplier (150 = 1.5x). */
     uint32_t                  timed_worst_us;    /**< Estimated worst-case scan duration (board cost). */
     uint8_t                   timing_feasible;   /**< 1 when timed_worst_us <= scan_period_us. */
+
+    /* Multi-rate domain prescaling (Phase 4.2). */
+    uint16_t                  rate_fast_count;   /**< Number of instructions in the Fast/Protection domain (0 = all). */
+    uint16_t                  rate_med_count;    /**< Number of instructions in the Medium/Control domain. */
+    uint16_t                  rate_med_div;      /**< Scan divisor for Medium domain (e.g. 48 for 100 Hz at 4800 Hz). */
+    uint16_t                  rate_slow_div;     /**< Scan divisor for Slow domain (e.g. 480 for 10 Hz at 4800 Hz). */
+    le_status_t               last_step_status;  /**< Status of the most recent scan step. */
 } le_vm_t;
+
+/**
+ * @brief Configures multi-rate domain prescalers for decoupled fast/medium/slow execution.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param fast_count Number of instructions executed every scan cycle (Rate 0).
+ * @param med_count Number of instructions in the medium-rate block (Rate 1).
+ * @param med_div Scan cycle prescaler divisor for Rate 1 (e.g. 48).
+ * @param slow_div Scan cycle prescaler divisor for Rate 2 (e.g. 480).
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
+ */
+le_status_t le_vm_set_rate_prescalers(le_vm_t* vm, uint16_t fast_count, uint16_t med_count,
+                                      uint16_t med_div, uint16_t slow_div);
+
+/**
+ * @brief Retrieves the active multi-rate domain prescaler settings.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param fast_count Output pointer receiving the number of Rate 0 (fast) instructions.
+ * @param med_count Output pointer receiving the number of Rate 1 (medium) instructions.
+ * @param med_div Output pointer receiving the medium-rate prescaler divisor.
+ * @param slow_div Output pointer receiving the slow-rate prescaler divisor.
+ */
+void le_vm_get_rate_prescalers(const le_vm_t* vm, uint16_t* fast_count, uint16_t* med_count,
+                               uint16_t* med_div, uint16_t* slow_div);
 
 /**
  * @brief Initializes a virtual machine instance and clears its process image.
@@ -183,21 +215,40 @@ le_status_t le_alias_lookup(const le_vm_t* vm, const char* name, uint16_t* out_a
 
 /**
  * @brief Writes a boolean to the register referenced by an alias.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (optional leading '%').
+ * @param val Boolean value to write.
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t if not found or invalid type.
  */
 le_status_t le_alias_set_bool(le_vm_t* vm, const char* name, bool val);
 
 /**
  * @brief Writes a float to the register referenced by an alias.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (optional leading '%').
+ * @param val Floating-point value to write.
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t if not found or invalid type.
  */
 le_status_t le_alias_set_float(le_vm_t* vm, const char* name, float val);
 
 /**
  * @brief Writes an integer to the register referenced by an alias.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (optional leading '%').
+ * @param val 32-bit integer value to write.
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t if not found or invalid type.
  */
 le_status_t le_alias_set_int(le_vm_t* vm, const char* name, int32_t val);
 
 /**
  * @brief Toggles the boolean register referenced by an alias.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (optional leading '%').
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t if not found or invalid type.
  */
 le_status_t le_alias_toggle(le_vm_t* vm, const char* name);
 
@@ -206,6 +257,10 @@ le_status_t le_alias_toggle(le_vm_t* vm, const char* name);
  *
  * Sets the register to its active (non-zero) state and clears it back to zero
  * once `now_ms` advances past the duration. See @ref le_alias_pulse_for.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param name Alias name (optional leading '%').
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t if not found or slots are full.
  */
 le_status_t le_alias_pulse(le_vm_t* vm, const char* name);
 
@@ -221,10 +276,15 @@ le_status_t le_alias_pulse(le_vm_t* vm, const char* name);
 le_status_t le_alias_pulse_for(le_vm_t* vm, const char* name, float seconds);
 
 /**
- * @brief Arms a raw process-image address as a pulse for a duration in ms.
+ * @brief Arms a raw process-image address as a pulse for a duration in milliseconds.
  *
  * Used by the CLI / comms pulse command. Clears the register to zero when the
  * VM's `now_ms` crosses the expiry (checked inside @ref le_vm_step).
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param addr Process-image virtual address to pulse.
+ * @param duration_ms Pulse duration in milliseconds.
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_CAPACITY if all pulse slots are busy.
  */
 le_status_t le_vm_pulse(le_vm_t* vm, uint16_t addr, uint32_t duration_ms);
 
@@ -239,6 +299,32 @@ le_status_t le_vm_pulse(le_vm_t* vm, uint16_t addr, uint32_t duration_ms);
  * @return Returns @ref LE_OK on success, or @ref LE_ERR_NULL_PTR if @p vm is NULL.
  */
 le_status_t le_vm_set_scan_period_us(le_vm_t* vm, uint32_t period_us);
+
+/**
+ * @brief Configures the fixed scan rate in Hertz (1/s) and notifies HAL timer hardware.
+ *
+ * Calculates the scan period in microseconds (period_us = (1000000 + rate/2) / rate),
+ * updates the VM timing clock and runtime discrete dt, and if the board HAL implements
+ * @ref le_hal_t::set_timer_rate, invokes it so hardware timers/clocks/SysTick can be
+ * reconfigured automatically.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param rate_hz Desired scan rate in Hertz (e.g. 1000, 960, 2400; 0 to disable).
+ * @return Returns @ref LE_OK on success, or error code.
+ */
+le_status_t le_vm_set_scan_rate_hz(le_vm_t* vm, uint32_t rate_hz);
+
+/**
+ * @brief Non-blocking check for cooperative superloops: tests whether the next scan is due.
+ *
+ * If @p now_us has reached or exceeded the scheduled scan boundary (last_scan_us + scan_period_us),
+ * advances the internal scheduled boundary deterministically and returns true.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param now_us Monotonic microsecond timestamp (from HAL get_time_us).
+ * @return True if the entire scan cycle should be executed now; false otherwise.
+ */
+bool le_vm_scan_due(le_vm_t* vm, uint32_t now_us);
 
 /**
  * @brief Enables or disables strict fixed-rate cadence enforcement.

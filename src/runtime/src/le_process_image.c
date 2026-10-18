@@ -199,8 +199,8 @@ void le_process_image_set_bool(le_process_image_t* img, uint16_t addr, bool val)
 float le_process_image_get_float(const le_process_image_t* img, uint16_t addr)
 {
     if (!img || addr == LE_ADDR_UNUSED) return 0.0f;
-    if (addr == LE_CONST_ZERO_F) return 0.0f;
-    if (addr == LE_CONST_ONE_F) return 1.0f;
+    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0.0f;
+    if (addr == LE_CONST_ONE_F || addr == LE_CONST_TRUE) return 1.0f;
 
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
@@ -208,6 +208,10 @@ float le_process_image_get_float(const le_process_image_t* img, uint16_t addr)
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
         uint16_t f_idx = addr & 0x1FFF;
         if (img->floats && f_idx < img->float_count) return img->floats[f_idx];
+    }
+    else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t i_idx = addr & 0x1FFF;
+        if (img->ints && i_idx < img->int_count) return (float)img->ints[i_idx];
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
@@ -232,6 +236,10 @@ void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float va
         uint16_t f_idx = addr & 0x1FFF;
         if (img->floats && f_idx < img->float_count) img->floats[f_idx] = val;
     }
+    else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t i_idx = addr & 0x1FFF;
+        if (img->ints && i_idx < img->int_count) img->ints[i_idx] = (int32_t)val;
+    }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
         if (img->ain_raw && img->ain_vals && idx < img->ain_count) {
@@ -250,6 +258,8 @@ void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float va
 int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
 {
     if (!img || addr == LE_ADDR_UNUSED) return 0;
+    if (addr == LE_CONST_FALSE || addr == LE_CONST_ZERO_F) return 0;
+    if (addr == LE_CONST_TRUE || addr == LE_CONST_ONE_F) return 1;
 
     uint16_t region = addr & LE_ADDR_REGION_MASK;
     uint16_t idx = addr & LE_ADDR_INDEX_MASK;
@@ -257,6 +267,10 @@ int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
     if ((addr & 0xE000) == LE_REGION_INT_REG) {
         uint16_t i_idx = addr & 0x1FFF;
         if (img->ints && i_idx < img->int_count) return img->ints[i_idx];
+    }
+    else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t f_idx = addr & 0x1FFF;
+        if (img->floats && f_idx < img->float_count) return (int32_t)img->floats[f_idx];
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {
@@ -276,6 +290,10 @@ void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t va
     if ((addr & 0xE000) == LE_REGION_INT_REG) {
         uint16_t i_idx = addr & 0x1FFF;
         if (img->ints && i_idx < img->int_count) img->ints[i_idx] = val;
+    }
+    else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t f_idx = addr & 0x1FFF;
+        if (img->floats && f_idx < img->float_count) img->floats[f_idx] = (float)val;
     }
 #if LE_ENABLE_ANALOG
     else if (region == LE_REGION_AIN) {

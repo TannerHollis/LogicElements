@@ -32,6 +32,15 @@ std::string format_address(uint16_t addr, int user_bool_count = -1, int user_flo
 std::string format_opcode(uint8_t op, uint8_t mod);
 
 /**
+ * @brief Formats an instruction modifier into symbolic modifier text.
+ *
+ * @param op Numerical opcode identifier.
+ * @param mod Modifier byte (inversion bitflags, instance index, or function ID).
+ * @return Formatted modifier string (e.g. `0x00`, `~A`, `~B`, `~OUT`, `#0`, `fn:0x01`).
+ */
+std::string format_modifier(uint8_t op, uint8_t mod);
+
+/**
  * @brief Disassembles binary bytecode into a complete assembly listing.
  *
  * @param bin_data Pointer to the raw binary bytecode payload.

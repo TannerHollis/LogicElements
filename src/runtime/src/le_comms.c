@@ -6,6 +6,7 @@
 #include "le_comms.h"
 #include "le_loader.h"
 #include "le_storage.h"
+#include "le_custom_node.h"
 #include <string.h>
 
 enum {
@@ -115,12 +116,10 @@ static void handle_packet(le_comms_t* comms)
 #endif
             caps.max_bool_regs = 0; /* 0 = dynamic allocation up to workspace_bytes */
             caps.max_floats = 0;    /* 0 = dynamic allocation up to workspace_bytes */
-            /* The caps field is 16-bit; the Pico 2 W workspace (256 KB) exceeds it.
-             * Clamp the reported value - the authoritative capacity is in the
-             * board .leconfig (and the loader enforces the real LE_RAM_WORKSPACE_BYTES). */
-            caps.workspace_bytes = (LE_RAM_WORKSPACE_BYTES > 0xFFFFu) ? 0xFFFFu : (uint16_t)LE_RAM_WORKSPACE_BYTES;
+            caps.workspace_bytes = (uint32_t)LE_RAM_WORKSPACE_BYTES;
             caps.config_slots = LE_MAX_CONFIG_SLOTS;
-            caps.slot_size_bytes = LE_SLOT_SIZE_BYTES;
+            caps.slot_size_bytes = (uint32_t)LE_SLOT_SIZE_BYTES;
+            caps.active_slot = comms->storage ? le_storage_get_active_slot(comms->storage) : 0;
 
             uint16_t flags = 0;
 #if LE_ENABLE_COMPLEX
@@ -140,6 +139,9 @@ static void handle_packet(le_comms_t* comms)
             flags |= LE_CAP_I2C;
             flags |= LE_CAP_SPI;
 #endif
+#if LE_ENABLE_FPU || defined(__ARM_FP) || (defined(__VFP_FP__) && !defined(__SOFTFP__)) || defined(__riscv_flen) || defined(__FPU_PRESENT)
+            flags |= LE_CAP_FPU;
+#endif
             caps.feature_flags = flags;
 
             send_packet(LE_CMD_CAPS_DATA, seq, (const uint8_t*)&caps, sizeof(caps));
@@ -148,7 +150,7 @@ static void handle_packet(le_comms_t* comms)
 
         case LE_CMD_GET_CUSTOM_NODES: {
             const char* json_str = (g_le_hal && g_le_hal->get_custom_nodes_json) ?
-                                   g_le_hal->get_custom_nodes_json() : "[]";
+                                   g_le_hal->get_custom_nodes_json() : le_custom_nodes_get_json();
             if (!json_str) {
                 json_str = "[]";
             }
@@ -438,6 +440,38 @@ void le_comms_poll(le_comms_t* comms)
             le_comms_process_byte(comms, buf[i]);
         }
         avail = g_le_hal->uart_available();
+    }
+}
+
+void le_comms_cli_pump(le_comms_t* comms, le_cli_t* cli, const le_hal_t* hal)
+{
+    const le_hal_t* h = hal ? hal : g_le_hal;
+    if (!h || !h->uart_available || !h->uart_read) return;
+
+    size_t avail = h->uart_available();
+    while (avail > 0)
+    {
+        uint8_t rbuf[LE_COMMS_CLI_RX_CHUNK_SIZE];
+        size_t to_read = (avail > sizeof(rbuf)) ? sizeof(rbuf) : avail;
+        size_t n = h->uart_read(rbuf, to_read);
+        if (n == 0) break;
+
+        for (size_t i = 0; i < n; i++)
+        {
+            uint8_t b = rbuf[i];
+            if (cli && cli->mode != LE_CLI_MODE_NORMAL) {
+                le_cli_process_char(cli, b);
+            } else if (comms && (comms->rx_state != 0 || b == LE_COMMS_SYNC_BYTE)) {
+                le_comms_process_byte(comms, b);
+            } else if (cli) {
+                le_cli_process_char(cli, b);
+            }
+        }
+        avail = h->uart_available();
+    }
+
+    if (cli && h->get_time_ms) {
+        le_cli_poll(cli, h->get_time_ms());
     }
 }
 

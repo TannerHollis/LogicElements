@@ -30,6 +30,9 @@ LogicElements provides a low-overhead binary framing protocol:
 | `0x30` | `LE_CMD_CONTROL` | START (1), STOP (2), RESET (3) execution |
 | `0x40` | `LE_CMD_FORCE_IO` | Force digital input/output high/low for testing |
 | `0x41` | `LE_CMD_PULSE` | Pulse a register for a duration — payload `[addr:u16][duration_ms:u32]` |
+| `0x42` | `LE_CMD_GET_TIMING` | Query VM execution timing metrics (measured scan duration, max duration, cycle count) |
+
+During runtime slack time, calling `le_comms_cli_pump(&comms, &cli, hal)` automatically extracts packets with `0xAA` sync headers and routes them through the binary packet parser while forwarding human keystrokes to the interactive CLI.
 
 Program upload (`LE_CMD_PROG_*`) streams `.lebin` chunks directly into the
 storage layer's hidden **phantom** slot. `LE_CMD_PROG_END` runs the full IEEE
@@ -92,5 +95,4 @@ Board Validation Error: Circuit uses Protection & Control opcode 0x77, but targe
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `ports/stm32/stm32f401.leconfig` | STM32F401RE (Nucleo) | 3 × 2048B | 16 / 16 | 2 KB | Protection & Control, I2C, SPI, DSP |
 | `ports/rp2040/rp2040_pico.leconfig` | Raspberry Pi Pico | 4 × 4096B | 26 / 26 | 4 KB | Protection & Control, I2C, SPI, DSP |
-| `ports/rp2350/rp2350_pico2_w.leconfig` | Raspberry Pi Pico 2 W | 2 × 4096B | 24 / 24 | 256 KB | Protection & Control, I2C, SPI, DSP |
 | `ports/avr/atmega328p.leconfig` | Arduino Uno (ATmega328P) | 1 × 512B | 6 / 6 | 512 B | Standard Logic, DSP |

@@ -7,6 +7,8 @@
 #define LE_PROCESS_IMAGE_H
 
 #include "le_types.h"
+#include <string.h>
+#include <math.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -371,6 +373,7 @@ LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint1
     }
     if (addr == LE_CONST_ZERO_F) return 0.0f;
     if (addr == LE_CONST_ONE_F)  return 1.0f;
+    if (addr == LE_CONST_60_F)   return 60.0f;
     return le_process_image_get_float(img, addr);
 }
 
@@ -379,6 +382,9 @@ LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint1
  */
 LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t addr, float val)
 {
+#if LE_FLUSH_NAN_TO_ZERO
+    if (isnan(val)) val = 0.0f;
+#endif
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
         uint16_t idx = addr & 0x1FFF;
         if (img->floats && idx < img->float_count) {
@@ -393,6 +399,121 @@ LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t add
         }
     }
     le_process_image_set_float(img, addr, val);
+}
+
+/**
+ * @brief Fast inline signed integer getter for hot execution paths.
+ */
+LE_ALWAYS_INLINE int32_t le_pi_get_int_fast(const le_process_image_t* img, uint16_t addr)
+{
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) return img->ints[idx];
+    }
+#if LE_ENABLE_ANALOG
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->ain_raw && idx < img->ain_count) return img->ain_raw[idx];
+    }
+#endif
+    return le_process_image_get_int(img, addr);
+}
+
+/**
+ * @brief Fast inline signed integer setter for hot execution paths.
+ */
+LE_ALWAYS_INLINE void le_pi_set_int_fast(le_process_image_t* img, uint16_t addr, int32_t val)
+{
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) {
+            img->ints[idx] = val;
+            return;
+        }
+    }
+    le_process_image_set_int(img, addr, val);
+}
+
+/**
+ * @brief Fast 32-bit word getter for bit-parallel operations across %I, %DIN, %DOUT, %B.
+ */
+LE_ALWAYS_INLINE uint32_t le_pi_get_word32_fast(const le_process_image_t* img, uint16_t addr)
+{
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) return (uint32_t)img->ints[idx];
+        return 0;
+    }
+    if (!img->regs) return 0;
+    uint32_t bit = 0;
+    uint32_t max_bits = 0;
+    if ((addr & 0xF000) == LE_REGION_DIN) {
+        bit = (uint32_t)(addr & LE_ADDR_INDEX_MASK);
+        max_bits = img->din_count;
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
+        bit = (uint32_t)img->din_count + (uint32_t)(addr & LE_ADDR_INDEX_MASK);
+        max_bits = (uint32_t)img->din_count + (uint32_t)img->dout_count;
+    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        bit = (uint32_t)img->din_count + (uint32_t)img->dout_count + (uint32_t)(addr & 0x1FFF);
+        max_bits = (uint32_t)img->din_count + (uint32_t)img->dout_count + (uint32_t)img->bool_count;
+    } else {
+        return 0;
+    }
+    if (bit >= max_bits) return 0;
+    uint32_t val = 0;
+    uint32_t count = (max_bits - bit < 32) ? (max_bits - bit) : 32;
+    if ((bit & 7) == 0 && count == 32) {
+        memcpy(&val, img->regs + (bit >> 3), 4);
+        return val;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t b = bit + i;
+        if (img->regs[b >> 3] & (1U << (b & 7))) {
+            val |= (1U << i);
+        }
+    }
+    return val;
+}
+
+/**
+ * @brief Fast 32-bit word setter for bit-parallel operations across %I, %DIN, %DOUT, %B.
+ */
+LE_ALWAYS_INLINE void le_pi_set_word32_fast(le_process_image_t* img, uint16_t addr, uint32_t val)
+{
+    if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) img->ints[idx] = (int32_t)val;
+        return;
+    }
+    if (!img->regs) return;
+    uint32_t bit = 0;
+    uint32_t max_bits = 0;
+    if ((addr & 0xF000) == LE_REGION_DIN) {
+        bit = (uint32_t)(addr & LE_ADDR_INDEX_MASK);
+        max_bits = img->din_count;
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
+        bit = (uint32_t)img->din_count + (uint32_t)(addr & LE_ADDR_INDEX_MASK);
+        max_bits = (uint32_t)img->din_count + (uint32_t)img->dout_count;
+    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        bit = (uint32_t)img->din_count + (uint32_t)img->dout_count + (uint32_t)(addr & 0x1FFF);
+        max_bits = (uint32_t)img->din_count + (uint32_t)img->dout_count + (uint32_t)img->bool_count;
+    } else {
+        return;
+    }
+    if (bit >= max_bits) return;
+    uint32_t count = (max_bits - bit < 32) ? (max_bits - bit) : 32;
+    if ((bit & 7) == 0 && count == 32) {
+        memcpy(img->regs + (bit >> 3), &val, 4);
+        return;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t b = bit + i;
+        if (val & (1U << i)) {
+            img->regs[b >> 3] |= (uint8_t)(1U << (b & 7));
+        } else {
+            img->regs[b >> 3] &= (uint8_t)~(1U << (b & 7));
+        }
+    }
 }
 
 /**

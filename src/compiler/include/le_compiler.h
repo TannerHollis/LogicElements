@@ -151,6 +151,43 @@ LE_COMPILER_API int le_export_c_header(
 );
 
 /**
+ * @brief Cryptographically signs an extensible chunked container (.lebin v13 LEB2) using Ed25519 (Phase 4.4).
+ *
+ * Appends a "SIGN" chunk containing the 64-byte Ed25519 detached signature computed
+ * across all preceding container bytes (header and chunks).
+ *
+ * @param in_container Pointer to the input unsigned container buffer.
+ * @param in_size Size of @p in_container in bytes.
+ * @param secret_key 64-byte Ed25519 private/secret key (expanded seed + public key).
+ * @param out_container Destination buffer to receive the signed container.
+ * @param max_out_size Maximum capacity of @p out_container.
+ * @param out_size Pointer receiving the total bytes written to @p out_container.
+ * @return Returns 0 on success; otherwise, returns non-zero error code.
+ */
+LE_COMPILER_API int le_compiler_sign_container(
+    const uint8_t* in_container,
+    size_t in_size,
+    const uint8_t secret_key[64],
+    uint8_t* out_container,
+    size_t max_out_size,
+    size_t* out_size
+);
+
+/**
+ * @brief Generates an Ed25519 keypair from a 32-byte seed.
+ *
+ * @param out_pk 32-byte destination buffer for the public key.
+ * @param out_sk 64-byte destination buffer for the expanded secret key.
+ * @param seed 32-byte random seed.
+ * @return Returns 0 on success; otherwise, non-zero.
+ */
+LE_COMPILER_API int le_compiler_keygen(
+    uint8_t out_pk[32],
+    uint8_t out_sk[64],
+    const uint8_t seed[32]
+);
+
+/**
  * @brief Releases all memory allocated inside a @ref le_compile_result_t container.
  *
  * @param result Pointer to the result container to release.

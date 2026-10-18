@@ -9,10 +9,16 @@
 #include "le_vm.h"
 #include "le_rt.h"
 #include "le_loader.h"
+#include "le_crypto.h"
 #include "le_hal.h"
 #include "le_nvram.h"
 #include "le_ser.h"
 #include "le_event_rec.h"
+#include "le_custom_node.h"
+#include "le_storage.h"
+#include "le_comms.h"
+#include "le_cli.h"
+#include "le_ringbuf.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -1164,6 +1170,42 @@ void test_custom_nodes_and_ext_call(void)
     TEST_ASSERT(s_captured_uart_len > 0, "CLI emitted output for 'nodes'");
     TEST_ASSERT(strstr((const char*)s_captured_uart, "=== Custom Board Nodes ===") != NULL, "CLI printed Custom Board Nodes header");
     TEST_ASSERT(strstr((const char*)s_captured_uart, "Sim_HW_Sqrt") != NULL, "CLI output contains Sim_HW_Sqrt");
+
+    /* 6. Test N-Arity Custom Node (3 inputs, 1 output): Sim_Majority_3 (0x84) */
+    const le_custom_node_t* maj_node = le_custom_nodes_find(0x84);
+    TEST_ASSERT(maj_node != NULL, "Found Sim_Majority_3 custom node");
+    TEST_ASSERT(maj_node->in_count == 3, "Sim_Majority_3 has 3 inputs");
+    TEST_ASSERT(maj_node->out_count == 1, "Sim_Majority_3 has 1 output");
+
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(0), true);
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(1), false);
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(2), true);
+    const uint16_t maj_args[4] = {
+        LE_ADDR_MAKE_BOOL_REG(0),
+        LE_ADDR_MAKE_BOOL_REG(1),
+        LE_ADDR_MAKE_BOOL_REG(2),
+        LE_ADDR_MAKE_BOOL_REG(3)
+    };
+    st = le_custom_nodes_dispatch(0x84, maj_args, 3, 1, &img);
+    TEST_ASSERT(st == LE_OK, "Dispatched 3-input majority custom node with LE_OK");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(3)) == true, "Majority (true, false, true) returned true");
+
+    /* Test majority false case (false, false, true) */
+    le_process_image_set_bool(&img, LE_ADDR_MAKE_BOOL_REG(0), false);
+    st = le_custom_nodes_dispatch(0x84, maj_args, 3, 1, &img);
+    TEST_ASSERT(st == LE_OK, "Dispatched majority custom node with LE_OK");
+    TEST_ASSERT(le_process_image_get_bool(&img, LE_ADDR_MAKE_BOOL_REG(3)) == false, "Majority (false, false, true) returned false");
+
+    /* 7. Test Target Profile Generator: le_config_generate_profile_json */
+    char profile_buf[4096] = {0};
+    size_t prof_len = le_config_generate_profile_json(profile_buf, sizeof(profile_buf));
+    TEST_ASSERT(prof_len > 0, "Generated profile JSON length > 0");
+    TEST_ASSERT(strstr(profile_buf, "\"device\":") != NULL, "Profile JSON has device block");
+    TEST_ASSERT(strstr(profile_buf, "\"limits\":") != NULL, "Profile JSON has limits block");
+    TEST_ASSERT(strstr(profile_buf, "\"features\":") != NULL, "Profile JSON has features block");
+    TEST_ASSERT(strstr(profile_buf, "\"pin_map\":") != NULL, "Profile JSON has pin_map block");
+    TEST_ASSERT(strstr(profile_buf, "\"custom_nodes\":") != NULL, "Profile JSON has custom_nodes array");
+    TEST_ASSERT(strstr(profile_buf, "Sim_Majority_3") != NULL, "Profile JSON contains Sim_Majority_3");
 
     le_hal_set(orig_hal);
 }
@@ -2807,6 +2849,24 @@ void test_fixed_rate_cadence(void)
     TEST_ASSERT(le_vm_step_us(&vm, 2084 + 1042) == LE_OK, "recovered boundary step");
     TEST_ASSERT(le_vm_step_us(&vm, 9999) == LE_ERR_SCAN_JITTER, "wildly-off timestamp rejected");
 
+    /* test le_vm_set_scan_rate_hz */
+    TEST_ASSERT(le_vm_set_scan_rate_hz(&vm, 1000) == LE_OK, "set 1000 Hz scan rate");
+    TEST_ASSERT(vm.scan_period_us == 1000, "1000 Hz -> 1000 us period");
+    TEST_ASSERT(le_vm_set_scan_rate_hz(&vm, 960) == LE_OK, "set 960 Hz scan rate");
+    TEST_ASSERT(vm.scan_period_us == 1042, "960 Hz -> 1042 us period");
+
+    /* test le_vm_scan_due non-blocking boundary query */
+    vm.last_scan_us = 0;
+    TEST_ASSERT(le_vm_scan_due(&vm, 5000), "first call to scan_due returns true (initializes anchor)");
+    TEST_ASSERT(vm.last_scan_us == 5000, "anchor set to initial timestamp");
+    TEST_ASSERT(!le_vm_scan_due(&vm, 5500), "scan_due is false before period arrives (elapsed 500 < 1042)");
+    TEST_ASSERT(!le_vm_scan_due(&vm, 6041), "scan_due is false at 6041 (1 us before boundary)");
+    TEST_ASSERT(le_vm_scan_due(&vm, 6042), "scan_due is true at exact boundary 6042");
+    TEST_ASSERT(vm.last_scan_us == 6042, "anchor advanced to exact boundary");
+    /* if slack work took a bit longer, scan_due still maintains drift-free target */
+    TEST_ASSERT(le_vm_scan_due(&vm, 7100), "scan_due true when past boundary (7100 > 7084)");
+    TEST_ASSERT(vm.last_scan_us == 7084, "anchor advanced by exactly period_us (drift-free: 6042 + 1042 = 7084)");
+
     /* run_scan requires a configured period. */
     TEST_ASSERT(le_vm_set_scan_period_us(&vm, 0) == LE_OK, "clear period");
     TEST_ASSERT(le_vm_run_scan(&vm) == LE_ERR_TIMING_BUDGET, "run_scan without a period returns TIMING_BUDGET");
@@ -2848,7 +2908,7 @@ static bool mock_wl_read(uint32_t phys_addr, uint8_t* data, size_t len)
 
 static void test_nvram_and_wear_leveling(void)
 {
-    printf("\n--- Test: NVRAM & Flash Wear-Leveling ---\n");
+    printf("\n--- Test: NVRAM & Flash Wear-Leveling ---\n"); fflush(stdout);
 
     /* 1. Direct Mode basic read/write */
     TEST_ASSERT(le_nvram_init_direct() == true, "direct NVRAM initialized");
@@ -2926,10 +2986,12 @@ static void test_nvram_and_wear_leveling(void)
     memset(s_mock_erase_counts, 0, sizeof(s_mock_erase_counts));
 
     le_flash_wl_driver_t wl_driver;
+    memset(&wl_driver, 0, sizeof(wl_driver));
     wl_driver.flash_base_offset = 0;
     wl_driver.sector_size = MOCK_WL_SECTOR_SIZE;
     wl_driver.page_size = 256;
     wl_driver.sector_count = MOCK_WL_SECTOR_COUNT;
+    wl_driver.max_erase_cycles = 0; /* 0 defaults to LE_NVRAM_MAX_ERASE_CYCLES */
     wl_driver.erase_sector = mock_wl_erase_sector;
     wl_driver.program = mock_wl_program;
     wl_driver.read = mock_wl_read;
@@ -2988,8 +3050,26 @@ static void test_nvram_and_wear_leveling(void)
     TEST_ASSERT(le_nvram_read(LE_NVRAM_OFFSET_REGS + 200, read_check, sizeof(cyclic_update)) == true, "remount read cyclic update");
     TEST_ASSERT(memcmp(cyclic_update, read_check, sizeof(cyclic_update)) == 0, "remount cyclic update match");
 
+    /* 4. Test Flash Wear-Leveling Diagnostics & Wear Percentage Calculation */
+    le_nvram_stats_t stats;
+    TEST_ASSERT(le_nvram_get_stats(&stats) == true, "get NVRAM stats after remount");
+    TEST_ASSERT(stats.is_flash == true, "stats reports flash mode");
+    TEST_ASSERT(stats.sector_count == MOCK_WL_SECTOR_COUNT, "stats sector count matches driver");
+    TEST_ASSERT(stats.sector_size == MOCK_WL_SECTOR_SIZE, "stats sector size matches driver");
+    TEST_ASSERT(stats.active_erase_count >= 1, "stats active erase count >= 1");
+    TEST_ASSERT(stats.rated_erase_cycles == LE_NVRAM_MAX_ERASE_CYCLES, "stats rated endurance matches config");
+    TEST_ASSERT(stats.wear_pct >= 0.0f && stats.wear_pct <= 100.0f, "wear percentage within valid range");
+    TEST_ASSERT(fabsf((stats.wear_pct + stats.health_pct) - 100.0f) < 0.01f, "wear_pct + health_pct == 100%");
+    TEST_ASSERT(stats.sector_bytes_used > 0, "active sector has bytes used");
+    TEST_ASSERT(stats.sector_bytes_free < MOCK_WL_SECTOR_SIZE, "active sector free bytes tracked");
+
     /* Switch back to direct mode for subsequent tests */
     le_nvram_init_direct();
+    le_nvram_stats_t direct_stats;
+    TEST_ASSERT(le_nvram_get_stats(&direct_stats) == true, "get stats in direct mode");
+    TEST_ASSERT(direct_stats.is_flash == false, "direct mode is_flash is false");
+    TEST_ASSERT(direct_stats.wear_pct == 0.0f, "direct mode wear is 0%");
+    TEST_ASSERT(direct_stats.health_pct == 100.0f, "direct mode health is 100%");
 
     /* 4. Sequence of Events Recorder (SER) with NVRAM persistence */
     le_ser_channel_t ser_channels[2] = {
@@ -3095,6 +3175,800 @@ static void test_nvram_and_wear_leveling(void)
     le_nvram_init_direct();
 }
 
+static void test_circuit_driven_nvram(void)
+{
+    printf("\n--- Test: Circuit-Driven Dynamic NVRAM Allocation ---\n"); fflush(stdout);
+
+    le_nvram_init_direct();
+
+    /* 1. High SER allocation: 0 retentive regs, 0 events, dedicated SER */
+    le_status_t st = le_nvram_configure_layout(0, 900, 0);
+    TEST_ASSERT(st == LE_OK, "High SER allocation succeeds");
+    TEST_ASSERT(le_nvram_get_regs_bytes(0) == 0, "Regs bytes is 0");
+    TEST_ASSERT(le_nvram_get_ser_bytes() > 0, "SER bytes allocated");
+    TEST_ASSERT(le_nvram_get_ser_offset() == 64, "SER begins at manifest offset 64");
+    TEST_ASSERT(le_nvram_get_event_rec_bytes() == 0, "Event rec bytes is 0");
+
+    /* 2. High retentive registers allocation: no SER, no events */
+    st = le_nvram_configure_layout(4096, 0, 0);
+    TEST_ASSERT(st == LE_OK, "High retentive registers allocation succeeds");
+    TEST_ASSERT(le_nvram_get_regs_bytes(0) == 4096, "Slot 0 regs bytes is 4096");
+    TEST_ASSERT(le_nvram_get_regs_offset(0) == 64, "Regs begin at manifest offset 64");
+    TEST_ASSERT(le_nvram_get_ser_bytes() == 0, "SER bytes is 0");
+    TEST_ASSERT(le_nvram_get_ser_offset() == 0, "SER offset is 0 when disabled");
+
+    /* 3. Capacity overflow rejection */
+    st = le_nvram_configure_layout(1000000, 50000, 500000);
+    TEST_ASSERT(st == LE_ERR_CAPACITY, "Massive allocation rejected with LE_ERR_CAPACITY");
+
+    /* 4. Balanced allocation */
+    st = le_nvram_configure_layout(512, 100, 1024);
+    TEST_ASSERT(st == LE_OK, "Balanced NVRAM layout allocation succeeds");
+    uint32_t r_off = le_nvram_get_regs_offset(0);
+    uint32_t s_off = le_nvram_get_ser_offset();
+    uint32_t e_off = le_nvram_get_event_rec_offset();
+    TEST_ASSERT(r_off == 64, "Regs offset follows manifest");
+    TEST_ASSERT(s_off > r_off, "SER offset follows retentive registers");
+    TEST_ASSERT(e_off > s_off, "Event recorder offset follows SER");
+
+    /* 5. Container loading with NVMD chunk */
+    le_header_t head;
+    memset(&head, 0, sizeof(head));
+    head.magic = LE_BIN_MAGIC;
+    head.version = LE_BIN_VERSION;
+    head.flags = LE_FLAG_AUTOSTART;
+    head.instruction_count = 1;
+    head.bool_reg_count = 8;
+    le_instruction_t inst;
+    memset(&inst, 0, sizeof(inst));
+    inst.opcode = LE_OP_NOP;
+    head.crc32 = le_crc32((const uint8_t*)&inst, sizeof(inst));
+
+    uint8_t flat[sizeof(le_header_t) + sizeof(le_instruction_t)];
+    memcpy(flat, &head, sizeof(head));
+    memcpy(flat + sizeof(head), &inst, sizeof(inst));
+
+    le_nvram_desc_t nvmd;
+    memset(&nvmd, 0, sizeof(nvmd));
+    nvmd.retentive_bytes = 256;
+    nvmd.ser_records = 50;
+    nvmd.ser_bytes = (uint32_t)sizeof(le_ser_nv_header_t) + 50 * (uint32_t)sizeof(le_ser_event_t);
+    nvmd.retentive_range_count = 1;
+    nvmd.ranges[0].start_addr = LE_ADDR_MAKE_BOOL_REG(0);
+    nvmd.ranges[0].count = 8;
+
+    uint8_t chunked[2048];
+    size_t chunked_size = 0;
+    st = le_loader_convert_to_chunked_nv(flat, sizeof(flat), NULL, &nvmd, chunked, sizeof(chunked), &chunked_size);
+    TEST_ASSERT(st == LE_OK, "convert to chunked container with NVMD succeeds");
+
+    le_chunked_view_t view;
+    st = le_loader_parse_chunks(chunked, chunked_size, &view);
+    TEST_ASSERT(st == LE_OK, "parse chunked container succeeds");
+    TEST_ASSERT(view.nvmd != NULL, "NVMD chunk discovered");
+    TEST_ASSERT(view.nvmd->retentive_bytes == 256, "NVMD retentive_bytes matches");
+    TEST_ASSERT(view.nvmd->ser_records == 50, "NVMD ser_records matches");
+
+    le_vm_t vm;
+    memset(&vm, 0, sizeof(vm));
+    st = le_loader_load(&vm, chunked, chunked_size);
+    TEST_ASSERT(st == LE_OK, "load container with NVMD chunk into VM succeeds");
+    TEST_ASSERT(le_nvram_get_regs_bytes(0) == 256, "dynamic regs_bytes configured by loader");
+    TEST_ASSERT(le_nvram_get_ser_bytes() == nvmd.ser_bytes, "dynamic ser_bytes configured by loader");
+
+    /* Switch back to direct mode for clean simulator state */
+    le_nvram_init_direct();
+}
+
+static void test_multi_rate_prescalers(void)
+{
+    printf("Running test_multi_rate_prescalers...\n");
+    le_vm_t vm;
+    le_vm_init(&vm);
+
+    // Setup 4 float registers: %F0 (fast acc), %F1 (med acc), %F2 (slow acc), %F3 (const 1.0)
+    uint8_t arena[256];
+    le_header_t h;
+    memset(&h, 0, sizeof(h));
+    h.float_reg_count = 4;
+    uint32_t regs_len = 0;
+    TEST_ASSERT(le_process_image_bind(&vm.image, arena, sizeof(arena), &h, &regs_len) == LE_OK, "bind arena");
+
+    le_pi_set_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(0), 0.0f);
+    le_pi_set_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(1), 0.0f);
+    le_pi_set_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(2), 0.0f);
+    le_pi_set_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(3), 1.0f);
+
+    // 3 instructions:
+    // inst 0: ADD_F %F0, %F3 -> %F0
+    // inst 1: ADD_F %F1, %F3 -> %F1
+    // inst 2: ADD_F %F2, %F3 -> %F2
+    le_instruction_t insts[3] = {
+        { LE_OP_ADD_F, 0, LE_ADDR_MAKE_FLOAT(0), LE_ADDR_MAKE_FLOAT(3), LE_ADDR_MAKE_FLOAT(0) },
+        { LE_OP_ADD_F, 0, LE_ADDR_MAKE_FLOAT(1), LE_ADDR_MAKE_FLOAT(3), LE_ADDR_MAKE_FLOAT(1) },
+        { LE_OP_ADD_F, 0, LE_ADDR_MAKE_FLOAT(2), LE_ADDR_MAKE_FLOAT(3), LE_ADDR_MAKE_FLOAT(2) }
+    };
+
+    TEST_ASSERT(le_vm_load_program(&vm, insts, 3) == LE_OK, "load program");
+    TEST_ASSERT(le_vm_set_rate_prescalers(&vm, 1, 1, 5, 10) == LE_OK, "set rate prescalers");
+
+    uint16_t fc = 0, mc = 0, mdiv = 0, sdiv = 0;
+    le_vm_get_rate_prescalers(&vm, &fc, &mc, &mdiv, &sdiv);
+    TEST_ASSERT(fc == 1 && mc == 1 && mdiv == 5 && sdiv == 10, "prescalers retrieved");
+
+    le_vm_start(&vm);
+
+    // Run 11 cycles (0 through 10)
+    for (uint32_t step = 0; step <= 10; step++) {
+        TEST_ASSERT(le_vm_step_us(&vm, step * 1000) == LE_OK, "step");
+    }
+
+    // Expected values after 11 scans (cycle_count 0..10):
+    // Fast (inst 0): runs on all 11 cycles -> 11.0f
+    // Med  (inst 1): runs on cycle 0, 5, 10 -> 3.0f
+    // Slow (inst 2): runs on cycle 0, 10 -> 2.0f
+    float fast_val = le_pi_get_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(0));
+    float med_val  = le_pi_get_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(1));
+    float slow_val = le_pi_get_float_fast(&vm.image, LE_ADDR_MAKE_FLOAT(2));
+
+    TEST_ASSERT(fast_val == 11.0f, "fast domain ran every cycle (11 times)");
+    TEST_ASSERT(med_val  == 3.0f,  "medium domain ran at 1/5 rate (3 times: 0, 5, 10)");
+    TEST_ASSERT(slow_val == 2.0f,  "slow domain ran at 1/10 rate (2 times: 0, 10)");
+}
+
+void test_online_program_swap(void)
+{
+    printf("Running test_online_program_swap (Bump-Free Online Program Swapping)...\n");
+
+    /* Build Program A: 1 instruction, 1 timer state block, 2 aliases ("TRIP"->%B0, "SETP"->%F0) */
+    uint8_t blob_a[256];
+    size_t size_a = 0;
+    {
+        le_instruction_t inst_a[1] = {
+            { LE_OP_MOVE_F, 0, LE_ADDR_MAKE_FLOAT(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_FLOAT(1) }
+        };
+        uint8_t desc_a[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_TIMER, 1, 0, 0 };
+        desc_a[2] = (uint8_t)(sizeof(le_timer_state_t) & 0xFF);
+        desc_a[3] = (uint8_t)((sizeof(le_timer_state_t) >> 8) & 0xFF);
+        le_timer_state_t timer_img;
+        memset(&timer_img, 0, sizeof(timer_img));
+        timer_img.preset_ms = 5000;
+
+        le_alias_t aliases_a[2];
+        memset(aliases_a, 0, sizeof(aliases_a));
+        strncpy(aliases_a[0].name, "TRIP", LE_ALIAS_NAME_MAX);
+        aliases_a[0].addr = LE_ADDR_MAKE_BOOL_REG(0);
+        strncpy(aliases_a[1].name, "SETP", LE_ALIAS_NAME_MAX);
+        aliases_a[1].addr = LE_ADDR_MAKE_FLOAT(0);
+
+        uint8_t payload_a[sizeof(inst_a) + LE_STATE_DESC_BYTES + sizeof(timer_img) + sizeof(aliases_a)];
+        size_t off = 0;
+        memcpy(payload_a + off, inst_a, sizeof(inst_a)); off += sizeof(inst_a);
+        memcpy(payload_a + off, desc_a, sizeof(desc_a)); off += sizeof(desc_a);
+        memcpy(payload_a + off, &timer_img, sizeof(timer_img)); off += sizeof(timer_img);
+        memcpy(payload_a + off, aliases_a, sizeof(aliases_a)); off += sizeof(aliases_a);
+
+        le_header_t ha;
+        memset(&ha, 0, sizeof(ha));
+        ha.magic = LE_BIN_MAGIC;
+        ha.version = LE_BIN_VERSION;
+        ha.flags = LE_FLAG_AUTOSTART;
+        ha.instruction_count = 1;
+        ha.digital_in_count = 8;
+        ha.digital_out_count = 8;
+        ha.analog_in_count = 4;
+        ha.analog_out_count = 4;
+        ha.bool_reg_count = 8;
+        ha.float_reg_count = 8;
+        ha.int_reg_count = 8;
+        ha.state_desc_count = 1;
+        ha.state_img_len = (uint32_t)sizeof(timer_img);
+        ha.alias_count = 2;
+
+        size_a = test_make_blob(ha, payload_a, off, blob_a, sizeof(blob_a));
+    }
+
+    /* Build Program B: 2 instructions, 1 timer state block, 2 re-mapped aliases ("TRIP"->%B3, "SETP"->%F4) */
+    uint8_t blob_b[256];
+    size_t size_b = 0;
+    {
+        le_instruction_t inst_b[2] = {
+            { LE_OP_MOVE_F, 0, LE_ADDR_MAKE_FLOAT(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_FLOAT(1) },
+            { LE_OP_MOVE_F, 0, LE_ADDR_MAKE_FLOAT(1), LE_ADDR_UNUSED, LE_ADDR_MAKE_FLOAT(2) }
+        };
+        uint8_t desc_b[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_TIMER, 1, 0, 0 };
+        desc_b[2] = (uint8_t)(sizeof(le_timer_state_t) & 0xFF);
+        desc_b[3] = (uint8_t)((sizeof(le_timer_state_t) >> 8) & 0xFF);
+        le_timer_state_t timer_img;
+        memset(&timer_img, 0, sizeof(timer_img));
+        timer_img.preset_ms = 5000;
+
+        le_alias_t aliases_b[2];
+        memset(aliases_b, 0, sizeof(aliases_b));
+        strncpy(aliases_b[0].name, "TRIP", LE_ALIAS_NAME_MAX);
+        aliases_b[0].addr = LE_ADDR_MAKE_BOOL_REG(3); /* Remapped from %B[0] to %B[3] */
+        strncpy(aliases_b[1].name, "SETP", LE_ALIAS_NAME_MAX);
+        aliases_b[1].addr = LE_ADDR_MAKE_FLOAT(4);    /* Remapped from %F[0] to %F[4] */
+
+        uint8_t payload_b[sizeof(inst_b) + LE_STATE_DESC_BYTES + sizeof(timer_img) + sizeof(aliases_b)];
+        size_t off = 0;
+        memcpy(payload_b + off, inst_b, sizeof(inst_b)); off += sizeof(inst_b);
+        memcpy(payload_b + off, desc_b, sizeof(desc_b)); off += sizeof(desc_b);
+        memcpy(payload_b + off, &timer_img, sizeof(timer_img)); off += sizeof(timer_img);
+        memcpy(payload_b + off, aliases_b, sizeof(aliases_b)); off += sizeof(aliases_b);
+
+        le_header_t hb;
+        memset(&hb, 0, sizeof(hb));
+        hb.magic = LE_BIN_MAGIC;
+        hb.version = LE_BIN_VERSION;
+        hb.flags = LE_FLAG_AUTOSTART;
+        hb.instruction_count = 2;
+        hb.digital_in_count = 8;
+        hb.digital_out_count = 8;
+        hb.analog_in_count = 4;
+        hb.analog_out_count = 4;
+        hb.bool_reg_count = 8;
+        hb.float_reg_count = 8;
+        hb.int_reg_count = 8;
+        hb.state_desc_count = 1;
+        hb.state_img_len = (uint32_t)sizeof(timer_img);
+        hb.alias_count = 2;
+
+        size_b = test_make_blob(hb, payload_b, off, blob_b, sizeof(blob_b));
+    }
+
+    le_vm_t vm;
+    le_vm_init(&vm);
+
+    /* 1. Load Program A into VM */
+    TEST_ASSERT(le_loader_load(&vm, blob_a, size_a) == LE_OK, "Program A loads initially");
+    TEST_ASSERT(vm.instruction_count == 1, "Program A has 1 instruction");
+
+    /* 2. Establish live operating state in Program A */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DOUT(0), true);
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DOUT(1), true);
+    le_pi_set_aout(&vm.image, 0, 42.5f);
+    le_process_image_set_int(&vm.image, LE_ADDR_MAKE_INT_REG(0), 999);
+
+    /* Set named alias values in Program A */
+    le_alias_set_bool(&vm, "TRIP", true);
+    le_alias_set_float(&vm, "SETP", 123.45f);
+
+    /* Set stateful block data in Program A */
+    le_timer_state_t* t_before = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(t_before != NULL, "Timer 0 resolves in Program A");
+    t_before->start_time_ms = 2500;
+    t_before->q = true;
+
+    /* 3. Perform bump-free online swap to Program B */
+    le_status_t swap_st = le_loader_swap_online(&vm, blob_b, size_b);
+    TEST_ASSERT(swap_st == LE_OK, "Online swap to Program B succeeded");
+    TEST_ASSERT(vm.running == true, "VM remains running after online swap");
+    TEST_ASSERT(vm.instruction_count == 2, "Program B has 2 instructions active");
+
+    /* 4. Verify Physical DOUT & AOUT continuity (no glitch/dropout) */
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "DOUT[0] maintained without glitch");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)) == true, "DOUT[1] maintained without glitch");
+    TEST_ASSERT(fabsf(le_pi_get_aout(&vm.image, 0) - 42.5f) < 1e-4f, "AOUT[0] maintained without glitch");
+
+    /* 5. Verify direct register continuity */
+    TEST_ASSERT(le_process_image_get_int(&vm.image, LE_ADDR_MAKE_INT_REG(0)) == 999, "INT_REG[0] carried over");
+
+    /* 6. Verify re-mapped symbolic alias transfer */
+    /* In Program B, TRIP was remapped to %B[3] and SETP to %F[4] */
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_BOOL_REG(3)) == true, "TRIP value transferred to new address %B[3]");
+    TEST_ASSERT(fabsf(le_process_image_get_float(&vm.image, LE_ADDR_MAKE_FLOAT(4)) - 123.45f) < 1e-4f, "SETP value transferred to new address %F[4]");
+
+    /* 7. Verify state block continuity */
+    le_timer_state_t* t_after = le_process_image_timer(&vm.image, 0);
+    TEST_ASSERT(t_after != NULL, "Timer 0 resolves in Program B");
+    TEST_ASSERT(t_after && t_after->start_time_ms == 2500, "Timer 0 start_time_ms preserved across swap");
+    TEST_ASSERT(t_after && t_after->q == true, "Timer 0 q flag preserved across swap");
+
+    /* 8. Verify storage slot online swap and rejection of invalid binary */
+    le_storage_t storage;
+    le_storage_init(&storage, NULL);
+    TEST_ASSERT(le_storage_write_chunk(&storage, 0, 0, blob_a, size_a), "Slot 0 written with Program A");
+    TEST_ASSERT(le_storage_write_chunk(&storage, 1, 0, blob_b, size_b), "Slot 1 written with Program B");
+
+    /* Activate slot 0 initially */
+    TEST_ASSERT(le_storage_activate_slot(&storage, 0, &vm), "Activated slot 0");
+    TEST_ASSERT(storage.active_slot == 0, "Active slot is 0");
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DOUT(0), true);
+
+    /* Swap online to slot 1 */
+    TEST_ASSERT(le_storage_swap_slot_online(&storage, 1, &vm), "Online slot swap to 1 succeeded");
+    TEST_ASSERT(storage.active_slot == 1, "Active slot is now 1");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "DOUT[0] maintained across slot swap");
+
+    /* Corrupted buffer must be rejected without disturbing VM */
+    uint8_t corrupt_blob[256];
+    memcpy(corrupt_blob, blob_a, size_a);
+    corrupt_blob[sizeof(le_header_t) + 2] ^= 0xFF; /* Corrupt instruction */
+    TEST_ASSERT(le_loader_swap_online(&vm, corrupt_blob, size_a) == LE_ERR_CRC_MISMATCH, "Swap rejects corrupt CRC");
+    TEST_ASSERT(vm.instruction_count == 2, "VM instruction count untouched after rejected swap");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true, "DOUT[0] intact after rejected swap");
+}
+
+void test_word_and_int_opcodes(void)
+{
+    printf("Running test_word_and_int_opcodes (Bit-Parallel Word & 32-Bit Int Math)...\n");
+
+    le_process_image_t img;
+    test_rt_reset();
+    test_img_init(&img);
+
+    uint16_t i0 = LE_ADDR_MAKE_INT_REG(0);
+    uint16_t i1 = LE_ADDR_MAKE_INT_REG(1);
+    uint16_t i2 = LE_ADDR_MAKE_INT_REG(2);
+
+    /* 1. 32-bit Integer Arithmetic */
+    le_pi_set_int_fast(&img, i0, 100);
+    le_pi_set_int_fast(&img, i1, 25);
+
+    /* MOVE_I */
+    le_instruction_t inst_move = { LE_OP_MOVE_I, 0, i0, LE_ADDR_UNUSED, i2 };
+    le_exec_instruction(&inst_move, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 100, "MOVE_I copies integer");
+
+    /* ADD_I */
+    le_instruction_t inst_add = { LE_OP_ADD_I, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_add, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 125, "ADD_I computes 100 + 25 = 125");
+
+    /* SUB_I */
+    le_instruction_t inst_sub = { LE_OP_SUB_I, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_sub, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 75, "SUB_I computes 100 - 25 = 75");
+
+    /* MUL_I */
+    le_instruction_t inst_mul = { LE_OP_MUL_I, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_mul, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 2500, "MUL_I computes 100 * 25 = 2500");
+
+    /* DIV_I */
+    le_instruction_t inst_div = { LE_OP_DIV_I, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_div, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 4, "DIV_I computes 100 / 25 = 4");
+
+    /* DIV_I by zero -> safe 0 */
+    le_pi_set_int_fast(&img, i1, 0);
+    le_exec_instruction(&inst_div, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == 0, "DIV_I by zero yields 0 without faulting");
+
+    /* NEG_I */
+    le_instruction_t inst_neg = { LE_OP_NEG_I, 0, i0, LE_ADDR_UNUSED, i2 };
+    le_exec_instruction(&inst_neg, &img, 0);
+    TEST_ASSERT(le_pi_get_int_fast(&img, i2) == -100, "NEG_I computes -100");
+
+    /* 2. Bit-Parallel 32-Bit Word Logic */
+    /* Test on integer words first */
+    le_pi_set_word32_fast(&img, i0, 0xAAAAAAAAu);
+    le_pi_set_word32_fast(&img, i1, 0x55555555u);
+
+    /* WORD_AND */
+    le_instruction_t inst_wand = { LE_OP_WORD_AND, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_wand, &img, 0);
+    TEST_ASSERT(le_pi_get_word32_fast(&img, i2) == 0x00000000u, "WORD_AND 0xAA.. & 0x55.. = 0");
+
+    /* WORD_OR */
+    le_instruction_t inst_wor = { LE_OP_WORD_OR, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_wor, &img, 0);
+    TEST_ASSERT(le_pi_get_word32_fast(&img, i2) == 0xFFFFFFFFu, "WORD_OR 0xAA.. | 0x55.. = 0xFF..");
+
+    /* WORD_XOR */
+    le_instruction_t inst_wxor = { LE_OP_WORD_XOR, 0, i0, i1, i2 };
+    le_exec_instruction(&inst_wxor, &img, 0);
+    TEST_ASSERT(le_pi_get_word32_fast(&img, i2) == 0xFFFFFFFFu, "WORD_XOR 0xAA.. ^ 0x55.. = 0xFF..");
+
+    /* WORD_NOT */
+    le_instruction_t inst_wnot = { LE_OP_WORD_NOT, 0, i0, LE_ADDR_UNUSED, i2 };
+    le_exec_instruction(&inst_wnot, &img, 0);
+    TEST_ASSERT(le_pi_get_word32_fast(&img, i2) == 0x55555555u, "WORD_NOT ~0xAA.. = 0x55..");
+
+    /* 3. Bit-Parallel Word Logic directly on %DIN -> %DOUT bit arrays */
+    uint16_t din_w = LE_ADDR_MAKE_DIN(0);
+    uint16_t dout_w = LE_ADDR_MAKE_DOUT(0);
+    le_pi_set_word32_fast(&img, din_w, 0x12345678u);
+    le_pi_set_word32_fast(&img, i0, 0x0000FFFFu); /* mask */
+
+    le_instruction_t inst_mask = { LE_OP_WORD_AND, 0, din_w, i0, dout_w };
+    le_exec_instruction(&inst_mask, &img, 0);
+    TEST_ASSERT(le_pi_get_word32_fast(&img, dout_w) == 0x00005678u, "WORD_AND masked DIN into DOUT across 32 bits");
+}
+
+void test_chunked_container(void)
+{
+    printf("Running test_chunked_container (Chunked v13 .lebin Container & Online Swap)...\n");
+
+    /* 1. Convert baseline flat binary to chunked container format */
+    uint8_t chunked_buf[2048];
+    size_t chunked_size = 0;
+    le_status_t status = le_loader_convert_to_chunked(le_default_program, sizeof(le_default_program),
+                                                     chunked_buf, sizeof(chunked_buf), &chunked_size);
+    TEST_ASSERT(status == LE_OK, "Converted flat program to chunked container successfully");
+    TEST_ASSERT(chunked_size > sizeof(le_container_header_t), "Chunked container has valid size");
+
+    /* 2. Parse chunks via zero-copy view */
+    le_chunked_view_t view;
+    status = le_loader_parse_chunks(chunked_buf, chunked_size, &view);
+    TEST_ASSERT(status == LE_OK, "le_loader_parse_chunks succeeds on valid container");
+    TEST_ASSERT(view.container != NULL && view.container->magic == LE_BIN_MAGIC_V2, "Container magic is LEB2");
+    TEST_ASSERT(view.container->version == LE_CONTAINER_VERSION, "Container version is 13");
+    TEST_ASSERT(view.head != NULL, "Container HEAD chunk found");
+    TEST_ASSERT(view.head->instruction_count == 4, "Container carries 4 instructions");
+    TEST_ASSERT(view.inst != NULL && view.inst_count == 4, "Container INST chunk found with 4 instructions");
+    TEST_ASSERT(view.alis_count == 0, "Default program has 0 aliases");
+    TEST_ASSERT(view.time != NULL, "Container TIME chunk found");
+
+    /* Also verify container conversion with state blocks and aliases */
+    {
+        le_instruction_t inst_b[2] = {
+            { LE_OP_MOVE_F, 0, LE_ADDR_MAKE_FLOAT(0), LE_ADDR_UNUSED, LE_ADDR_MAKE_FLOAT(1) },
+            { LE_OP_MOVE_F, 0, LE_ADDR_MAKE_FLOAT(1), LE_ADDR_UNUSED, LE_ADDR_MAKE_FLOAT(2) }
+        };
+        uint8_t desc_b[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_TIMER, 1, 0, 0 };
+        desc_b[2] = (uint8_t)(sizeof(le_timer_state_t) & 0xFF);
+        desc_b[3] = (uint8_t)((sizeof(le_timer_state_t) >> 8) & 0xFF);
+        le_timer_state_t timer_img;
+        memset(&timer_img, 0, sizeof(timer_img));
+        timer_img.preset_ms = 5000;
+
+        le_alias_t aliases_b[2];
+        memset(aliases_b, 0, sizeof(aliases_b));
+        strncpy(aliases_b[0].name, "TRIP", LE_ALIAS_NAME_MAX);
+        aliases_b[0].addr = LE_ADDR_MAKE_BOOL_REG(3);
+        strncpy(aliases_b[1].name, "SETP", LE_ALIAS_NAME_MAX);
+        aliases_b[1].addr = LE_ADDR_MAKE_FLOAT(4);
+
+        uint8_t payload_b[sizeof(inst_b) + LE_STATE_DESC_BYTES + sizeof(timer_img) + sizeof(aliases_b)];
+        size_t off_b = 0;
+        memcpy(payload_b + off_b, inst_b, sizeof(inst_b)); off_b += sizeof(inst_b);
+        memcpy(payload_b + off_b, desc_b, sizeof(desc_b)); off_b += sizeof(desc_b);
+        memcpy(payload_b + off_b, &timer_img, sizeof(timer_img)); off_b += sizeof(timer_img);
+        memcpy(payload_b + off_b, aliases_b, sizeof(aliases_b)); off_b += sizeof(aliases_b);
+
+        le_header_t hb;
+        memset(&hb, 0, sizeof(hb));
+        hb.magic = LE_BIN_MAGIC;
+        hb.version = LE_BIN_VERSION;
+        hb.flags = LE_FLAG_AUTOSTART;
+        hb.instruction_count = 2;
+        hb.digital_in_count = 8;
+        hb.digital_out_count = 8;
+        hb.analog_in_count = 4;
+        hb.analog_out_count = 4;
+        hb.bool_reg_count = 8;
+        hb.float_reg_count = 8;
+        hb.int_reg_count = 8;
+        hb.state_desc_count = 1;
+        hb.state_img_len = (uint32_t)sizeof(timer_img);
+        hb.alias_count = 2;
+
+        uint8_t raw_b[256];
+        size_t raw_b_size = test_make_blob(hb, payload_b, off_b, raw_b, sizeof(raw_b));
+
+        uint8_t cont_b[512];
+        size_t cont_b_size = 0;
+        status = le_loader_convert_to_chunked(raw_b, raw_b_size, cont_b, sizeof(cont_b), &cont_b_size);
+        TEST_ASSERT(status == LE_OK, "Converted aliased/stateful flat binary to chunked container");
+
+        le_chunked_view_t view_b;
+        status = le_loader_parse_chunks(cont_b, cont_b_size, &view_b);
+        TEST_ASSERT(status == LE_OK, "Parsed chunked container with state and aliases");
+        TEST_ASSERT(view_b.stat != NULL && view_b.stat_count == 1, "STAT chunk carries 1 state descriptor");
+        TEST_ASSERT(view_b.simg != NULL && view_b.simg_len == sizeof(timer_img), "SIMG chunk carries timer image");
+        TEST_ASSERT(view_b.alis != NULL && view_b.alis_count == 2, "ALIS chunk carries 2 aliases");
+    }
+
+    /* 3. Validate chunked container */
+    le_header_t val_hdr;
+    status = le_loader_validate(chunked_buf, chunked_size, &val_hdr);
+    TEST_ASSERT(status == LE_OK, "le_loader_validate accepts chunked container");
+    TEST_ASSERT(val_hdr.instruction_count == 4, "Extracted header matches instructions count");
+
+    /* 4. Negative tests on chunked container */
+    uint8_t bad_buf[2048];
+    memcpy(bad_buf, chunked_buf, chunked_size);
+    /* Corrupt container header CRC */
+    bad_buf[19] ^= 0xFF;
+    TEST_ASSERT(le_loader_validate(bad_buf, chunked_size, &val_hdr) == LE_ERR_CRC_MISMATCH,
+                "Corrupt container header CRC rejected with CRC mismatch");
+
+    /* Corrupt chunk payload CRC */
+    memcpy(bad_buf, chunked_buf, chunked_size);
+    size_t chunk_payload_offset = sizeof(le_container_header_t) + sizeof(le_chunk_header_t);
+    bad_buf[chunk_payload_offset] ^= 0x55;
+    TEST_ASSERT(le_loader_validate(bad_buf, chunked_size, &val_hdr) == LE_ERR_CRC_MISMATCH,
+                "Corrupt chunk payload CRC rejected with CRC mismatch");
+
+    /* Truncated container buffer */
+    TEST_ASSERT(le_loader_validate(chunked_buf, chunked_size - 10, &val_hdr) == LE_ERR_OUT_OF_BOUNDS,
+                "Truncated container rejected with out of bounds");
+
+    /* 5. Load and execute program from chunked container */
+    le_vm_t vm;
+    memset(&vm, 0, sizeof(vm));
+    status = le_loader_load(&vm, chunked_buf, chunked_size);
+    TEST_ASSERT(status == LE_OK, "le_loader_load loads program from chunked container");
+    TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions");
+    TEST_ASSERT(vm.running == true, "VM autostarts from chunked container");
+
+    /* Run one scan and check execution (%IN[0] OR -> T_B[0], MOVE -> %OUT[0]) */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true,
+                "Chunked container program executes logic correctly");
+
+    /* 6. Online hot swap: swap between flat v12 binary and chunked v13 container seamlessly */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DOUT(1), true);
+    status = le_loader_swap_online(&vm, le_default_program, sizeof(le_default_program));
+    TEST_ASSERT(status == LE_OK, "Online swap from chunked v13 to flat v12 succeeds");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)) == true,
+                "Output %DOUT[1] preserved during swap from chunked to flat");
+
+    status = le_loader_swap_online(&vm, chunked_buf, chunked_size);
+    TEST_ASSERT(status == LE_OK, "Online swap from flat v12 to chunked v13 succeeds");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(1)) == true,
+                "Output %DOUT[1] preserved during swap from flat to chunked");
+}
+
+static void test_crypto_authentication(void)
+{
+    printf("Running test_crypto_authentication...\n");
+
+    /* 1. Keypair generation and detached signing */
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 13);
+
+    uint8_t pk[32];
+    uint8_t sk[64];
+    le_status_t status = le_crypto_ed25519_keypair_from_seed(pk, sk, seed);
+    TEST_ASSERT(status == LE_OK, "Keypair derived from seed successfully");
+
+    /* Verify public key matches tail of 64-byte secret key */
+    TEST_ASSERT(memcmp(pk, sk + 32, 32) == 0, "Public key matches expanded secret key tail");
+
+    /* Test detached signature */
+    const char* test_msg = "LogicElements Embedded Binary Signature Authentication Test Payload";
+    size_t msg_len = strlen(test_msg);
+    uint8_t sig[64];
+    status = le_crypto_ed25519_sign(sig, (const uint8_t*)test_msg, msg_len, sk);
+    TEST_ASSERT(status == LE_OK, "Detached signature computed successfully");
+
+    /* Verify valid signature */
+    status = le_crypto_ed25519_verify(sig, (const uint8_t*)test_msg, msg_len, pk);
+    TEST_ASSERT(status == LE_OK, "Detached signature verified with correct public key");
+
+    /* Verify tampered message fails */
+    char tampered_msg[128];
+    strcpy(tampered_msg, test_msg);
+    tampered_msg[5] ^= 0x01;
+    status = le_crypto_ed25519_verify(sig, (const uint8_t*)tampered_msg, msg_len, pk);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_INVALID, "Tampered message rejected by signature verification");
+
+    /* Verify wrong public key fails */
+    uint8_t wrong_pk[32];
+    memcpy(wrong_pk, pk, 32);
+    wrong_pk[0] ^= 0xFF;
+    status = le_crypto_ed25519_verify(sig, (const uint8_t*)test_msg, msg_len, wrong_pk);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_INVALID, "Wrong public key fails verification");
+
+    /* 2. Container signing and verification */
+    uint8_t chunked_buf[1024];
+    size_t chunked_size = 0;
+    status = le_loader_convert_to_chunked(le_default_program, sizeof(le_default_program),
+                                          chunked_buf, sizeof(chunked_buf), &chunked_size);
+    TEST_ASSERT(status == LE_OK, "Created base chunked container for signing test");
+
+    /* Sign container with le_loader_sign_container */
+    uint8_t signed_buf[1024];
+    size_t signed_size = 0;
+    status = le_loader_sign_container(chunked_buf, chunked_size, sk, signed_buf, sizeof(signed_buf), &signed_size);
+    TEST_ASSERT(status == LE_OK, "le_loader_sign_container successfully appended SIGN chunk");
+    TEST_ASSERT(signed_size == chunked_size + sizeof(le_chunk_header_t) + LE_CRYPTO_SIGNATURE_BYTES,
+                "Signed container has expected length");
+
+    /* Validate signed container with explicit public key */
+    le_header_t hdr;
+    status = le_loader_validate_signed(signed_buf, signed_size, pk, &hdr);
+    TEST_ASSERT(status == LE_OK, "le_loader_validate_signed succeeds with matching public key");
+    TEST_ASSERT(hdr.instruction_count == 4, "Validated header has correct instruction count");
+
+    /* Validate signed container with wrong public key */
+    status = le_loader_validate_signed(signed_buf, signed_size, wrong_pk, &hdr);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_INVALID, "le_loader_validate_signed rejects wrong public key");
+
+    /* Validate unsigned container when signature is expected */
+    status = le_loader_validate_signed(chunked_buf, chunked_size, pk, &hdr);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_MISSING, "le_loader_validate_signed rejects unsigned container");
+
+    /* Corrupt byte in payload of signed container -> signature invalid */
+    uint8_t corrupted_signed[1024];
+    memcpy(corrupted_signed, signed_buf, signed_size);
+    /* Corrupt an instruction byte */
+    size_t inst_byte_off = sizeof(le_container_header_t) + sizeof(le_chunk_header_t) + sizeof(le_header_t) + sizeof(le_chunk_header_t) + 2;
+    corrupted_signed[inst_byte_off] ^= 0x01;
+    /* Also update chunk crc so chunk parser passes and crypto verify catches it */
+    le_chunk_header_t* inst_chk = (le_chunk_header_t*)(corrupted_signed + sizeof(le_container_header_t) + sizeof(le_chunk_header_t) + sizeof(le_header_t));
+    inst_chk->crc32 = le_crc32(corrupted_signed + sizeof(le_container_header_t) + sizeof(le_chunk_header_t) + sizeof(le_header_t) + sizeof(le_chunk_header_t), inst_chk->length);
+    status = le_loader_validate_signed(corrupted_signed, signed_size, pk, &hdr);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_INVALID, "Tampered signed container rejected with LE_ERR_SIGNATURE_INVALID");
+
+    /* 3. System-wide trusted key support */
+    le_loader_set_trusted_key(pk);
+    TEST_ASSERT(le_loader_get_trusted_key() != NULL, "Trusted key is configured");
+    TEST_ASSERT(memcmp(le_loader_get_trusted_key(), pk, 32) == 0, "Trusted key matches configured key");
+
+    /* Passing NULL public key uses trusted key */
+    status = le_loader_validate_signed(signed_buf, signed_size, NULL, &hdr);
+    TEST_ASSERT(status == LE_OK, "Validation succeeds with configured trusted key");
+
+    /* Unsigned container fails when trusted key is set */
+    status = le_loader_validate_signed(chunked_buf, chunked_size, NULL, &hdr);
+    TEST_ASSERT(status == LE_ERR_SIGNATURE_MISSING, "Unsigned container rejected when trusted key is set");
+
+    /* Load and execute signed program into VM using trusted key */
+    le_vm_t vm;
+    memset(&vm, 0, sizeof(vm));
+    status = le_loader_load_signed(&vm, signed_buf, signed_size, NULL);
+    TEST_ASSERT(status == LE_OK, "le_loader_load_signed loaded signed container with trusted key");
+    TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions");
+    TEST_ASSERT(vm.running == true, "VM is running");
+
+    /* Step VM and verify logic execution */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_vm_step(&vm, 0);
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)) == true,
+                "Signed program executed correctly");
+
+    /* Clear trusted key */
+    le_loader_set_trusted_key(NULL);
+    TEST_ASSERT(le_loader_get_trusted_key() == NULL, "Trusted key cleared");
+
+    /* 4. Multi-rate container descriptor test */
+    le_rate_desc_t rate;
+    rate.rate_fast_count = 2;
+    rate.rate_med_count = 2;
+    rate.rate_med_div = 10;
+    rate.rate_slow_div = 100;
+
+    uint8_t mr_buf[1024];
+    size_t mr_size = 0;
+    status = le_loader_convert_to_chunked_ex(le_default_program, sizeof(le_default_program), &rate,
+                                            mr_buf, sizeof(mr_buf), &mr_size);
+    TEST_ASSERT(status == LE_OK, "Created multi-rate chunked container");
+
+    memset(&vm, 0, sizeof(vm));
+    status = le_loader_load(&vm, mr_buf, mr_size);
+    TEST_ASSERT(status == LE_OK, "Loaded multi-rate chunked container");
+    TEST_ASSERT(vm.rate_fast_count == 2, "VM parsed rate_fast_count = 2");
+    TEST_ASSERT(vm.rate_med_count == 2, "VM parsed rate_med_count = 2");
+    TEST_ASSERT(vm.rate_med_div == 10, "VM parsed rate_med_div = 10");
+    TEST_ASSERT(vm.rate_slow_div == 100, "VM parsed rate_slow_div = 100");
+}
+
+/* Mock UART buffer state for le_comms_cli_pump testing */
+static uint8_t s_mock_uart_rx[128];
+static size_t  s_mock_uart_head = 0;
+static size_t  s_mock_uart_tail = 0;
+
+static size_t mock_uart_available(void)
+{
+    return (s_mock_uart_head >= s_mock_uart_tail)
+        ? (s_mock_uart_head - s_mock_uart_tail)
+        : 0;
+}
+
+static size_t mock_uart_read(uint8_t* buf, size_t max_len)
+{
+    size_t avail = mock_uart_available();
+    if (max_len > avail) max_len = avail;
+    if (max_len == 0 || !buf) return 0;
+    memcpy(buf, &s_mock_uart_rx[s_mock_uart_tail], max_len);
+    s_mock_uart_tail += max_len;
+    return max_len;
+}
+
+static uint32_t mock_get_time_ms(void)
+{
+    return 1000u;
+}
+
+static void test_platform_helpers(void)
+{
+    printf("Testing Platform Helpers (RingBuf, Comms/CLI Pump, Storage Autostart)...\n");
+
+    /* 1. Ring Buffer Unit Tests */
+    LE_RINGBUF_DEFINE(rb, 16);
+    TEST_ASSERT(le_ringbuf_capacity(&rb) == 16, "RingBuf capacity is 16");
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == true, "RingBuf initially empty");
+    TEST_ASSERT(le_ringbuf_is_full(&rb) == false, "RingBuf initially not full");
+    TEST_ASSERT(le_ringbuf_available(&rb) == 0, "RingBuf available is 0");
+    TEST_ASSERT(le_ringbuf_space(&rb) == 15, "RingBuf space is capacity - 1 = 15");
+
+    /* Single byte put & get */
+    TEST_ASSERT(le_ringbuf_put(&rb, 0x42) == true, "RingBuf put 0x42");
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == false, "RingBuf not empty");
+    TEST_ASSERT(le_ringbuf_available(&rb) == 1, "RingBuf available is 1");
+    uint8_t val = 0;
+    TEST_ASSERT(le_ringbuf_peek(&rb, 0, &val) == true && val == 0x42, "RingBuf peek 0x42");
+    TEST_ASSERT(le_ringbuf_get(&rb, &val) == true && val == 0x42, "RingBuf get 0x42");
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == true, "RingBuf empty after get");
+
+    /* Wrap-around bulk write and read */
+    /* Advance cursors to near end of buffer: write 10, read 10 */
+    uint8_t dummy[10] = {0};
+    TEST_ASSERT(le_ringbuf_write(&rb, dummy, 10) == 10, "RingBuf wrote 10 dummy bytes");
+    TEST_ASSERT(le_ringbuf_read(&rb, NULL, 10) == 10, "RingBuf discarded 10 dummy bytes");
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == true, "RingBuf empty after discard");
+    TEST_ASSERT(rb.head == rb.tail && rb.head == 11, "RingBuf cursors offset to 11");
+
+    /* Now write 10 bytes: spans 10..15 (6 bytes) and 0..3 (4 bytes) */
+    const uint8_t pattern[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    TEST_ASSERT(le_ringbuf_write(&rb, pattern, 10) == 10, "RingBuf wrap-around write 10 bytes");
+    TEST_ASSERT(le_ringbuf_available(&rb) == 10, "RingBuf available 10 bytes");
+
+    uint8_t read_back[10] = {0};
+    TEST_ASSERT(le_ringbuf_read(&rb, read_back, 10) == 10, "RingBuf wrap-around read 10 bytes");
+    TEST_ASSERT(memcmp(pattern, read_back, 10) == 0, "RingBuf pattern matches perfectly");
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == true, "RingBuf empty after read");
+
+    /* Test clear */
+    le_ringbuf_put(&rb, 0xFF);
+    le_ringbuf_clear(&rb);
+    TEST_ASSERT(le_ringbuf_is_empty(&rb) == true, "RingBuf empty after clear");
+
+    /* 2. Storage Autostart / Demo Fallback Test */
+    le_vm_t vm;
+    le_vm_init(&vm);
+    const le_hal_t* hal = le_hal_get_sim();
+    le_storage_t storage;
+    le_storage_init(&storage, hal);
+
+    const char* boot_desc = NULL;
+    /* Slot 0 is unformatted in sim, should fall back to le_default_program */
+    le_status_t st = le_storage_autostart_or_demo(&vm, &storage, 0,
+                                                 le_default_program, sizeof(le_default_program),
+                                                 &boot_desc);
+    TEST_ASSERT(st == LE_OK, "le_storage_autostart_or_demo returned LE_OK");
+    TEST_ASSERT(vm.running == true, "VM is running after autostart");
+    TEST_ASSERT(boot_desc != NULL && strstr(boot_desc, "Demo") != NULL, "Boot source describes demo");
+
+    /* 3. Comms / CLI Dual-Mode Pump Test */
+    le_comms_t comms;
+    le_cli_t cli;
+    le_comms_init(&comms, &vm, &storage);
+    le_cli_init(&cli, &vm, &storage);
+
+    le_hal_t mock_hal;
+    memset(&mock_hal, 0, sizeof(mock_hal));
+    mock_hal.uart_available = mock_uart_available;
+    mock_uart_read_reset:
+    mock_hal.uart_read = mock_uart_read;
+    mock_hal.get_time_ms = mock_get_time_ms;
+
+    /* Feed CLI command characters into mock UART: "help\r" */
+    const char* cli_input = "help\r";
+    size_t in_len = strlen(cli_input);
+    memcpy(s_mock_uart_rx, cli_input, in_len);
+    s_mock_uart_head = in_len;
+    s_mock_uart_tail = 0;
+
+    le_comms_cli_pump(&comms, &cli, &mock_hal);
+    TEST_ASSERT(mock_uart_available() == 0, "Pump consumed all CLI bytes");
+    TEST_ASSERT(comms.rx_state == 0, "Comms state remained idle on text input");
+
+    /* Feed binary comms ping frame: 0xAA (SYNC), 0x01 (CMD_PING), seq=1, len=0, CRC */
+    uint8_t ping_pkt[] = { 0xAA, 0x01, 0x01, 0x00, 0x00, 0x82, 0x93 }; /* Sample ping bytes */
+    memcpy(s_mock_uart_rx, ping_pkt, sizeof(ping_pkt));
+    s_mock_uart_head = sizeof(ping_pkt);
+    s_mock_uart_tail = 0;
+
+    le_comms_cli_pump(&comms, &cli, &mock_hal);
+    TEST_ASSERT(mock_uart_available() == 0, "Pump consumed all comms bytes");
+}
+
 int main(void)
 {
     printf("============================================================\n");
@@ -3144,6 +4018,13 @@ int main(void)
     test_cli_new_surface();
     test_fixed_rate_cadence();
     test_nvram_and_wear_leveling();
+    test_circuit_driven_nvram();
+    test_multi_rate_prescalers();
+    test_online_program_swap();
+    test_word_and_int_opcodes();
+    test_chunked_container();
+    test_crypto_authentication();
+    test_platform_helpers();
 
     printf("============================================================\n");
     printf(" RESULTS: %d PASSED, %d FAILED\n", g_tests_passed, g_tests_failed);

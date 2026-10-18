@@ -18,7 +18,7 @@ void le_ser_init(le_ser_t* ser, const le_ser_channel_t* channels, uint16_t chann
 
     ser->events = event_buffer;
     ser->capacity = capacity;
-    ser->nv_offset = nv_offset ? nv_offset : LE_NVRAM_OFFSET_SER;
+    ser->nv_offset = nv_offset ? nv_offset : le_nvram_get_ser_offset();
     ser->is_dirty = false;
     ser->last_event_time_us = 0;
 

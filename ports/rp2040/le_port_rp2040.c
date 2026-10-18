@@ -12,12 +12,12 @@
 #include "hardware/uart.h"
 
 #define LE_PORT_FLASH_BASE 0x08000000UL
-static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
+static uint8_t s_port_flash[LE_SLOT_SIZE_BYTES * (LE_MAX_CONFIG_SLOTS + 1)] = {0};
 
-/* %I[0..n] -> Pico GPIO numbers */
+/* %DIN[0..n] -> Pico GPIO numbers */
 static const uint8_t INPUT_PINS[] = { 14, 15, 16, 17 };
 #define NUM_INPUTS (sizeof(INPUT_PINS) / sizeof(INPUT_PINS[0]))
-/* %Q[0..n] -> Pico GPIO numbers */
+/* %DOUT[0..n] -> Pico GPIO numbers */
 static const uint8_t OUTPUT_PINS[] = { 25, 18, 19, 20 };
 #define NUM_OUTPUTS (sizeof(OUTPUT_PINS) / sizeof(OUTPUT_PINS[0]))
 
@@ -72,6 +72,7 @@ static uint32_t port_adc_read_raw(uint8_t channel) { (void)channel; return 0UL; 
 static void port_dac_write(uint8_t channel, float value) { (void)channel; (void)value; }
 static uint32_t port_get_time_ms(void) { return to_ms_since_boot(get_absolute_time()); }
 static uint64_t port_get_time_us(void) { return to_us_since_boot(get_absolute_time()); }
+static bool port_set_timer_rate(uint32_t rate_hz, uint32_t period_us) { (void)rate_hz; (void)period_us; return true; }
 static size_t port_uart_available(void) { return 0; }
 static size_t port_uart_read(uint8_t* buf, size_t max_len) { (void)buf; (void)max_len; return 0; }
 static size_t port_uart_write(const uint8_t* buf, size_t len)
@@ -81,19 +82,36 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
     return len;
 }
 
-static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool port_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
 {
-    uint32_t rel = offset - LE_PORT_FLASH_BASE;
+    uint32_t rel = (sector ? sector->phys_addr : 0) + offset_in_sector;
     if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
     memcpy(buf, &s_port_flash[rel], len);
     return true;
 }
-static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+
+static bool port_storage_erase_sector(const le_storage_sector_t* sector)
 {
-    uint32_t rel = offset - LE_PORT_FLASH_BASE;
+    uint32_t rel = sector ? sector->phys_addr : 0;
+    uint32_t sz = (sector && sector->erase_size > 0) ? sector->erase_size : LE_STORAGE_SECTOR_SIZE;
+    if (rel + sz > sizeof(s_port_flash)) return false;
+    memset(&s_port_flash[rel], 0xFF, sz);
+    return true;
+}
+
+static bool port_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
+{
+    uint32_t rel = (sector ? sector->phys_addr : 0) + offset_in_sector;
     if (rel + (uint32_t)len > sizeof(s_port_flash)) return false;
     memcpy(&s_port_flash[rel], buf, len);
     return true;
+}
+
+static const uint8_t* port_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
+{
+    uint32_t rel = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    if (rel < sizeof(s_port_flash)) return &s_port_flash[rel];
+    return NULL;
 }
 
 #if LE_ENABLE_SERIAL_BUS
@@ -127,26 +145,90 @@ static bool port_spi_transfer(uint8_t cs, const uint8_t* tx, uint8_t* rx, size_t
 }
 #endif
 
+#include "le_custom_node.h"
+
 static le_status_t port_ext_call(uint8_t func_id, const uint16_t* args,
                                  int in_count, int out_count, le_process_image_t* img)
 {
-    (void)func_id; (void)args; (void)in_count; (void)out_count; (void)img;
-    return LE_OK; /* TODO: dispatch board custom nodes. */
+    return le_custom_nodes_dispatch(func_id, args, in_count, out_count, img);
 }
-static const char* port_get_custom_nodes_json(void) { return NULL; }
+
+static const char* port_get_custom_nodes_json(void)
+{
+    return le_custom_nodes_get_json();
+}
 
 const le_hal_t s_my_mcu_hal = {
-    .init = port_hal_init, .shutdown = port_hal_shutdown, .get_platform_name = port_hal_get_platform_name,
-    .gpio_read = port_gpio_read, .gpio_write = port_gpio_write,
-    .adc_read = port_adc_read, .adc_read_raw = port_adc_read_raw, .dac_write = port_dac_write,
-    .get_time_ms = port_get_time_ms, .get_time_us = port_get_time_us,
-    .uart_available = port_uart_available, .uart_read = port_uart_read, .uart_write = port_uart_write,
-    .storage_read = port_storage_read, .storage_write = port_storage_write,
+    .init = port_hal_init,
+    .shutdown = port_hal_shutdown,
+    .get_platform_name = port_hal_get_platform_name,
+    .gpio_read = port_gpio_read,
+    .gpio_write = port_gpio_write,
+    .adc_read = port_adc_read,
+    .adc_read_raw = port_adc_read_raw,
+    .dac_write = port_dac_write,
+    .get_time_ms = port_get_time_ms,
+    .get_time_us = port_get_time_us,
+    .set_timer_rate = port_set_timer_rate,
+    .uart_available = port_uart_available,
+    .uart_read = port_uart_read,
+    .uart_write = port_uart_write,
+    .storage_read = port_storage_read,
+    .storage_erase_sector = port_storage_erase_sector,
+    .storage_write_page = port_storage_write_page,
+    .storage_get_xip_ptr = port_storage_get_xip_ptr,
 #if LE_ENABLE_SERIAL_BUS
-    .i2c_write = port_i2c_write, .i2c_read = port_i2c_read, .i2c_write_read = port_i2c_write_read,
+    .i2c_write = port_i2c_write,
+    .i2c_read = port_i2c_read,
+    .i2c_write_read = port_i2c_write_read,
     .spi_transfer = port_spi_transfer,
 #endif
-    .ext_call = port_ext_call, .get_custom_nodes_json = port_get_custom_nodes_json,
+    .ext_call = port_ext_call,
+    .get_custom_nodes_json = port_get_custom_nodes_json,
 };
 
 const le_hal_t* get_my_mcu_hal(void) { return &s_my_mcu_hal; }
+ 
+#if (LE_CORE_MODE == LE_CORE_AMP)
+#include "pico/multicore.h"
+#include "hardware/sync.h"
+
+static le_vm_t* s_amp_vm = NULL;
+
+static void core1_amp_worker(void)
+{
+    while (1) {
+        uint32_t timestamp_ms = multicore_fifo_pop_blocking();
+        if (timestamp_ms == 0xDEADBEEFU) {
+            break;
+        }
+        if (s_amp_vm) {
+            le_vm_step(s_amp_vm, timestamp_ms);
+        }
+        multicore_fifo_push_blocking(0xCAFEFEEDA);
+    }
+}
+
+void le_port_amp_start(le_vm_t* vm)
+{
+    s_amp_vm = vm;
+    multicore_reset_core1();
+    multicore_launch_core1(core1_amp_worker);
+}
+
+bool le_port_amp_step(le_vm_t* vm, uint32_t timeout_us)
+{
+    (void)vm;
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    multicore_fifo_push_blocking(now_ms);
+
+    uint32_t ack = 0;
+    bool ok = multicore_fifo_pop_timeout_us(timeout_us, &ack);
+    if (!ok || ack != 0xCAFEFEEDA) {
+        /* Watchdog violation: Core 1 failed to complete scan in time */
+        le_port_deenergize_outputs();
+        return false;
+    }
+    return true;
+}
+#endif

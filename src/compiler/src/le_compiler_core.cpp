@@ -1,12 +1,19 @@
 #include "le_compiler_core.h"
 #include "le_disasm_core.h"
 #include "le_optimizer.h"
+#include "le_code_block.h"
 #include "le_types.h"
+#include "le_rt.h"
+#include "le_loader.h"
+#include "le_nvram.h"
+#include "le_ser.h"
+#include "le_event_rec.h"
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
 #include <functional>
+#include <set>
 
 namespace LogicElements {
 
@@ -68,8 +75,9 @@ uint16_t CompilerCore::allocate_user_complex()
 uint16_t CompilerCore::acquire_temp_bool(int& out_temp_idx)
 {
     if (!m_free_temp_bool_pool.empty()) {
-        out_temp_idx = m_free_temp_bool_pool.back();
-        m_free_temp_bool_pool.pop_back();
+        auto it = std::min_element(m_free_temp_bool_pool.begin(), m_free_temp_bool_pool.end());
+        out_temp_idx = *it;
+        m_free_temp_bool_pool.erase(it);
     } else {
         out_temp_idx = m_peak_temp_bool++;
     }
@@ -86,8 +94,9 @@ void CompilerCore::release_temp_bool(int temp_idx)
 uint16_t CompilerCore::acquire_temp_float(int& out_temp_idx)
 {
     if (!m_free_temp_float_pool.empty()) {
-        out_temp_idx = m_free_temp_float_pool.back();
-        m_free_temp_float_pool.pop_back();
+        auto it = std::min_element(m_free_temp_float_pool.begin(), m_free_temp_float_pool.end());
+        out_temp_idx = *it;
+        m_free_temp_float_pool.erase(it);
     } else {
         out_temp_idx = m_peak_temp_float++;
     }
@@ -104,8 +113,9 @@ void CompilerCore::release_temp_float(int temp_idx)
 uint16_t CompilerCore::acquire_temp_complex(int& out_temp_idx)
 {
     if (!m_free_temp_complex_pool.empty()) {
-        out_temp_idx = m_free_temp_complex_pool.back();
-        m_free_temp_complex_pool.pop_back();
+        auto it = std::min_element(m_free_temp_complex_pool.begin(), m_free_temp_complex_pool.end());
+        out_temp_idx = *it;
+        m_free_temp_complex_pool.erase(it);
     } else {
         out_temp_idx = m_peak_temp_complex++;
     }
@@ -121,8 +131,9 @@ void CompilerCore::release_temp_complex(int temp_idx)
 uint16_t CompilerCore::acquire_temp_int(int& out_temp_idx)
 {
     if (!m_free_temp_int_pool.empty()) {
-        out_temp_idx = m_free_temp_int_pool.back();
-        m_free_temp_int_pool.pop_back();
+        auto it = std::min_element(m_free_temp_int_pool.begin(), m_free_temp_int_pool.end());
+        out_temp_idx = *it;
+        m_free_temp_int_pool.erase(it);
     } else {
         out_temp_idx = m_peak_temp_int++;
     }
@@ -526,18 +537,14 @@ static bool parse_register_addr(const std::string& in, uint16_t* out)
     if (idx < 0 || idx > 0x3FFF) return false;
 
     uint16_t region;
-    if      (tok == "IN"   || tok == "DIN")   region = LE_REGION_DIN;
-    else if (tok == "OUT"  || tok == "DOUT")  region = LE_REGION_DOUT;
-    else if (tok == "B"    || tok == "BOOL")  region = LE_REGION_BOOL_REG;
-    else if (tok == "F"    || tok == "FLOAT") region = LE_REGION_FLOAT;
-    else if (tok == "I"    || tok == "INT")   region = LE_REGION_INT_REG;
-    else if (tok == "C"    || tok == "CMPLX") region = LE_REGION_CMPLX;
-    else if (tok == "AIN")                    region = LE_REGION_AIN;
-    else if (tok == "AOUT")                   region = LE_REGION_AOUT;
-    else if (tok == "M")     region = LE_REGION_BOOL_REG;  /* legacy coils */
-    else if (tok == "R")     region = LE_REGION_FLOAT;     /* legacy floats */
-    else if (tok == "Q")     region = LE_REGION_DOUT;      /* legacy outputs */
-    else if (tok == "N")     region = LE_REGION_INT_REG;   /* legacy ints */
+    if      (tok == "I"    || tok == "IN"   || tok == "DIN"  || tok == "DI") region = LE_REGION_DIN;
+    else if (tok == "Q"    || tok == "OUT"  || tok == "DOUT" || tok == "DO") region = LE_REGION_DOUT;
+    else if (tok == "B"    || tok == "BOOL" || tok == "M")                   region = LE_REGION_BOOL_REG;
+    else if (tok == "F"    || tok == "FLOAT"|| tok == "R")                   region = LE_REGION_FLOAT;
+    else if (tok == "INT"  || tok == "N")                                    region = LE_REGION_INT_REG;
+    else if (tok == "C"    || tok == "CMPLX")                                region = LE_REGION_CMPLX;
+    else if (tok == "AIN"  || tok == "AI")                                   region = LE_REGION_AIN;
+    else if (tok == "AOUT" || tok == "AO")                                   region = LE_REGION_AOUT;
     else return false;
 
     uint16_t mask = (region == LE_REGION_BOOL_REG || region == LE_REGION_INT_REG || region == LE_REGION_FLOAT)
@@ -606,26 +613,71 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     std::map<std::string, std::string> alias_to_addr;
     std::map<std::string, CustomNodeInfo> custom_nodes;
     std::vector<std::string> custom_headers;
+    bool board_pm_has_pinmap = false;
+    int derived_din = 0;
+    int derived_dout = 0;
+    int derived_ain = 0;
+    int derived_aout = 0;
 
     if (has_board) {
         if (board_doc.contains("pin_map") && board_doc.get("pin_map").is_object()) {
+            board_pm_has_pinmap = true;
             const auto& pm = board_doc.get("pin_map").as_object();
-            if (pm.find("inputs") != pm.end() && pm.at("inputs").is_object()) {
-                for (const auto& kv : pm.at("inputs").as_object()) {
+
+            int board_pm_din_count = 0, board_pm_max_din_idx = -1;
+            int board_pm_dout_count = 0, board_pm_max_dout_idx = -1;
+            int board_pm_ain_count = 0, board_pm_max_ain_idx = -1;
+            int board_pm_aout_count = 0, board_pm_max_aout_idx = -1;
+
+            auto scan_aliases = [&](const JsonValue& obj, int& count, int& max_idx) {
+                if (!obj.is_object()) return;
+                for (const auto& kv : obj.as_object()) {
+                    count++;
+                    int idx = -1;
+                    size_t pos = kv.first.find_first_of("0123456789");
+                    if (pos != std::string::npos) {
+                        try { idx = std::stoi(kv.first.substr(pos)); } catch (...) {}
+                    }
+                    if (idx > max_idx) max_idx = idx;
+
                     if (kv.second.is_object() && kv.second.contains("alias")) {
                         std::string al = kv.second.get("alias").as_string();
                         if (!al.empty()) alias_to_addr[al] = kv.first;
                     }
                 }
+            };
+
+            // Digital inputs & outputs (hierarchical "digital" or flat "inputs"/"outputs")
+            if (pm.find("digital") != pm.end() && pm.at("digital").is_object()) {
+                const auto& dig = pm.at("digital").as_object();
+                if (dig.find("inputs") != dig.end()) scan_aliases(dig.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
+                if (dig.find("outputs") != dig.end()) scan_aliases(dig.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
+            } else {
+                if (pm.find("inputs") != pm.end()) scan_aliases(pm.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
+                if (pm.find("outputs") != pm.end()) scan_aliases(pm.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
             }
-            if (pm.find("outputs") != pm.end() && pm.at("outputs").is_object()) {
-                for (const auto& kv : pm.at("outputs").as_object()) {
-                    if (kv.second.is_object() && kv.second.contains("alias")) {
-                        std::string al = kv.second.get("alias").as_string();
-                        if (!al.empty()) alias_to_addr[al] = kv.first;
-                    }
-                }
+
+            // Analog inputs & outputs (hierarchical "analog" or flat "analogs"/"analog_outputs")
+            if (pm.find("analog") != pm.end() && pm.at("analog").is_object() &&
+                (pm.at("analog").as_object().find("inputs") != pm.at("analog").as_object().end() ||
+                 pm.at("analog").as_object().find("outputs") != pm.at("analog").as_object().end())) {
+                const auto& an = pm.at("analog").as_object();
+                if (an.find("inputs") != an.end()) scan_aliases(an.at("inputs"), board_pm_ain_count, board_pm_max_ain_idx);
+                if (an.find("outputs") != an.end()) scan_aliases(an.at("outputs"), board_pm_aout_count, board_pm_max_aout_idx);
+            } else {
+                std::string ain_key;
+                if (pm.find("analogs") != pm.end() && pm.at("analogs").is_object()) ain_key = "analogs";
+                else if (pm.find("analog") != pm.end() && pm.at("analog").is_object()) ain_key = "analog";
+                else if (pm.find("analog_inputs") != pm.end() && pm.at("analog_inputs").is_object()) ain_key = "analog_inputs";
+                if (!ain_key.empty()) scan_aliases(pm.at(ain_key), board_pm_ain_count, board_pm_max_ain_idx);
+
+                if (pm.find("analog_outputs") != pm.end()) scan_aliases(pm.at("analog_outputs"), board_pm_aout_count, board_pm_max_aout_idx);
             }
+
+            derived_din = std::max(board_pm_din_count, board_pm_max_din_idx + 1);
+            derived_dout = std::max(board_pm_dout_count, board_pm_max_dout_idx + 1);
+            derived_ain = std::max(board_pm_ain_count, board_pm_max_ain_idx + 1);
+            derived_aout = std::max(board_pm_aout_count, board_pm_max_aout_idx + 1);
         }
 
         if (board_doc.contains("custom_nodes") && board_doc.get("custom_nodes").is_array()) {
@@ -668,6 +720,16 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         }
     }
 
+    // Expand any CODE_BLOCK elements before compiling
+    std::string cb_error;
+    std::vector<std::string> cb_warnings;
+    if (!CodeBlockExpander::expand_code_blocks(circuit_doc, cb_error, cb_warnings)) {
+        out_result->success = 0;
+        out_result->error_message = (char*)std::malloc(cb_error.size() + 1);
+        std::strcpy(out_result->error_message, cb_error.c_str());
+        return -1;
+    }
+
     const auto& elements = circuit_doc.get("elements").as_array();
     const auto& nets = circuit_doc.get("nets").as_array();
 
@@ -702,6 +764,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     std::map<std::string, uint16_t> element_outputs;   /* element name -> canonical output address */
     std::map<std::string, std::map<std::string, uint16_t>> element_outputs_port; /* element -> {output port -> address} */
     std::map<std::string, std::map<std::string, std::string>> net_source_port;   /* consumer -> {consumer port -> source output port} */
+    std::map<std::string, uint16_t> trig_hist_map;     /* RTRIG/FTRIG name -> synthesized private history bool */
     std::vector<ScalerInfo> scaler_list;
     int auto_din_idx = 0;
     int auto_dout_idx = 0;
@@ -724,6 +787,11 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     int lut_1d_counter = 0;
     int totalizer_counter = 0;
     int min_max_hold_counter = 0;
+
+    std::vector<std::pair<uint16_t, float>> float_constants;
+    std::vector<std::pair<uint16_t, int32_t>> int_constants;
+    std::map<float, uint16_t> float_const_map;
+    std::map<int32_t, uint16_t> int_const_map;
 
     // Step 1: Discover inputs, outputs, user registers, constants
     for (const auto& el : elements) {
@@ -771,6 +839,10 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             output_drivers[addr].push_back(name);
         } else if (type == "BOOLREGISTER" || type == "LE_BOOLREGISTER" || (type == "LE_NODE_DIGITAL" && din_map.find(name) == din_map.end() && dout_map.find(name) == dout_map.end())) {
             element_outputs[name] = allocate_user_bool();
+        } else if (type == "LATCH" || type == "LE_LATCH" || type == "RS" || type == "LE_RS" || type == "SR" || type == "LE_SR") {
+            element_outputs[name] = allocate_user_bool();
+        } else if (type == "RTRIG" || type == "LE_RTRIG" || type == "FTRIG" || type == "LE_FTRIG") {
+            trig_hist_map[name] = allocate_user_bool();
         } else if (type == "INTREGISTER" || type == "LE_INTREGISTER") {
             element_outputs[name] = allocate_user_int();
         } else if (type == "FLOATREGISTER" || type == "LE_FLOATREGISTER") {
@@ -810,10 +882,40 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("bool")));
             if (dt == "float") {
                 float f = prop(el, "value", 0.0f);
-                element_outputs[name] = (std::abs(f - 1.0f) < 0.0001f) ? LE_CONST_ONE_F : LE_CONST_ZERO_F;
+                if (std::abs(f - 0.0f) < 1e-6f) {
+                    element_outputs[name] = LE_CONST_ZERO_F;
+                } else if (std::abs(f - 1.0f) < 1e-6f) {
+                    element_outputs[name] = LE_CONST_ONE_F;
+                } else if (std::abs(f - 60.0f) < 1e-6f) {
+                    element_outputs[name] = LE_CONST_60_F;
+                } else {
+                    auto it_c = float_const_map.find(f);
+                    if (it_c != float_const_map.end()) {
+                        element_outputs[name] = it_c->second;
+                    } else {
+                        uint16_t addr = allocate_user_float();
+                        element_outputs[name] = addr;
+                        float_const_map[f] = addr;
+                        float_constants.push_back({addr, f});
+                    }
+                }
             } else if (dt == "int" || dt == "integer") {
                 int i = (int)prop(el, "value", 0);
-                element_outputs[name] = (i != 0) ? LE_CONST_TRUE : LE_CONST_FALSE;
+                if (i == 0) {
+                    element_outputs[name] = LE_CONST_FALSE;
+                } else if (i == 1) {
+                    element_outputs[name] = LE_CONST_TRUE;
+                } else {
+                    auto it_c = int_const_map.find(i);
+                    if (it_c != int_const_map.end()) {
+                        element_outputs[name] = it_c->second;
+                    } else {
+                        uint16_t addr = allocate_user_int();
+                        element_outputs[name] = addr;
+                        int_const_map[i] = addr;
+                        int_constants.push_back({addr, i});
+                    }
+                }
             } else {
                 bool b = el.get("value").as_bool(false);
                 element_outputs[name] = b ? LE_CONST_TRUE : LE_CONST_FALSE;
@@ -832,6 +934,248 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             out_result->error_message = (char*)std::malloc(err.size() + 1);
             std::strcpy(out_result->error_message, err.c_str());
             return -1;
+        }
+    }
+
+    // Build element lookup map and type deduction helper
+    std::map<std::string, JsonValue> elem_by_name;
+    for (const auto& el : elements) {
+        if (!el.is_object()) continue;
+        std::string nm = el.get("name").as_string();
+        if (!nm.empty()) elem_by_name[nm] = el;
+    }
+
+    auto deduce_element_type = [&](const std::string& node_name) -> int {
+        // 0: Bool, 1: Float, 2: Int, 3: Complex
+        auto it = elem_by_name.find(node_name);
+        if (it == elem_by_name.end()) return 0;
+        const auto& el = it->second;
+        std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+        if (dt == "float" || dt == "real" || dt == "double") return 1;
+        if (dt == "int" || dt == "integer" || dt == "int32" || dt == "uint32") return 2;
+        if (dt == "complex") return 3;
+        if (dt == "bool" || dt == "boolean") return 0;
+
+        std::string type = to_upper_str(el.get("type").as_string());
+        if (type == "FLOATREGISTER" || type == "LE_FLOATREGISTER" ||
+            type == "ADD" || type == "LE_ADD" ||
+            type == "SUB" || type == "SUBTRACT" || type == "LE_SUB" ||
+            type == "MUL" || type == "MULTIPLY" || type == "LE_MUL" ||
+            type == "DIV" || type == "DIVIDE" || type == "LE_DIV" ||
+            type == "ABS" || type == "LE_ABS" ||
+            type == "NEG" || type == "LE_NEG" ||
+            type == "MIN" || type == "LE_MIN" ||
+            type == "MAX" || type == "LE_MAX" ||
+            type == "CLAMP" || type == "LE_CLAMP" ||
+            type == "PID" || type == "LE_PID" ||
+            type == "LPF" || type == "LE_LPF" || type == "LPF_1P" ||
+            type == "BIQUAD" || type == "LE_BIQUAD" || type == "BIQUAD_IIR" ||
+            type == "MOVING_AVG" || type == "LE_MOVING_AVG" || type == "WINDOW_AVG" ||
+            type == "RATE_LIMITER" || type == "LE_RATE_LIMITER" || type == "SLEW_LIMITER" ||
+            type == "DEADBAND" || type == "LE_DEADBAND" ||
+            type == "WASHOUT" || type == "LE_WASHOUT" ||
+            type == "PEAK_DETECTOR" || type == "LE_PEAK_DETECTOR" || type == "ENVELOPE" ||
+            type == "RMS" || type == "LE_RMS" ||
+            type == "MEDIAN" || type == "LE_MEDIAN" || type == "MEDIAN_FILTER" ||
+            type == "DERIVATIVE" || type == "LE_DERIVATIVE" ||
+            type == "ZERO_CROSSING" || type == "LE_ZERO_CROSSING" ||
+            type == "LUT_1D" || type == "LE_LUT_1D" || type == "LUT" ||
+            type == "TOTALIZER" || type == "LE_TOTALIZER" ||
+            type == "MIN_MAX_HOLD" || type == "LE_MIN_MAX_HOLD" ||
+            type == "RECT2POLAR" || type == "LE_RECT2POLAR" ||
+            type == "POLAR2RECT" || type == "LE_POLAR2RECT" ||
+            type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT" ||
+            type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR" ||
+            type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT" ||
+            type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX" ||
+            type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX" ||
+            type == "ANALOGINPUT" || type == "LE_ANALOG_INPUT" || type == "LE_ANALOGINPUT" ||
+            type == "ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "LE_ANALOGOUTPUT" || type == "AOUT") {
+            return 1;
+        }
+
+        if (type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER" ||
+            type == "CADD" || type == "LE_CADD" || type == "C_ADD" ||
+            type == "CSUB" || type == "LE_CSUB" || type == "C_SUB" ||
+            type == "CMUL" || type == "LE_CMUL" || type == "C_MUL" ||
+            type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") {
+            return 3;
+        }
+
+        if (type == "INTREGISTER" || type == "LE_INTREGISTER" ||
+            type == "ADD_I" || type == "LE_ADD_I" ||
+            type == "SUB_I" || type == "LE_SUB_I" ||
+            type == "MUL_I" || type == "LE_MUL_I" ||
+            type == "DIV_I" || type == "LE_DIV_I" ||
+            type == "NEG_I" || type == "LE_NEG_I" ||
+            type == "WORD_AND" || type == "LE_WORD_AND" ||
+            type == "WORD_OR" || type == "LE_WORD_OR" ||
+            type == "WORD_XOR" || type == "LE_WORD_XOR" ||
+            type == "WORD_NOT" || type == "LE_WORD_NOT" ||
+            type == "MOVE_I" || type == "LE_MOVE_I" ||
+            type == "CTU" || type == "LE_CTU" ||
+            type == "CTD" || type == "LE_CTD" ||
+            type == "CTUD" || type == "LE_CTUD") {
+            return 2;
+        }
+
+        std::string custom_type = el.get("custom_type").as_string(el.get("type").as_string());
+        auto cnit = custom_nodes.find(custom_type);
+        if (cnit != custom_nodes.end() && !cnit->second.outputs.empty()) {
+            std::string cot = to_lower_str(cnit->second.outputs[0].type);
+            if (cot.find("float") != std::string::npos || cot.find("real") != std::string::npos) return 1;
+            if (cot.find("complex") != std::string::npos) return 3;
+            if (cot.find("int") != std::string::npos) return 2;
+        }
+
+        return 0;
+    };
+
+    // Step 1.9: Detect generalized feedback loops and algebraic cycles (e.g. control loops, accumulators, cross-coupled logic)
+    // In circuits with feedback paths where no explicit register is placed in the loop, one node
+    // in each cycle must hold state across scans as a unit delay (z^-1). We detect these back-edges
+    // and allocate persistent user registers matching the node's data type (bool, float, int, complex).
+    std::set<std::string> feedback_state_nodes;
+    std::vector<std::string> oscillator_warnings;
+    {
+        std::map<std::string, std::string> tag_send_name;
+        for (const auto& el : elements) {
+            if (!el.is_object()) continue;
+            std::string nm = el.get("name").as_string();
+            std::string type = to_upper_str(el.get("type").as_string());
+            if (type.find("TAG") != std::string::npos) {
+                std::string dir = to_lower_str(el.get("direction").as_string());
+                if (dir == "send") {
+                    std::string tag_nm = el.get("tag_name").as_string(nm);
+                    tag_send_name[tag_nm] = nm;
+                }
+            }
+        }
+
+        std::map<std::string, std::vector<std::string>> net_graph;
+        for (const auto& net : nets) {
+            if (!net.is_object()) continue;
+            std::string out_elem = net.get("output").get("name").as_string();
+            for (const auto& inp : net.get("inputs").as_array()) {
+                if (!inp.is_object()) continue;
+                std::string target_elem = inp.get("name").as_string();
+                if (!out_elem.empty() && !target_elem.empty()) {
+                    net_graph[target_elem].push_back(out_elem);
+                }
+            }
+        }
+
+        // Bridge tag receivers to tag senders so feedback loops across tags are also detected
+        for (const auto& el : elements) {
+            if (!el.is_object()) continue;
+            std::string type = to_upper_str(el.get("type").as_string());
+            if (type.find("TAG") != std::string::npos) {
+                std::string dir = to_lower_str(el.get("direction").as_string());
+                if (dir != "send") {
+                    std::string nm = el.get("name").as_string();
+                    std::string tag_nm = el.get("tag_name").as_string(nm);
+                    auto it_snd = tag_send_name.find(tag_nm);
+                    if (it_snd != tag_send_name.end() && !it_snd->second.empty()) {
+                        net_graph[nm].push_back(it_snd->second);
+                    }
+                }
+            }
+        }
+
+        std::set<std::string> visited;
+        std::set<std::string> visiting;
+        std::vector<std::string> dfs_path;
+
+        std::function<void(const std::string&)> find_feedback = [&](const std::string& u) {
+            if (visited.count(u)) return;
+            visiting.insert(u);
+            dfs_path.push_back(u);
+
+            auto it = net_graph.find(u);
+            if (it != net_graph.end()) {
+                for (const auto& v : it->second) {
+                    if (visiting.count(v)) {
+                        // v is an ancestor of u in the current DFS path (back-edge detected)
+                        auto it_start = std::find(dfs_path.begin(), dfs_path.end(), v);
+                        if (it_start != dfs_path.end()) {
+                            std::vector<std::string> cycle_nodes(it_start, dfs_path.end());
+
+                            // Check if cycle contains explicit state/storage elements
+                            bool has_state_element = false;
+                            int inversion_count = 0;
+
+                            for (const auto& cn : cycle_nodes) {
+                                auto it_el = elem_by_name.find(cn);
+                                if (it_el != elem_by_name.end()) {
+                                    std::string t = to_upper_str(it_el->second.get("type").as_string());
+                                    if (t == "BOOLREGISTER" || t == "LE_BOOLREGISTER" ||
+                                        t == "INTREGISTER" || t == "LE_INTREGISTER" ||
+                                        t == "FLOATREGISTER" || t == "LE_FLOATREGISTER" ||
+                                        t == "COMPLEXREGISTER" || t == "LE_COMPLEXREGISTER" ||
+                                        t == "TON" || t == "TOF" || t == "TP" ||
+                                        t == "CTU" || t == "CTD" || t == "CTUD" ||
+                                        t == "PID" || t == "LPF" || t == "BIQUAD" ||
+                                        t == "RATE_LIMITER" || t == "TOTALIZER" ||
+                                        t == "SR" || t == "RS" || t == "LATCH" ||
+                                        t == "RTRIG" || t == "FTRIG") {
+                                        has_state_element = true;
+                                        break;
+                                    }
+                                    if (t == "NOT" || t == "LE_NOT" ||
+                                        t == "NAND" || t == "LE_NAND" ||
+                                        t == "NOR" || t == "LE_NOR") {
+                                        inversion_count++;
+                                    }
+                                }
+                            }
+
+                            // If pure combinatorial loop with odd inversion count, flag hazard warning!
+                            if (!has_state_element && (inversion_count % 2 != 0)) {
+                                std::string cycle_str;
+                                for (size_t i = 0; i < cycle_nodes.size(); ++i) {
+                                    if (i > 0) cycle_str += " -> ";
+                                    cycle_str += cycle_nodes[i];
+                                }
+                                cycle_str += " -> " + v;
+                                std::string warn_msg = "Warning: Combinatorial ring oscillator detected with odd inversion parity along path: " +
+                                                       cycle_str + " (hazard: synthesizing unit-delay register to prevent runtime glitch).";
+                                if (std::find(oscillator_warnings.begin(), oscillator_warnings.end(), warn_msg) == oscillator_warnings.end()) {
+                                    oscillator_warnings.push_back(warn_msg);
+                                }
+                            }
+                        }
+
+                        // If v does not already have a persistent address allocated, mark it as a feedback state driver!
+                        if (element_outputs.find(v) == element_outputs.end() && feedback_state_nodes.find(v) == feedback_state_nodes.end()) {
+                            feedback_state_nodes.insert(v);
+                        }
+                    } else if (!visited.count(v)) {
+                        find_feedback(v);
+                    }
+                }
+            }
+            dfs_path.pop_back();
+            visiting.erase(u);
+            visited.insert(u);
+        };
+
+        for (const auto& kv : net_graph) {
+            find_feedback(kv.first);
+        }
+
+        for (const std::string& fn : feedback_state_nodes) {
+            if (element_outputs.find(fn) == element_outputs.end()) {
+                int t = deduce_element_type(fn);
+                if (t == 1) {
+                    element_outputs[fn] = allocate_user_float();
+                } else if (t == 2) {
+                    element_outputs[fn] = allocate_user_int();
+                } else if (t == 3) {
+                    element_outputs[fn] = allocate_user_complex();
+                } else {
+                    element_outputs[fn] = allocate_user_bool();
+                }
+            }
         }
     }
 
@@ -887,13 +1231,62 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         }
     }
 
+    // Step 1c: Also discover inline element aliases if not already in alias_list
+    for (const auto& el : elements) {
+        if (!el.is_object()) continue;
+        if (!el.contains("alias")) continue;
+        std::string nm = el.get("alias").as_string();
+        if (nm.empty()) continue;
+        if (nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
+            std::string err = "Alias Error: element alias '" + nm + "' must be 1.." +
+                              std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
+            out_result->success = 0;
+            out_result->error_message = (char*)std::malloc(err.size() + 1);
+            std::strcpy(out_result->error_message, err.c_str());
+            return -1;
+        }
+        // Check if already registered
+        bool already_added = false;
+        for (const auto& a : alias_list) {
+            if (std::strncmp(a.name, nm.c_str(), LE_ALIAS_NAME_MAX) == 0) {
+                already_added = true;
+                break;
+            }
+        }
+        if (already_added) continue;
+
+        std::string elem_name = el.get("name").as_string();
+        uint16_t addr = 0;
+        bool ok = false;
+        if (element_outputs.find(elem_name) != element_outputs.end()) {
+            addr = element_outputs[elem_name];
+            ok = true;
+        } else if (el.contains("address")) {
+            std::string explicit_addr = el.get("address").as_string();
+            ok = parse_register_addr(explicit_addr, &addr);
+        }
+        if (ok) {
+            le_alias_t a;
+            std::memset(&a, 0, sizeof(a));
+            std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
+            a.kind = 0; a.pad = 0;
+            a.addr = addr;
+            alias_list.push_back(a);
+        }
+    }
+
     // Step 2: Map connections (target_elem -> { port_name -> source_elem_name })
     std::map<std::string, std::map<std::string, std::string>> net_connections;
+    std::map<std::string, std::set<std::string>> used_output_ports;
     for (const auto& net : nets) {
         if (!net.is_object()) continue;
         std::string out_elem = net.get("output").get("name").as_string();
         std::string out_port = to_lower_str(net.get("output").get("port").as_string("out"));
-        for (const auto& inp : net.get("inputs").as_array()) {
+        const auto& inps = net.get("inputs").as_array();
+        if (!inps.empty()) {
+            used_output_ports[out_elem].insert(out_port);
+        }
+        for (const auto& inp : inps) {
             if (!inp.is_object()) continue;
             std::string target_elem = inp.get("name").as_string();
             std::string target_port = to_lower_str(inp.get("port").as_string("input_0"));
@@ -930,6 +1323,8 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
     std::map<std::string, std::string> tag_effective_source;
     std::vector<std::string> warning_list;
+    warning_list.insert(warning_list.end(), cb_warnings.begin(), cb_warnings.end());
+    warning_list.insert(warning_list.end(), oscillator_warnings.begin(), oscillator_warnings.end());
 
     
     for (const auto& el : elements) {
@@ -952,11 +1347,66 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
     // Step 3: Run Compiler Optimizer (Passes: DCE, Constant Folding, Inversion Folding, CSE, Direct Destination)
     Optimizer optimizer(options);
-    optimizer.build_ir(elements, nets, alias_to_addr, custom_nodes);
+    optimizer.build_ir(elements, nets, alias_to_addr, custom_nodes, feedback_state_nodes);
     OptimizationStats stats = optimizer.run_passes();
 
     const auto& opt_nodes = optimizer.get_nodes();
-    const auto& eval_order = optimizer.get_optimized_order();
+    const auto& orig_eval_order = optimizer.get_optimized_order();
+
+    auto get_node_rate = [&](const std::string& node_name) -> int {
+        auto it = opt_nodes.find(node_name);
+        if (it == opt_nodes.end()) return 0;
+        const OptNode& nd = it->second;
+        if (nd.raw_json.contains("rate")) {
+            const auto& r = nd.raw_json.get("rate");
+            if (r.is_number()) return r.as_int(0);
+            if (r.is_string()) {
+                std::string s = to_lower_str(r.as_string());
+                if (s == "slow" || s == "supervisory" || s == "rate2" || s == "2") return 2;
+                if (s == "med" || s == "medium" || s == "control" || s == "rate1" || s == "1") return 1;
+                return 0;
+            }
+        }
+        std::string type = to_upper_str(nd.type);
+        if (type.rfind("LE_", 0) == 0) type = type.substr(3);
+
+        if (type == "TOTALIZER" || type == "COUNTER" || type == "CTU" || type == "CTD" || type == "CTUD" ||
+            type == "I2C" || type == "SPI") {
+            return 2;
+        }
+        if (type == "PID" || type == "LPF" || type == "BIQUAD" || type == "MOVING_AVG" ||
+            type == "RATE_LIMITER" || type == "DEADBAND" || type == "WASHOUT" ||
+            type == "MEDIAN" || type == "DERIVATIVE" || type == "ZERO_CROSSING" ||
+            type == "LUT_1D" || type == "LUT" || type == "RMS" ||
+            type == "MIN_MAX_HOLD" || type == "SCALER" ||
+            type == "TIMER" || type == "TON" || type == "TOF" || type == "TP") {
+            return 1;
+        }
+        return 0;
+    };
+
+    std::vector<std::string> eval_order;
+    std::vector<std::string> fast_node_list;
+    std::vector<std::string> med_node_list;
+    std::vector<std::string> slow_node_list;
+    if (options.enable_multi_rate) {
+        for (const std::string& name : orig_eval_order) {
+            int r = get_node_rate(name);
+            if (r == 2) slow_node_list.push_back(name);
+            else if (r == 1) med_node_list.push_back(name);
+            else fast_node_list.push_back(name);
+        }
+        eval_order.reserve(orig_eval_order.size());
+        eval_order.insert(eval_order.end(), fast_node_list.begin(), fast_node_list.end());
+        eval_order.insert(eval_order.end(), med_node_list.begin(), med_node_list.end());
+        eval_order.insert(eval_order.end(), slow_node_list.begin(), slow_node_list.end());
+    } else {
+        eval_order = orig_eval_order;
+    }
+
+    uint16_t rate_fast_count = 0;
+    uint16_t rate_med_count = 0;
+    int current_rate_domain = 0;
 
     // Populate folded constants into element_outputs
     for (const auto& kv : opt_nodes) {
@@ -964,9 +1414,41 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             if (kv.second.const_type == "bool") {
                 element_outputs[kv.first] = kv.second.const_bool ? LE_CONST_TRUE : LE_CONST_FALSE;
             } else if (kv.second.const_type == "float") {
-                element_outputs[kv.first] = (std::abs(kv.second.const_float - 1.0f) < 0.0001f) ? LE_CONST_ONE_F : LE_CONST_ZERO_F;
+                float f = kv.second.const_float;
+                if (std::abs(f - 0.0f) < 1e-6f) {
+                    element_outputs[kv.first] = LE_CONST_ZERO_F;
+                } else if (std::abs(f - 1.0f) < 1e-6f) {
+                    element_outputs[kv.first] = LE_CONST_ONE_F;
+                } else if (std::abs(f - 60.0f) < 1e-6f) {
+                    element_outputs[kv.first] = LE_CONST_60_F;
+                } else {
+                    auto it_c = float_const_map.find(f);
+                    if (it_c != float_const_map.end()) {
+                        element_outputs[kv.first] = it_c->second;
+                    } else {
+                        uint16_t addr = allocate_user_float();
+                        element_outputs[kv.first] = addr;
+                        float_const_map[f] = addr;
+                        float_constants.push_back({addr, f});
+                    }
+                }
             } else {
-                element_outputs[kv.first] = (kv.second.const_int != 0) ? LE_CONST_TRUE : LE_CONST_FALSE;
+                int i = kv.second.const_int;
+                if (i == 0) {
+                    element_outputs[kv.first] = LE_CONST_FALSE;
+                } else if (i == 1) {
+                    element_outputs[kv.first] = LE_CONST_TRUE;
+                } else {
+                    auto it_c = int_const_map.find(i);
+                    if (it_c != int_const_map.end()) {
+                        element_outputs[kv.first] = it_c->second;
+                    } else {
+                        uint16_t addr = allocate_user_int();
+                        element_outputs[kv.first] = addr;
+                        int_const_map[i] = addr;
+                        int_constants.push_back({addr, i});
+                    }
+                }
             }
         }
     }
@@ -1024,6 +1506,28 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
     // Step 4: Instruction Generation
     std::vector<le_instruction_t> instructions;
+
+    for (const auto& fc : float_constants) {
+        le_instruction_t inst{};
+        inst.opcode = LE_OP_LOAD_F;
+        inst.modifier = 0;
+        uint32_t raw = 0;
+        std::memcpy(&raw, &fc.second, sizeof(float));
+        inst.in_a = static_cast<uint16_t>(raw & 0xFFFF);
+        inst.in_b = static_cast<uint16_t>((raw >> 16) & 0xFFFF);
+        inst.out = fc.first;
+        instructions.push_back(inst);
+    }
+    for (const auto& ic : int_constants) {
+        le_instruction_t inst{};
+        inst.opcode = LE_OP_LOAD_I;
+        inst.modifier = 0;
+        uint32_t raw = static_cast<uint32_t>(ic.second);
+        inst.in_a = static_cast<uint16_t>(raw & 0xFFFF);
+        inst.in_b = static_cast<uint16_t>((raw >> 16) & 0xFFFF);
+        inst.out = ic.first;
+        instructions.push_back(inst);
+    }
 
     /* Block Call Table: one record per LE_OP_BLOCK instruction. The record's
      * args array holds all live input addresses followed by output addresses,
@@ -1100,6 +1604,18 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     };
 
     for (const std::string& name : eval_order) {
+        if (options.enable_multi_rate) {
+            int node_rate = get_node_rate(name);
+            if (current_rate_domain == 0 && node_rate > 0) {
+                rate_fast_count = static_cast<uint16_t>(instructions.size());
+                current_rate_domain = node_rate;
+            }
+            if (current_rate_domain == 1 && node_rate == 2) {
+                rate_med_count = static_cast<uint16_t>(instructions.size()) - rate_fast_count;
+                current_rate_domain = 2;
+            }
+        }
+
         auto it_opt = opt_nodes.find(name);
         if (it_opt == opt_nodes.end()) continue;
         const auto& opt_node = it_opt->second;
@@ -1239,13 +1755,17 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
                     uint16_t reg_addr = element_outputs[name];
                     le_instruction_t inst;
                     if (type.find("COMPLEX") != std::string::npos) inst.opcode = LE_OP_MOVE_C;
-                    else inst.opcode = (type.find("FLOAT") != std::string::npos) ? LE_OP_MOVE_F : LE_OP_MOVE;
+                    else if (type.find("FLOAT") != std::string::npos) inst.opcode = LE_OP_MOVE_F;
+                    else if (type.find("INT") != std::string::npos) inst.opcode = LE_OP_MOVE_I;
+                    else inst.opcode = LE_OP_MOVE;
                     inst.modifier = 0;
                     inst.in_a = src_addr;
                     inst.in_b = LE_ADDR_UNUSED;
                     inst.out = reg_addr;
                     instructions.push_back(inst);
                     consume_input(in_src);
+                } else {
+                    warning_list.push_back("Warning: Register '" + name + "' input from '" + in_src + "' cannot be resolved.");
                 }
             }
             continue;
@@ -1286,14 +1806,61 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         else if (type == "CTU" || type == "LE_CTU") { opcode = LE_OP_CTU; is_counter_op = true; }
         else if (type == "CTD" || type == "LE_CTD") { opcode = LE_OP_CTD; is_counter_op = true; }
         else if (type == "CTUD" || type == "LE_CTUD") { opcode = LE_OP_CTUD; is_counter_op = true; }
-        else if (type == "ADD" || type == "LE_ADD") { opcode = LE_OP_ADD_F; is_float_op = true; }
-        else if (type == "SUB" || type == "SUBTRACT" || type == "LE_SUB") { opcode = LE_OP_SUB_F; is_float_op = true; }
-        else if (type == "MUL" || type == "MULTIPLY" || type == "LE_MUL") { opcode = LE_OP_MUL_F; is_float_op = true; }
-        else if (type == "DIV" || type == "DIVIDE" || type == "LE_DIV") { opcode = LE_OP_DIV_F; is_float_op = true; }
+        else if (type == "ADD" || type == "LE_ADD") {
+            std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+            if (dt == "int" || dt == "integer" || dt == "int32") { opcode = LE_OP_ADD_I; is_int_op = true; }
+            else { opcode = LE_OP_ADD_F; is_float_op = true; }
+        }
+        else if (type == "SUB" || type == "SUBTRACT" || type == "LE_SUB") {
+            std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+            if (dt == "int" || dt == "integer" || dt == "int32") { opcode = LE_OP_SUB_I; is_int_op = true; }
+            else { opcode = LE_OP_SUB_F; is_float_op = true; }
+        }
+        else if (type == "MUL" || type == "MULTIPLY" || type == "LE_MUL") {
+            std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+            if (dt == "int" || dt == "integer" || dt == "int32") { opcode = LE_OP_MUL_I; is_int_op = true; }
+            else { opcode = LE_OP_MUL_F; is_float_op = true; }
+        }
+        else if (type == "DIV" || type == "DIVIDE" || type == "LE_DIV") {
+            std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+            if (dt == "int" || dt == "integer" || dt == "int32") { opcode = LE_OP_DIV_I; is_int_op = true; }
+            else { opcode = LE_OP_DIV_F; is_float_op = true; }
+        }
+        else if (type == "NEG" || type == "LE_NEG") {
+            std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+            if (dt == "int" || dt == "integer" || dt == "int32") { opcode = LE_OP_NEG_I; is_int_op = true; }
+            else { opcode = LE_OP_NEG_F; is_float_op = true; }
+        }
+        else if (type == "ADD_I" || type == "LE_ADD_I") { opcode = LE_OP_ADD_I; is_int_op = true; }
+        else if (type == "SUB_I" || type == "LE_SUB_I") { opcode = LE_OP_SUB_I; is_int_op = true; }
+        else if (type == "MUL_I" || type == "LE_MUL_I") { opcode = LE_OP_MUL_I; is_int_op = true; }
+        else if (type == "DIV_I" || type == "LE_DIV_I") { opcode = LE_OP_DIV_I; is_int_op = true; }
+        else if (type == "NEG_I" || type == "LE_NEG_I") { opcode = LE_OP_NEG_I; is_int_op = true; }
+        else if (type == "WORD_AND" || type == "LE_WORD_AND") { opcode = LE_OP_WORD_AND; is_int_op = true; }
+        else if (type == "WORD_OR" || type == "LE_WORD_OR") { opcode = LE_OP_WORD_OR; is_int_op = true; }
+        else if (type == "WORD_XOR" || type == "LE_WORD_XOR") { opcode = LE_OP_WORD_XOR; is_int_op = true; }
+        else if (type == "WORD_NOT" || type == "LE_WORD_NOT") { opcode = LE_OP_WORD_NOT; is_int_op = true; }
+        else if (type == "MOVE_I" || type == "LE_MOVE_I") { opcode = LE_OP_MOVE_I; is_int_op = true; }
+        else if (type == "MOVE_F" || type == "LE_MOVE_F") { opcode = LE_OP_MOVE_F; is_float_op = true; }
+        else if (type == "MOVE_C" || type == "LE_MOVE_C") { opcode = LE_OP_MOVE_C; is_complex_op = true; }
+        else if (type == "MOVE" || type == "LE_MOVE") { opcode = LE_OP_MOVE; }
+        else if (type == "FMA" || type == "LE_FMA" || type == "MAC" || type == "LE_MAC") { opcode = LE_OP_FMA_F; is_float_op = true; }
+        else if (type == "FMS" || type == "LE_FMS") { opcode = LE_OP_FMS_F; is_float_op = true; }
         else if (type == "ABS" || type == "LE_ABS") { opcode = LE_OP_ABS_F; is_float_op = true; }
-        else if (type == "NEG" || type == "LE_NEG") { opcode = LE_OP_NEG_F; is_float_op = true; }
         else if (type == "MIN" || type == "LE_MIN") { opcode = LE_OP_MIN_F; is_float_op = true; }
         else if (type == "MAX" || type == "LE_MAX") { opcode = LE_OP_MAX_F; is_float_op = true; }
+        else if (type == "SQRT" || type == "LE_SQRT") { opcode = LE_OP_SQRT_F; is_float_op = true; }
+        else if (type == "SIN" || type == "LE_SIN") { opcode = LE_OP_SIN_F; is_float_op = true; }
+        else if (type == "COS" || type == "LE_COS") { opcode = LE_OP_COS_F; is_float_op = true; }
+        else if (type == "TAN" || type == "LE_TAN") { opcode = LE_OP_TAN_F; is_float_op = true; }
+        else if (type == "ASIN" || type == "LE_ASIN") { opcode = LE_OP_ASIN_F; is_float_op = true; }
+        else if (type == "ACOS" || type == "LE_ACOS") { opcode = LE_OP_ACOS_F; is_float_op = true; }
+        else if (type == "ATAN" || type == "LE_ATAN") { opcode = LE_OP_ATAN_F; is_float_op = true; }
+        else if (type == "ATAN2" || type == "LE_ATAN2") { opcode = LE_OP_ATAN2_F; is_float_op = true; }
+        else if (type == "EXP" || type == "LE_EXP") { opcode = LE_OP_EXP_F; is_float_op = true; }
+        else if (type == "LOG" || type == "LN" || type == "LE_LOG" || type == "LE_LN") { opcode = LE_OP_LOG_F; is_float_op = true; }
+        else if (type == "LOG10" || type == "LE_LOG10") { opcode = LE_OP_LOG10_F; is_float_op = true; }
+        else if (type == "POW" || type == "POWER" || type == "LE_POW" || type == "LE_POWER") { opcode = LE_OP_POW_F; is_float_op = true; }
         else if (type == "CLAMP" || type == "LE_CLAMP") { opcode = LE_OP_BLOCK; } /* block func LE_FUNC_CLAMP_F */
         else if (type == "CADD" || type == "LE_CADD" || type == "C_ADD") { opcode = LE_OP_CADD_F; is_complex_op = true; }
         else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") { opcode = LE_OP_CSUB_F; is_complex_op = true; }
@@ -1498,9 +2065,17 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
             std::string sel_src = find_port({"sel", "select", "selector", "s", "in_sel"});
             uint16_t sel = block_src_addr(sel_src, LE_CONST_FALSE);
             std::string in0_src = find_port({"in0", "input_0", "a", "in_a"});
-            uint16_t in0 = block_src_addr(in0_src, LE_CONST_FALSE);
             std::string in1_src = find_port({"in1", "input_1", "b", "in_b"});
-            uint16_t in1 = block_src_addr(in1_src, LE_CONST_FALSE);
+
+            int mux_type = deduce_element_type(name);
+            if (mux_type == 0 && !in0_src.empty()) mux_type = deduce_element_type(in0_src);
+            if (mux_type == 0 && !in1_src.empty()) mux_type = deduce_element_type(in1_src);
+
+            uint16_t def_data = (mux_type == 1) ? LE_CONST_ZERO_F :
+                                (mux_type == 3) ? LE_CONST_ZERO_C : LE_CONST_FALSE;
+
+            uint16_t in0 = block_src_addr(in0_src, def_data);
+            uint16_t in1 = block_src_addr(in1_src, def_data);
 
             consume_input(sel_src);
             consume_input(in0_src);
@@ -1508,21 +2083,39 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
             uint16_t out_addr = LE_ADDR_UNUSED;
             if (!opt_node.direct_dest_node.empty()) {
-                if (dout_map.find(opt_node.direct_dest_node) != dout_map.end()) {
+                if (mux_type == 0 && dout_map.find(opt_node.direct_dest_node) != dout_map.end()) {
                     out_addr = dout_map[opt_node.direct_dest_node];
+                } else if (mux_type == 1 && aout_map.find(opt_node.direct_dest_node) != aout_map.end()) {
+                    out_addr = aout_map[opt_node.direct_dest_node];
                 } else if (element_outputs.find(opt_node.direct_dest_node) != element_outputs.end()) {
                     out_addr = element_outputs[opt_node.direct_dest_node];
                 }
             }
             if (out_addr == LE_ADDR_UNUSED) {
                 int temp_idx = -1;
-                out_addr = acquire_temp_bool(temp_idx);
+                if (mux_type == 1) {
+                    out_addr = acquire_temp_float(temp_idx);
+                    node_temp_type[name] = TempType::Float;
+                } else if (mux_type == 2) {
+                    out_addr = acquire_temp_int(temp_idx);
+                    node_temp_type[name] = TempType::Int;
+                } else if (mux_type == 3) {
+                    out_addr = acquire_temp_complex(temp_idx);
+                    node_temp_type[name] = TempType::Complex;
+                } else {
+                    out_addr = acquire_temp_bool(temp_idx);
+                    node_temp_type[name] = TempType::Bool;
+                }
                 node_temp_idx[name] = temp_idx;
-                node_temp_type[name] = TempType::Bool;
             }
             element_outputs[name] = out_addr;
 
-            push_block(LE_FUNC_MUX_SELECT, {sel, in0, in1, out_addr}, 3, 1);
+            uint8_t func_id = LE_FUNC_MUX_SELECT;
+            if (mux_type == 1) func_id = LE_FUNC_MUX_SELECT_F;
+            else if (mux_type == 2) func_id = LE_FUNC_MUX_SELECT_I;
+            else if (mux_type == 3) func_id = LE_FUNC_MUX_SELECT_C;
+
+            push_block(func_id, {sel, in0, in1, out_addr}, 3, 1);
             continue;
         }
 
@@ -2131,30 +2724,54 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         } else if (opcode == LE_OP_TOTALIZER || opcode == LE_OP_MIN_MAX_HOLD || opcode == LE_OP_ZERO_CROSSING) {
             in0_src = find_port({"a", "in_a", "in", "input", "input_0", "x", "rate"});
             in1_src = find_port({"b", "in_b", "input_1", "reset", "rst"});
-        } else if (is_counter_op) {
-            /* count up / count down primary trigger, plus reset */
-            in0_src = find_port({"cu", "cd", "count_up", "count_down", "cnt", "in", "a", "input", "input_0", "pv"});
-            in1_src = find_port({"r", "rst", "reset", "b", "input_1"});
+        } else if (opcode == LE_OP_CTD) {
+            in0_src = find_port({"cd", "count_down", "cu", "clk", "cnt", "in", "a", "input", "input_0"});
+            in1_src = find_port({"load", "ld", "r", "rst", "reset", "b", "input_1"});
+        } else if (opcode == LE_OP_CTUD) {
+            in0_src = find_port({"cu", "count_up", "clk", "cnt", "in", "a", "input", "input_0"});
+            in1_src = find_port({"cd", "count_down", "b", "input_1"});
+        } else if (opcode == LE_OP_CTU) {
+            in0_src = find_port({"cu", "count_up", "clk", "cnt", "in", "a", "input", "input_0"});
+            in1_src = find_port({"r", "rst", "reset", "load", "ld", "b", "input_1"});
         } else if (opcode == LE_OP_RTRIG || opcode == LE_OP_FTRIG) {
             in0_src = find_port({"clk", "i", "in", "a", "input", "input_0"});
             in1_src = find_port({"h", "hist", "history", "b", "prev"});
+        } else if (is_timer_op) {
+            in0_src = find_port({"in", "i", "input", "clk", "a", "input_0"});
+            in1_src = find_port({"pt", "preset_ms", "preset", "time", "b", "input_1"});
         } else {
             in0_src = find_port({"a", "in_a", "in", "input", "input_0", "x", "pv"});
             in1_src = find_port({"b", "in_b", "input_1", "alpha"});
         }
 
+        std::string in2_src;
+        if (opcode == LE_OP_FMA_F || opcode == LE_OP_FMS_F) {
+            in2_src = find_port({"c", "in_c", "in_2", "input_2", "acc", "addend", "z"});
+        }
+
         bool is_cmp = (opcode >= LE_OP_CMP_GT && opcode <= LE_OP_CMP_NE);
         bool has_bool_b = (opcode == LE_OP_TOTALIZER || opcode == LE_OP_MIN_MAX_HOLD || opcode == LE_OP_ZERO_CROSSING);
         uint16_t default_a = (is_float_op || is_cmp) ? LE_CONST_ZERO_F : (is_complex_op ? LE_CONST_ZERO_C : LE_CONST_FALSE);
-        uint16_t default_b = (is_float_op && !has_bool_b) ? LE_CONST_ZERO_F : (is_complex_op ? LE_ADDR_UNUSED : LE_ADDR_UNUSED);
+        uint16_t default_b = (is_float_op && !has_bool_b) ? LE_CONST_ZERO_F : (is_complex_op ? LE_ADDR_UNUSED : (is_int_op ? LE_CONST_FALSE : LE_ADDR_UNUSED));
 
         uint16_t in_a = in0_src.empty() ? default_a : src_address(in0_src,
                       source_port_of(name, !used_keys.empty() ? used_keys[0] : ""), default_a);
         uint16_t in_b = in1_src.empty() ? default_b : src_address(in1_src,
                       source_port_of(name, used_keys.size() > 1 ? used_keys[1] : ""), default_b);
+        if (in1_src.empty() && trig_hist_map.find(name) != trig_hist_map.end()) {
+            in_b = trig_hist_map[name];
+        }
+        uint16_t in_c = LE_CONST_ZERO_F;
+        if (opcode == LE_OP_FMA_F || opcode == LE_OP_FMS_F) {
+            in_c = in2_src.empty() ? LE_CONST_ZERO_F : src_address(in2_src,
+                          source_port_of(name, used_keys.size() > 2 ? used_keys[2] : ""), LE_CONST_ZERO_F);
+        }
 
         consume_input(in0_src);
         consume_input(in1_src);
+        if (opcode == LE_OP_FMA_F || opcode == LE_OP_FMS_F) {
+            consume_input(in2_src);
+        }
 
         uint16_t out_addr = LE_ADDR_UNUSED;
         if (!opt_node.direct_dest_node.empty()) {
@@ -2180,12 +2797,20 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             modifier = static_cast<uint8_t>(c_idx);
             state_descs[LE_BLK_COUNTER]++;
             le_counter_state_t cst{};
-            cst.preset = (int32_t)prop(el, "preset", 0.0f);
+            int32_t pval = (int32_t)prop(el, "preset", 0.0f);
+            if (pval == 0) pval = (int32_t)prop(el, "presetvalue", 0.0f);
+            cst.preset = pval;
+            if (opcode == LE_OP_CTD) {
+                cst.count = cst.preset;
+                cst.qd = (cst.count <= 0);
+            }
             append_state(LE_BLK_COUNTER, &cst, sizeof(cst));
         }
 
         if (out_addr == LE_ADDR_UNUSED) {
-            if (is_float_op) {
+            if (element_outputs.find(name) != element_outputs.end()) {
+                out_addr = element_outputs[name];
+            } else if (is_float_op) {
                 int temp_idx = -1;
                 out_addr = acquire_temp_float(temp_idx);
                 node_temp_idx[name] = temp_idx;
@@ -2208,6 +2833,55 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             }
         }
         element_outputs[name] = out_addr;
+
+        uint16_t out_cv = LE_ADDR_UNUSED;
+        uint16_t out_qd = LE_ADDR_UNUSED;
+        if (is_counter_op) {
+            element_outputs_port[name]["q"] = out_addr;
+            if (opcode == LE_OP_CTD) {
+                element_outputs_port[name]["qd"] = out_addr;
+            } else {
+                element_outputs_port[name]["qu"] = out_addr;
+            }
+            auto it_u = used_output_ports.find(name);
+            bool need_cv = (it_u != used_output_ports.end()) &&
+                           (it_u->second.count("cv") || it_u->second.count("count") ||
+                            it_u->second.count("val") || it_u->second.count("current_value"));
+            if (need_cv) {
+                int temp_cv_idx = -1;
+                out_cv = acquire_temp_int(temp_cv_idx);
+                element_outputs_port[name]["cv"] = out_cv;
+                element_outputs_port[name]["count"] = out_cv;
+                element_outputs_port[name]["val"] = out_cv;
+                element_outputs_port[name]["current_value"] = out_cv;
+            }
+            if (opcode == LE_OP_CTUD) {
+                bool need_qd = (it_u != used_output_ports.end()) && (it_u->second.count("qd") != 0);
+                if (need_qd) {
+                    int temp_qd_idx = -1;
+                    out_qd = acquire_temp_bool(temp_qd_idx);
+                    element_outputs_port[name]["qd"] = out_qd;
+                }
+            }
+        }
+
+        uint16_t out_et = LE_ADDR_UNUSED;
+        if (is_timer_op) {
+            element_outputs_port[name]["q"] = out_addr;
+            element_outputs_port[name]["out"] = out_addr;
+            auto it_u = used_output_ports.find(name);
+            bool need_et = (it_u != used_output_ports.end()) &&
+                           (it_u->second.count("et") || it_u->second.count("elapsed") ||
+                            it_u->second.count("elapsed_time") || it_u->second.count("val"));
+            if (need_et) {
+                int temp_et_idx = -1;
+                out_et = acquire_temp_int(temp_et_idx);
+                element_outputs_port[name]["et"] = out_et;
+                element_outputs_port[name]["elapsed"] = out_et;
+                element_outputs_port[name]["elapsed_time"] = out_et;
+                element_outputs_port[name]["val"] = out_et;
+            }
+        }
 
 // ------------------------------------------------------------------
         // Multi-input logic gates (AND/OR/XOR/NAND/NOR with arbitrary fan-in).
@@ -2324,6 +2998,18 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             }
         }
 
+        if (opcode == LE_OP_FMA_F || opcode == LE_OP_FMS_F) {
+            if (in_c != out_addr) {
+                le_instruction_t mv;
+                mv.opcode = LE_OP_MOVE_F;
+                mv.modifier = 0;
+                mv.in_a = in_c;
+                mv.in_b = LE_ADDR_UNUSED;
+                mv.out = out_addr;
+                instructions.push_back(mv);
+            }
+        }
+
         le_instruction_t inst;
         inst.opcode = opcode;
         inst.modifier = modifier;
@@ -2332,6 +3018,37 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         inst.out = out_addr;
         instructions.push_back(inst);
 
+        if (is_counter_op) {
+            if (out_cv != LE_ADDR_UNUSED) {
+                le_instruction_t inst_cv{};
+                inst_cv.opcode = LE_OP_COUNTER_CV;
+                inst_cv.modifier = modifier;
+                inst_cv.in_a = LE_ADDR_UNUSED;
+                inst_cv.in_b = LE_ADDR_UNUSED;
+                inst_cv.out = out_cv;
+                instructions.push_back(inst_cv);
+            }
+            if (out_qd != LE_ADDR_UNUSED) {
+                le_instruction_t inst_qd{};
+                inst_qd.opcode = LE_OP_COUNTER_QD;
+                inst_qd.modifier = modifier;
+                inst_qd.in_a = LE_ADDR_UNUSED;
+                inst_qd.in_b = LE_ADDR_UNUSED;
+                inst_qd.out = out_qd;
+                instructions.push_back(inst_qd);
+            }
+        }
+
+        if (is_timer_op && out_et != LE_ADDR_UNUSED) {
+            le_instruction_t inst_et{};
+            inst_et.opcode = LE_OP_TIMER_ET;
+            inst_et.modifier = modifier;
+            inst_et.in_a = LE_ADDR_UNUSED;
+            inst_et.in_b = LE_ADDR_UNUSED;
+            inst_et.out = out_et;
+            instructions.push_back(inst_et);
+        }
+
         if (ref_counts[name] <= 0 && node_temp_idx.find(name) != node_temp_idx.end()) {
             if (is_float_op) release_temp_float(node_temp_idx[name]);
             else if (is_complex_op) release_temp_complex(node_temp_idx[name]);
@@ -2339,6 +3056,16 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             else release_temp_bool(node_temp_idx[name]);
             node_temp_idx.erase(name);
             node_temp_type.erase(name);
+        }
+
+    }
+
+    if (options.enable_multi_rate) {
+        if (current_rate_domain == 0) {
+            rate_fast_count = static_cast<uint16_t>(instructions.size());
+            rate_med_count = 0;
+        } else if (current_rate_domain == 1) {
+            rate_med_count = static_cast<uint16_t>(instructions.size()) - rate_fast_count;
         }
     }
 
@@ -2370,39 +3097,7 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
      * kind, an instance count, and the struct byte size so the loader can reserve
      * heap slices and bind pointers at load time. */
     auto state_kind_size = [&](uint8_t kind) -> uint16_t {
-        switch (kind) {
-            case LE_BLK_TIMER: return (uint16_t)sizeof(le_timer_state_t);
-            case LE_BLK_COUNTER: return (uint16_t)sizeof(le_counter_state_t);
-            case LE_BLK_LPF: return (uint16_t)sizeof(le_lpf_state_t);
-            case LE_BLK_BIQUAD: return (uint16_t)sizeof(le_biquad_state_t);
-            case LE_BLK_MOVING_AVG: return (uint16_t)sizeof(le_moving_avg_state_t);
-            case LE_BLK_RATE_LIMITER: return (uint16_t)sizeof(le_rate_limiter_state_t);
-            case LE_BLK_DEADBAND: return (uint16_t)sizeof(le_deadband_state_t);
-            case LE_BLK_WASHOUT: return (uint16_t)sizeof(le_washout_state_t);
-            case LE_BLK_PEAK: return (uint16_t)sizeof(le_peak_state_t);
-            case LE_BLK_RMS: return (uint16_t)sizeof(le_rms_state_t);
-            case LE_BLK_MEDIAN: return (uint16_t)sizeof(le_median_state_t);
-            case LE_BLK_DERIVATIVE: return (uint16_t)sizeof(le_derivative_state_t);
-            case LE_BLK_ZERO_CROSSING: return (uint16_t)sizeof(le_zero_crossing_state_t);
-            case LE_BLK_LUT_1D: return (uint16_t)sizeof(le_lut_1d_state_t);
-            case LE_BLK_TOTALIZER: return (uint16_t)sizeof(le_totalizer_state_t);
-            case LE_BLK_MIN_MAX_HOLD: return (uint16_t)sizeof(le_min_max_hold_state_t);
-            case LE_BLK_SCALER: return (uint16_t)sizeof(le_scale_state_t);
-            case LE_BLK_PID: return (uint16_t)sizeof(le_pid_state_t);
-            case LE_BLK_OVERCURRENT: return (uint16_t)sizeof(le_overcurrent_state_t);
-#if LE_ENABLE_PROTECTION
-            case LE_BLK_PHASOR: return (uint16_t)sizeof(le_phasor_state_t);
-            case LE_BLK_SYMCOMP: return (uint16_t)sizeof(le_symcomp_state_t);
-            case LE_BLK_21: return (uint16_t)sizeof(le_dist21_state_t);
-            case LE_BLK_DIFF_87: return (uint16_t)sizeof(le_diff87_state_t);
-            case LE_BLK_PHASE_COMP: return (uint16_t)sizeof(le_comp33_state_t);
-            case LE_BLK_PHASOR3: return (uint16_t)sizeof(le_phasor3_state_t);
-            case LE_BLK_FREQ_EST: return (uint16_t)sizeof(le_freq_est_state_t);
-#endif
-            case LE_BLK_I2C: return (uint16_t)sizeof(le_i2c_device_state_t);
-            case LE_BLK_SPI: return (uint16_t)sizeof(le_spi_device_state_t);
-            default: return 0;
-        }
+        return le_rt_kind_size(kind);
     };
     /* Build the state-directive table and the preconfigured state image.
      * Groups are emitted in ascending kind order; each group's blocks are
@@ -2452,17 +3147,26 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             case LE_OP_MOVE: case LE_OP_NOT:  case LE_OP_AND:  case LE_OP_OR:
             case LE_OP_XOR:  case LE_OP_NAND: case LE_OP_NOR:  case LE_OP_MUX:
             case LE_OP_RTRIG: case LE_OP_FTRIG: case LE_OP_SR: case LE_OP_RS:
+            case LE_OP_MOVE_I: case LE_OP_ADD_I: case LE_OP_SUB_I: case LE_OP_MUL_I:
+            case LE_OP_NEG_I:  case LE_OP_LOAD_I: case LE_OP_WORD_AND: case LE_OP_WORD_OR:
+            case LE_OP_WORD_XOR: case LE_OP_WORD_NOT:
             case LE_OP_MOVE_F: case LE_OP_ADD_F: case LE_OP_SUB_F: case LE_OP_MUL_F:
+            case LE_OP_FMA_F:  case LE_OP_FMS_F: case LE_OP_LOAD_F:
             case LE_OP_NEG_F: case LE_OP_ABS_F: case LE_OP_MIN_F: case LE_OP_MAX_F:
+            case LE_OP_SQRT_F: case LE_OP_SIN_F: case LE_OP_COS_F: case LE_OP_TAN_F:
+            case LE_OP_ASIN_F: case LE_OP_ACOS_F: case LE_OP_ATAN_F: case LE_OP_ATAN2_F:
+            case LE_OP_EXP_F: case LE_OP_LOG_F: case LE_OP_LOG10_F: case LE_OP_POW_F:
             case LE_OP_CMP_GT: case LE_OP_CMP_LT: case LE_OP_CMP_GE:
             case LE_OP_CMP_LE: case LE_OP_CMP_EQ: case LE_OP_CMP_NE:
                 return 1;
+            case LE_OP_DIV_I:
             case LE_OP_DIV_F:    return 4;
             case LE_OP_SCALE_F:  return 3;
             case LE_OP_CADD_F: case LE_OP_CSUB_F: case LE_OP_CMUL_F: case LE_OP_MOVE_C: return 2;
             case LE_OP_CDIV_F:   return 6;
             case LE_OP_TON: case LE_OP_TOF: case LE_OP_TP:             return 2;
             case LE_OP_CTU: case LE_OP_CTD: case LE_OP_CTUD:           return 2;
+            case LE_OP_COUNTER_CV: case LE_OP_COUNTER_QD: case LE_OP_TIMER_ET: return 1;
             case LE_OP_PID:        return 6;
             case LE_OP_SYM_COMP:   return 10;
             case LE_OP_EXT_CALL:   return 4;
@@ -2480,7 +3184,11 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
                 if (inst.in_a >= block_calls.size()) return 4;
                 const BlockCall& bc = block_calls[inst.in_a];
                 switch (inst.modifier) {
-                    case LE_FUNC_MUX_SELECT: return 1;
+                    case LE_FUNC_MUX_SELECT:
+                    case LE_FUNC_MUX_SELECT_F:
+                    case LE_FUNC_MUX_SELECT_I:
+                    case LE_FUNC_MUX_SELECT_C:
+                        return 1;
                     case LE_FUNC_RECT2POLAR: case LE_FUNC_POLAR2RECT:
                     case LE_FUNC_COMPLEX2POLAR: case LE_FUNC_COMPLEX2RECT:
                     case LE_FUNC_RECT2COMPLEX: case LE_FUNC_POLAR2COMPLEX:
@@ -2550,20 +3258,68 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     int total_complex_regs = m_user_complex_count + m_peak_temp_complex;
     int total_int_regs = m_user_int_count + m_peak_temp_int;
 
+    int max_din_idx = -1;
+    for (const auto& pair : din_map) {
+        int idx = pair.second & 0x0FFF;
+        if (idx > max_din_idx) max_din_idx = idx;
+    }
+    int eff_din_count = std::max(static_cast<int>(din_map.size()), max_din_idx + 1);
+
+    int max_dout_idx = -1;
+    for (const auto& pair : dout_map) {
+        int idx = pair.second & 0x0FFF;
+        if (idx > max_dout_idx) max_dout_idx = idx;
+    }
+    int eff_dout_count = std::max(static_cast<int>(dout_map.size()), max_dout_idx + 1);
+
+    int max_ain_idx = -1;
+    for (const auto& pair : ain_map) {
+        int idx = pair.second & 0x0FFF;
+        if (idx > max_ain_idx) max_ain_idx = idx;
+    }
+    int eff_ain_count = std::max(static_cast<int>(ain_map.size()), max_ain_idx + 1);
+
+    int max_aout_idx = -1;
+    for (const auto& pair : aout_map) {
+        int idx = pair.second & 0x0FFF;
+        if (idx > max_aout_idx) max_aout_idx = idx;
+    }
+    int eff_aout_count = std::max(static_cast<int>(aout_map.size()), max_aout_idx + 1);
+
+    if (has_board) {
+        const auto& limits = board_doc.get("limits");
+        int board_din = limits.get("digital_inputs").as_int(derived_din);
+        if (board_din > 0 && eff_din_count < board_din) {
+            eff_din_count = board_din;
+        }
+        int board_dout = limits.get("digital_outputs").as_int(derived_dout);
+        if (board_dout > 0 && eff_dout_count < board_dout) {
+            eff_dout_count = board_dout;
+        }
+        int board_ain = limits.get("analog_inputs").as_int(derived_ain);
+        if (board_ain > 0 && eff_ain_count > 0 && eff_ain_count < board_ain) {
+            eff_ain_count = board_ain;
+        }
+        int board_aout = limits.get("analog_outputs").as_int(derived_aout);
+        if (board_aout > 0 && eff_aout_count > 0 && eff_aout_count < board_aout) {
+            eff_aout_count = board_aout;
+        }
+    }
+
     le_header_t header;
     std::memset(&header, 0, sizeof(header));
     header.magic = LE_BIN_MAGIC;
     header.version = LE_BIN_VERSION;
     header.flags = LE_FLAG_AUTOSTART;
     header.instruction_count = static_cast<uint16_t>(instructions.size());
-    header.digital_in_count = static_cast<uint16_t>(din_map.size());
-    header.digital_out_count = static_cast<uint16_t>(dout_map.size());
+    header.digital_in_count = static_cast<uint16_t>(eff_din_count);
+    header.digital_out_count = static_cast<uint16_t>(eff_dout_count);
     header.bool_reg_count = static_cast<uint16_t>(total_bool_regs);
     header.float_reg_count = static_cast<uint16_t>(total_float_regs);
     header.complex_reg_count = static_cast<uint16_t>(total_complex_regs);
     header.int_reg_count = static_cast<uint16_t>(total_int_regs);
-    header.analog_in_count = static_cast<uint16_t>(ain_map.size());
-    header.analog_out_count = static_cast<uint16_t>(aout_map.size());
+    header.analog_in_count = static_cast<uint16_t>(eff_ain_count);
+    header.analog_out_count = static_cast<uint16_t>(eff_aout_count);
     header.block_count = static_cast<uint16_t>(block_calls.size());
     header.state_desc_count = static_cast<uint16_t>(state_records);
     header.state_img_len = static_cast<uint32_t>(state_image.size());
@@ -2579,6 +3335,250 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         std::memcpy(full_bin.data() + sizeof(le_header_t), payload_all.data(), total_payload);
     }
 
+    /* Step 5b: Circuit-Driven NVRAM Requirements & Dynamic Partitioning */
+    le_nvram_desc_t nvmd;
+    std::memset(&nvmd, 0, sizeof(nvmd));
+    bool has_nvmd = false;
+
+    const JsonValue* nv_obj = nullptr;
+    if (circuit_doc.contains("nvram") && circuit_doc.get("nvram").is_object()) {
+        nv_obj = &circuit_doc.get("nvram");
+        has_nvmd = true;
+    }
+
+    uint32_t explicit_retentive_bytes = 0;
+    uint32_t ser_records = 0;
+    uint32_t explicit_ser_bytes = 0;
+    uint32_t event_records = 0;
+    uint32_t explicit_event_bytes = 0;
+
+    if (nv_obj) {
+        if (nv_obj->contains("retentive_bytes")) {
+            explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("retentive_bytes").as_int(0)));
+        }
+        if (nv_obj->contains("ser_records")) {
+            ser_records = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_records").as_int(0)));
+        }
+        if (nv_obj->contains("ser_bytes")) {
+            explicit_ser_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_bytes").as_int(0)));
+        }
+        if (nv_obj->contains("event_records")) {
+            event_records = static_cast<uint32_t>(std::max(0, nv_obj->get("event_records").as_int(0)));
+        }
+        if (nv_obj->contains("event_bytes")) {
+            explicit_event_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("event_bytes").as_int(0)));
+        }
+    }
+
+    // Top-level fallbacks in circuit JSON
+    if (circuit_doc.contains("retentive_bytes")) {
+        explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("retentive_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("ser_records")) {
+        ser_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_records").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("ser_bytes")) {
+        explicit_ser_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("event_records")) {
+        event_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_records").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("event_bytes")) {
+        explicit_event_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+
+    // Discover retentive register targets
+    std::set<uint16_t> retentive_addrs;
+
+    auto add_retentive_addr = [&](const std::string& target) {
+        if (target.empty()) return;
+        // Check if target is a range (e.g. "%B0-%B15" or "%B0..%B15")
+        size_t dash_pos = target.find('-');
+        size_t dot_pos = target.find("..");
+        if (dot_pos != std::string::npos || (dash_pos != std::string::npos && dash_pos > 0)) {
+            std::string s_start, s_end;
+            if (dot_pos != std::string::npos) {
+                s_start = target.substr(0, dot_pos);
+                s_end = target.substr(dot_pos + 2);
+            } else {
+                s_start = target.substr(0, dash_pos);
+                s_end = target.substr(dash_pos + 1);
+            }
+            uint16_t a1 = 0, a2 = 0;
+            if (parse_register_addr(s_start, &a1) && parse_register_addr(s_end, &a2)) {
+                if ((a1 & LE_ADDR_REGION_MASK) == (a2 & LE_ADDR_REGION_MASK) && a2 >= a1) {
+                    for (uint32_t a = a1; a <= a2; ++a) {
+                        retentive_addrs.insert(static_cast<uint16_t>(a));
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Check element_outputs
+        auto eit = element_outputs.find(target);
+        if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
+            retentive_addrs.insert(eit->second);
+            return;
+        }
+
+        // Check alias mapping
+        std::string resolved = target;
+        auto bit = alias_to_addr.find(target);
+        if (bit != alias_to_addr.end()) resolved = bit->second;
+
+        uint16_t addr = 0;
+        if (parse_register_addr(resolved, &addr)) {
+            retentive_addrs.insert(addr);
+        }
+    };
+
+    // 1. Process retentive_registers list in nvram object or top-level
+    const JsonValue* ret_regs_val = nullptr;
+    if (nv_obj && nv_obj->contains("retentive_registers")) {
+        ret_regs_val = &nv_obj->get("retentive_registers");
+    } else if (circuit_doc.contains("retentive_registers")) {
+        ret_regs_val = &circuit_doc.get("retentive_registers");
+    }
+
+    if (ret_regs_val && ret_regs_val->is_array()) {
+        has_nvmd = true;
+        for (const auto& item : ret_regs_val->as_array()) {
+            if (item.is_string()) {
+                add_retentive_addr(item.as_string());
+            } else if (item.is_number()) {
+                retentive_addrs.insert(static_cast<uint16_t>(item.as_int()));
+            } else if (item.is_object()) {
+                std::string s_addr = item.get("start").is_string() ? item.get("start").as_string() :
+                                     (item.get("address").is_string() ? item.get("address").as_string() : "");
+                int cnt = item.get("count").as_int(1);
+                uint16_t base_addr = 0;
+                if (!s_addr.empty() && parse_register_addr(s_addr, &base_addr)) {
+                    for (int c = 0; c < cnt; ++c) {
+                        retentive_addrs.insert(static_cast<uint16_t>(base_addr + c));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Discover inline element "retentive": true
+    for (const auto& el : elements) {
+        if (el.get("retentive").as_bool(false)) {
+            has_nvmd = true;
+            std::string el_id = el.get("id").as_string();
+            if (!el_id.empty()) {
+                auto eit = element_outputs.find(el_id);
+                if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
+                    retentive_addrs.insert(eit->second);
+                }
+                auto epit = element_outputs_port.find(el_id);
+                if (epit != element_outputs_port.end()) {
+                    for (const auto& kv : epit->second) {
+                        if (kv.second != LE_ADDR_UNUSED) {
+                            retentive_addrs.insert(kv.second);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Coalesce sorted retentive addresses into contiguous ranges
+    std::vector<le_nvram_range_t> coalesced_ranges;
+    if (!retentive_addrs.empty()) {
+        auto it = retentive_addrs.begin();
+        uint16_t cur_start = *it;
+        uint16_t cur_count = 1;
+        ++it;
+        for (; it != retentive_addrs.end(); ++it) {
+            uint16_t addr = *it;
+            uint16_t prev_addr = static_cast<uint16_t>(cur_start + cur_count - 1);
+            if (addr == prev_addr + 1 && (addr & LE_ADDR_REGION_MASK) == (prev_addr & LE_ADDR_REGION_MASK)) {
+                cur_count++;
+            } else {
+                le_nvram_range_t rng;
+                rng.start_addr = cur_start;
+                rng.count = cur_count;
+                coalesced_ranges.push_back(rng);
+                cur_start = addr;
+                cur_count = 1;
+            }
+        }
+        le_nvram_range_t rng;
+        rng.start_addr = cur_start;
+        rng.count = cur_count;
+        coalesced_ranges.push_back(rng);
+    }
+
+    // Calculate retentive payload bytes
+    uint32_t retentive_payload_bytes = 0;
+    for (const auto& rng : coalesced_ranges) {
+        uint16_t base = rng.start_addr;
+        uint16_t region = base & LE_ADDR_REGION_MASK;
+        for (uint16_t i = 0; i < rng.count; ++i) {
+            if (region == LE_REGION_BOOL_REG || region == LE_REGION_BOOL_REG_EXT ||
+                region == LE_REGION_DIN || region == LE_REGION_DOUT) {
+                retentive_payload_bytes += 1;
+            } else if (region == LE_REGION_INT_REG || region == LE_REGION_INT_REG_EXT) {
+                retentive_payload_bytes += 4;
+            } else if (region == LE_REGION_CMPLX) {
+                retentive_payload_bytes += 8;
+            } else {
+                retentive_payload_bytes += 4; // Float
+            }
+        }
+    }
+
+    uint32_t calc_regs_bytes = (retentive_payload_bytes > 0) ?
+        static_cast<uint32_t>(sizeof(le_nvram_regs_header_t) + retentive_payload_bytes) : 0;
+    nvmd.retentive_bytes = std::max(explicit_retentive_bytes, calc_regs_bytes);
+
+    uint32_t calc_ser_bytes = (ser_records > 0) ?
+        static_cast<uint32_t>(sizeof(le_ser_nv_header_t) + ser_records * sizeof(le_ser_event_t)) : 0;
+    nvmd.ser_records = ser_records;
+    nvmd.ser_bytes = std::max(explicit_ser_bytes, calc_ser_bytes);
+
+    uint32_t calc_event_bytes = (event_records > 0) ?
+        static_cast<uint32_t>(sizeof(le_event_rec_nv_header_t) + event_records * 32) : 0;
+    nvmd.event_records = event_records;
+    nvmd.event_bytes = std::max(explicit_event_bytes, calc_event_bytes);
+
+    nvmd.retentive_range_count = static_cast<uint16_t>(std::min<size_t>(coalesced_ranges.size(), LE_NVRAM_MAX_RANGES));
+    for (uint16_t ri = 0; ri < nvmd.retentive_range_count; ++ri) {
+        nvmd.ranges[ri] = coalesced_ranges[ri];
+    }
+
+    if (nvmd.retentive_bytes > 0 || nvmd.ser_bytes > 0 || nvmd.event_bytes > 0) {
+        has_nvmd = true;
+    }
+
+    if (options.emit_chunked_container || options.enable_multi_rate || has_nvmd) {
+        size_t max_chunked = total_bin_size + 4096;
+        std::vector<uint8_t> chunked_bin(max_chunked);
+        size_t chunked_size = 0;
+        le_rate_desc_t rate_desc;
+        rate_desc.rate_fast_count = rate_fast_count;
+        rate_desc.rate_med_count = rate_med_count;
+        rate_desc.rate_med_div = static_cast<uint16_t>(options.rate_med_div > 0 ? options.rate_med_div : 48);
+        rate_desc.rate_slow_div = static_cast<uint16_t>(options.rate_slow_div > 0 ? options.rate_slow_div : 480);
+
+        const le_rate_desc_t* prate = options.enable_multi_rate ? &rate_desc : nullptr;
+        const le_nvram_desc_t* pnvmd = has_nvmd ? &nvmd : nullptr;
+        le_status_t cst = le_loader_convert_to_chunked_nv(full_bin.data(), total_bin_size, prate, pnvmd,
+                                                          chunked_bin.data(), max_chunked, &chunked_size);
+        if (cst == LE_OK) {
+            full_bin.resize(chunked_size);
+            std::memcpy(full_bin.data(), chunked_bin.data(), chunked_size);
+            total_bin_size = chunked_size;
+        }
+    }
+
     /* Report the timing model to tooling regardless of board validation outcome. */
     out_result->abstract_cycles = (int)abstract_cycles;
     out_result->estimated_exec_us = 0.0;
@@ -2587,34 +3587,40 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     bool board_valid = true;
     std::vector<std::string> validation_errors;
 
+    if (coalesced_ranges.size() > LE_NVRAM_MAX_RANGES) {
+        board_valid = false;
+        validation_errors.push_back("Circuit Error: Retentive registers require " + std::to_string(coalesced_ranges.size()) +
+            " disjoint ranges, which exceeds the maximum allowed (" + std::to_string(LE_NVRAM_MAX_RANGES) + "). Group registers contiguously.");
+    }
+
     if (has_board) {
         std::string dev_name = board_doc.get("device").get("name").as_string("Target Board");
         const auto& limits = board_doc.get("limits");
         const auto& features = board_doc.get("features");
 
-        int max_din = limits.get("digital_inputs").as_int(64);
-        if (static_cast<int>(din_map.size()) > max_din) {
+        int max_din = limits.get("digital_inputs").as_int(board_pm_has_pinmap ? derived_din : 64);
+        if (static_cast<int>(din_map.size()) > max_din || (max_din_idx >= max_din)) {
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(din_map.size()) +
                 " digital inputs (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_din) + ".");
         }
 
-        int max_dout = limits.get("digital_outputs").as_int(64);
-        if (static_cast<int>(dout_map.size()) > max_dout) {
+        int max_dout = limits.get("digital_outputs").as_int(board_pm_has_pinmap ? derived_dout : 64);
+        if (static_cast<int>(dout_map.size()) > max_dout || (max_dout_idx >= max_dout)) {
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(dout_map.size()) +
                 " digital outputs (%Q), but target board '" + dev_name + "' only supports up to " + std::to_string(max_dout) + ".");
         }
 
-        int max_ain = limits.get("analog_inputs").as_int(16);
-        if (static_cast<int>(ain_map.size()) > max_ain) {
+        int max_ain = limits.get("analog_inputs").as_int(board_pm_has_pinmap ? derived_ain : 16);
+        if (static_cast<int>(ain_map.size()) > max_ain || (max_ain_idx >= max_ain)) {
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Analog Inputs exceed limit: " + std::to_string(ain_map.size()) +
                 " used, " + std::to_string(max_ain) + " max allowed on " + dev_name + ".");
         }
 
-        int max_aout = limits.get("analog_outputs").as_int(16);
-        if (static_cast<int>(aout_map.size()) > max_aout) {
+        int max_aout = limits.get("analog_outputs").as_int(board_pm_has_pinmap ? derived_aout : 16);
+        if (static_cast<int>(aout_map.size()) > max_aout || (max_aout_idx >= max_aout)) {
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Analog Outputs exceed limit: " + std::to_string(aout_map.size()) +
                 " used, " + std::to_string(max_aout) + " max allowed on " + dev_name + ".");
@@ -2673,14 +3679,14 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         /* Unified RAM Workspace validation: packed register arena + element state */
         int workspace_bytes = limits.get("workspace_bytes").as_int(LE_RAM_WORKSPACE_BYTES);
 
-        uint32_t din_c    = static_cast<uint32_t>(din_map.size());
-        uint32_t dout_c   = static_cast<uint32_t>(dout_map.size());
+        uint32_t din_c    = static_cast<uint32_t>(header.digital_in_count);
+        uint32_t dout_c   = static_cast<uint32_t>(header.digital_out_count);
         uint32_t bool_c   = static_cast<uint32_t>(total_bool_regs);
         uint32_t float_c  = static_cast<uint32_t>(total_float_regs);
         uint32_t int_c    = static_cast<uint32_t>(total_int_regs);
         uint32_t cmplx_c  = static_cast<uint32_t>(total_complex_regs);
-        uint32_t ain_c    = static_cast<uint32_t>(ain_map.size());
-        uint32_t aout_c   = static_cast<uint32_t>(aout_map.size());
+        uint32_t ain_c    = static_cast<uint32_t>(header.analog_in_count);
+        uint32_t aout_c   = static_cast<uint32_t>(header.analog_out_count);
 
         uint32_t bits_bytes = (din_c + dout_c + bool_c + 7u) / 8u;
         uint32_t floats_off = (bits_bytes + 3u) & ~3u;
@@ -2713,6 +3719,26 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
             board_valid = false;
             validation_errors.push_back("Board Validation Error: Compiled binary size (" + std::to_string(total_bin_size) +
                 " bytes) exceeds slot storage capacity (" + std::to_string(slot_size) + " bytes) of target board '" + dev_name + "'.");
+        }
+
+        int nv_limit = limits.get("nvram_total_bytes").as_int(0);
+        if (nv_limit <= 0) {
+            nv_limit = limits.get("nvram_bytes").as_int(LE_NVRAM_TOTAL_BYTES);
+        }
+        uint32_t total_nvram_avail = static_cast<uint32_t>(nv_limit);
+        uint32_t config_slots = static_cast<uint32_t>(std::max(1, limits.get("config_slots").as_int(LE_MAX_CONFIG_SLOTS)));
+        uint32_t total_nvram_needed = static_cast<uint32_t>(sizeof(le_nvram_manifest_t)) +
+                                      (nvmd.retentive_bytes * config_slots) +
+                                      nvmd.ser_bytes +
+                                      nvmd.event_bytes;
+
+        if (has_nvmd && (total_nvram_needed > total_nvram_avail)) {
+            board_valid = false;
+            validation_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_nvram_needed) +
+                " bytes of NVRAM (" + std::to_string(nvmd.retentive_bytes * config_slots) + " bytes retentive registers across " +
+                std::to_string(config_slots) + " slots + " + std::to_string(nvmd.ser_bytes) + " bytes SER log + " +
+                std::to_string(nvmd.event_bytes) + " bytes Event Recorder), but target board '" + dev_name +
+                "' only supports " + std::to_string(total_nvram_avail) + " bytes.");
         }
 
         bool prot_enabled = features.get("protection").as_bool(true);

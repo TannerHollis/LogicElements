@@ -50,6 +50,7 @@ le_status_t le_vm_step_us(le_vm_t* vm, uint32_t now_us)
      * corrupt DSP/phasing/timing-dependent logic). */
     if (vm->enforce_fixed_rate && vm->scan_period_us > 0) {
         if (vm->last_scan_us != 0 && now_us != vm->last_scan_us + vm->scan_period_us) {
+            vm->last_step_status = LE_ERR_SCAN_JITTER;
             return LE_ERR_SCAN_JITTER;
         }
         vm->last_scan_us = now_us;
@@ -81,9 +82,25 @@ le_status_t le_vm_step_us(le_vm_t* vm, uint32_t now_us)
         return LE_OK;
     }
 
-    le_status_t status = le_exec_program(vm->instructions, vm->instruction_count,
+    /* Multi-rate domain prescaling (Phase 4.2): partition instruction budget */
+    uint16_t exec_count = vm->instruction_count;
+    if (vm->rate_fast_count > 0 && vm->rate_fast_count < vm->instruction_count) {
+        bool run_slow = (vm->rate_slow_div > 0) && ((vm->cycle_count % vm->rate_slow_div) == 0);
+        bool run_med  = (vm->rate_med_div > 0)  && ((vm->cycle_count % vm->rate_med_div) == 0);
+        if (run_slow) {
+            exec_count = vm->instruction_count;
+        } else if (run_med) {
+            exec_count = vm->rate_fast_count + vm->rate_med_count;
+            if (exec_count > vm->instruction_count) exec_count = vm->instruction_count;
+        } else {
+            exec_count = vm->rate_fast_count;
+        }
+    }
+
+    le_status_t status = le_exec_program(vm->instructions, exec_count,
                                          &vm->image, now_ms,
                                          vm->blocks, vm->block_count);
+    vm->last_step_status = status;
     if (status != LE_OK) {
         return status;
     }
@@ -117,6 +134,44 @@ le_status_t le_vm_set_scan_period_us(le_vm_t* vm, uint32_t period_us)
     return LE_OK;
 }
 
+le_status_t le_vm_set_scan_rate_hz(le_vm_t* vm, uint32_t rate_hz)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+
+    uint32_t period_us = 0;
+    if (rate_hz > 0) {
+        period_us = (1000000u + rate_hz / 2u) / rate_hz;
+    }
+
+    le_status_t st = le_vm_set_scan_period_us(vm, period_us);
+    if (st != LE_OK) return st;
+
+    /* Notify board hardware timer / clock callback if implemented by HAL */
+    if (g_le_hal && g_le_hal->set_timer_rate) {
+        g_le_hal->set_timer_rate(rate_hz, period_us);
+    }
+
+    return LE_OK;
+}
+
+bool le_vm_scan_due(le_vm_t* vm, uint32_t now_us)
+{
+    if (!vm || vm->scan_period_us == 0) return false;
+
+    if (vm->last_scan_us == 0) {
+        vm->last_scan_us = now_us;
+        return true;
+    }
+
+    uint32_t next = vm->last_scan_us + vm->scan_period_us;
+    if ((int32_t)(now_us - next) >= 0) {
+        vm->last_scan_us = next;
+        return true;
+    }
+
+    return false;
+}
+
 void le_vm_set_enforce_fixed_rate(le_vm_t* vm, bool enable)
 {
     if (!vm) return;
@@ -129,12 +184,12 @@ le_status_t le_vm_run_scan(le_vm_t* vm)
     if (!vm) return LE_ERR_NULL_PTR;
     if (vm->scan_period_us == 0) return LE_ERR_TIMING_BUDGET;
 
-    uint32_t now_us = (g_le_hal && g_le_hal->get_time_us) ? g_le_hal->get_time_us() : 0u;
+    uint32_t now_us = (g_le_hal && g_le_hal->get_time_us) ? (uint32_t)g_le_hal->get_time_us() : 0u;
     uint32_t next = (vm->last_scan_us != 0) ? (vm->last_scan_us + vm->scan_period_us) : now_us;
 
     /* Busy-wait until the fixed-rate boundary (the timer is the truth). */
     if (g_le_hal && g_le_hal->get_time_us) {
-        while (g_le_hal->get_time_us() < next) { /* spin */ }
+        while ((int32_t)((uint32_t)g_le_hal->get_time_us() - next) < 0) { /* spin */ }
     }
     return le_vm_step_us(vm, next);
 }
@@ -373,3 +428,25 @@ le_status_t le_vm_sync_outputs(le_vm_t* vm)
     }
     return LE_OK;
 }
+
+le_status_t le_vm_set_rate_prescalers(le_vm_t* vm, uint16_t fast_count, uint16_t med_count,
+                                      uint16_t med_div, uint16_t slow_div)
+{
+    if (!vm) return LE_ERR_NULL_PTR;
+    vm->rate_fast_count = fast_count;
+    vm->rate_med_count = med_count;
+    vm->rate_med_div = med_div;
+    vm->rate_slow_div = slow_div;
+    return LE_OK;
+}
+
+void le_vm_get_rate_prescalers(const le_vm_t* vm, uint16_t* fast_count, uint16_t* med_count,
+                               uint16_t* med_div, uint16_t* slow_div)
+{
+    if (!vm) return;
+    if (fast_count) *fast_count = vm->rate_fast_count;
+    if (med_count)  *med_count  = vm->rate_med_count;
+    if (med_div)    *med_div    = vm->rate_med_div;
+    if (slow_div)   *slow_div   = vm->rate_slow_div;
+}
+

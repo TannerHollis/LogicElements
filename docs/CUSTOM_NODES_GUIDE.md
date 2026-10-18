@@ -195,7 +195,7 @@ Use the following helper functions declared in `src/runtime/include/le_process_i
 
 ### Recipe 1: Hardware PWM timer output controller
 
-This recipe implements function ID `1` (`BOARD_PWM`). It reads a float duty cycle from `in_a`, an enable flag from `in_b`, updates the hardware timer compare register, and sets an active indicator flag at `out`:
+This recipe implements function ID `0x81` (`BOARD_PWM`). It reads a float duty cycle from `args[0]`, a boolean enable flag from `args[1]`, updates the hardware timer compare register, and writes an active indicator flag to `args[in_count]`:
 
 ```c
 #include "stm32f4xx_hal.h"
@@ -206,16 +206,18 @@ extern TIM_HandleTypeDef htim1;
 
 static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
 {
-    if (!img) {
-        return LE_ERROR;
+    if (!img || !args) {
+        return LE_ERR_NULL_PTR;
     }
 
     switch (func_id) {
-    case 1: { /* BOARD_PWM */
-        /* in_a: float duty cycle address (%R) */
-        /* in_b: boolean enable address (%I or %M) */
-        float duty = le_process_image_get_float(img, in_a);
-        bool enable = le_process_image_get_bool(img, in_b);
+    case 0x81: { /* BOARD_PWM */
+        if (in_count < 2 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+        /* args[0]: float duty cycle address (%F or %AIN), args[1]: boolean enable (%B or %DIN) */
+        float duty = le_process_image_get_float(img, args[0]);
+        bool enable = le_process_image_get_bool(img, args[1]);
+
+        uint16_t out_addr = args[in_count];
 
         if (enable) {
             /* Clamp duty cycle between 0.0% and 100.0% */
@@ -228,21 +230,21 @@ static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_co
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, compare);
 
             /* Set active output flag */
-            if (out != LE_ADDR_UNUSED) {
-                le_process_image_set_bool(img, out, true);
+            if (out_addr != LE_ADDR_UNUSED) {
+                le_process_image_set_bool(img, out_addr, true);
             }
         } else {
             /* Disable PWM output */
             __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-            if (out != LE_ADDR_UNUSED) {
-                le_process_image_set_bool(img, out, false);
+            if (out_addr != LE_ADDR_UNUSED) {
+                le_process_image_set_bool(img, out_addr, false);
             }
         }
         return LE_OK;
     }
 
     default:
-        return LE_ERROR;
+        return LE_ERR_UNKNOWN_OPCODE;
     }
 }
 ```
@@ -251,35 +253,37 @@ static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_co
 
 ### Recipe 2: Hardware quadrature encoder reader
 
-This recipe implements function ID `2` (`BOARD_ENCODER`). It checks `in_a` for a reset pulse, reads the 32-bit hardware encoder counter, and writes the position as a float to `out`:
+This recipe implements function ID `0x82` (`BOARD_ENCODER`). It checks `args[0]` for a reset strobe, reads the 32-bit hardware encoder counter, and writes the position as a float to `args[in_count]`:
 
 ```c
 extern TIM_HandleTypeDef htim3;
 
 static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
 {
-    (void)in_b;
-    if (!img) return LE_ERROR;
+    if (!img || !args) return LE_ERR_NULL_PTR;
 
     switch (func_id) {
-    case 2: { /* BOARD_ENCODER */
+    case 0x82: { /* BOARD_ENCODER */
+        if (in_count < 1 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+
         /* Check reset input */
-        if (in_a != LE_ADDR_UNUSED && le_process_image_get_bool(img, in_a)) {
+        if (args[0] != LE_ADDR_UNUSED && le_process_image_get_bool(img, args[0])) {
             __HAL_TIM_SET_COUNTER(&htim3, 0);
         }
 
         /* Read signed 32-bit counter value */
         int32_t count = (int32_t)__HAL_TIM_GET_COUNTER(&htim3);
 
-        /* Write position to float register destination */
-        if (out != LE_ADDR_UNUSED) {
-            le_process_image_set_float(img, out, (float)count);
+        /* Write position to float destination */
+        uint16_t out_addr = args[in_count];
+        if (out_addr != LE_ADDR_UNUSED) {
+            le_process_image_set_float(img, out_addr, (float)count);
         }
         return LE_OK;
     }
 
     default:
-        return LE_ERROR;
+        return LE_ERR_UNKNOWN_OPCODE;
     }
 }
 ```
@@ -288,7 +292,7 @@ static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_co
 
 ### Recipe 3: Fast exponential smoothing / DSP filter
 
-This recipe implements function ID `3` (`BOARD_FILTER`). It applies single-pole exponential smoothing:
+This recipe implements function ID `0x83` (`BOARD_FILTER`). It applies single-pole exponential smoothing:
 $$y[n] = y[n-1] + \alpha \cdot (x[n] - y[n-1])$$
 
 ```c
@@ -297,22 +301,24 @@ static const float s_alpha = 0.15f;
 
 static le_status_t hal_ext_call(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
 {
-    (void)in_b;
-    if (!img) return LE_ERROR;
+    if (!img || !args) return LE_ERR_NULL_PTR;
 
     switch (func_id) {
-    case 3: { /* BOARD_FILTER */
-        float raw_val = le_process_image_get_float(img, in_a);
+    case 0x83: { /* BOARD_FILTER */
+        if (in_count < 1 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
+
+        float raw_val = le_process_image_get_float(img, args[0]);
         s_filter_state += s_alpha * (raw_val - s_filter_state);
 
-        if (out != LE_ADDR_UNUSED) {
-            le_process_image_set_float(img, out, s_filter_state);
+        uint16_t out_addr = args[in_count];
+        if (out_addr != LE_ADDR_UNUSED) {
+            le_process_image_set_float(img, out_addr, s_filter_state);
         }
         return LE_OK;
     }
 
     default:
-        return LE_ERROR;
+        return LE_ERR_UNKNOWN_OPCODE;
     }
 }
 ```
@@ -359,6 +365,52 @@ static const le_hal_t s_my_board_hal = {
     .get_custom_nodes_json = hal_get_custom_nodes_json,
 };
 ```
+
+---
+
+### Modern Preferred Alternative: Declarative Nodes in `src/le_board_config.c`
+
+Instead of writing manual switch statements and handwritten JSON strings, you can declare nodes directly in `src/le_board_config.c`:
+
+```c
+#include "le_custom_node.h"
+
+static le_status_t pwm_handler(const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
+{
+    float duty = le_custom_get_float(img, args, 0);
+    bool enable = le_custom_get_bool(img, args, 1);
+    bool active = hardware_pwm_set(duty, enable);
+    le_custom_set_bool(img, args, in_count, 0, active);
+    return LE_OK;
+}
+
+const le_custom_node_t g_board_custom_nodes[] = {
+    {
+        .func_id      = 0x81,
+        .type_id      = "BOARD_PWM",
+        .display_name = "PWM Controller",
+        .category     = "Actuators",
+        .description  = "Hardware PWM duty cycle generator (0..100%)",
+        .inputs       = (const le_custom_port_t[]){ 
+            { "duty", LE_PORT_TYPE_FLOAT, 0.0f },
+            { "enable", LE_PORT_TYPE_BOOL, 0.0f }
+        },
+        .in_count     = 2,
+        .outputs      = (const le_custom_port_t[]){ 
+            { "active", LE_PORT_TYPE_BOOL, 0.0f }
+        },
+        .out_count    = 1,
+        .handler      = pwm_handler,
+    }
+};
+
+const size_t g_board_custom_node_count = sizeof(g_board_custom_nodes) / sizeof(g_board_custom_nodes[0]);
+```
+
+When using `g_board_custom_nodes[]`, you can leave `.ext_call` and `.get_custom_nodes_json` as `NULL` in your `le_hal_t` table. The runtime automatically:
+1. Validates input and output arity before execution.
+2. Dispatches `LE_OP_BLOCK` instructions to `.handler`.
+3. Serializes the metadata JSON dynamically for `nodes` CLI queries and binary commands.
 
 ---
 

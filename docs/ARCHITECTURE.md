@@ -118,21 +118,40 @@ function ids `>= 0x80` are dispatched to the board HAL `ext_call`:
 
 | Func | Name | Signature |
 | :--- | :--- | :--- |
-| `0x01` | `LE_FUNC_MUX_SELECT` | `[sel, in0, in1] -> [out]` |
+| `0x01` | `LE_FUNC_MUX_SELECT` | `[sel, in0, in1] -> [out]` (Boolean MUX) |
 | `0x02` | `LE_FUNC_RECT2POLAR` | `[real, imag] -> [mag, angle]` |
 | `0x03` | `LE_FUNC_POLAR2RECT` | `[mag, angle] -> [real, imag]` |
 | `0x04` | `LE_FUNC_PHASOR_SHIFT` | `[real, imag, delta] -> [real', imag']` |
-| `0x05` | `LE_FUNC_PHASOR_1P` | `[sample, sync_cplx] -> [cplx]` |
+| `0x05` | `LE_FUNC_COMPLEX2POLAR` | `[cplx] -> [mag, angle]` |
+| `0x06` | `LE_FUNC_COMPLEX2RECT` | `[cplx] -> [real, imag]` |
+| `0x07` | `LE_FUNC_RECT2COMPLEX` | `[real, imag] -> [cplx]` |
+| `0x08` | `LE_FUNC_POLAR2COMPLEX` | `[mag, angle] -> [cplx]` |
+| `0x09` | `LE_FUNC_COMPLEX_MUL` | `[c_a, c_b] -> [c_out]` |
+| `0x0A` | `LE_FUNC_CLAMP_F` | `[value, min, max] -> [out]` |
+| `0x0B` | `LE_FUNC_PHASOR_1P` | `[sample, sync_cplx] -> [cplx]` |
+| `0x0C` | `LE_FUNC_DIFF_87` | `[cph0..cphN-1] -> [trip_bool]` (ANSI 87) |
+| `0x0D` | `LE_FUNC_DIST_21` | `[v_c, i_c, offset_on] -> [trip_bool]` (ANSI 21) |
+| `0x0E` | `LE_FUNC_PHASE_COMP` | `[c_a, c_b, c_c] -> [c_a', c_b', c_c']` (ANSI 87T) |
+| `0x0F` | `LE_FUNC_OVERCURRENT_51` | `[i_c, enable] -> [trip_bool]` (ANSI 51) |
 | `0x10` | `LE_FUNC_PHASOR_3P` | `[a, b, c, sync_cplx, freq_hz] -> [pa, pb, pc]` |
-| `0x11` | `LE_FUNC_FREQ_EST` | `[sample] -> [freq_hz, valid]` |
-| `0x06` | `LE_FUNC_COMPLEX2POLAR` | `[cplx] -> [mag, angle]` |
-| `0x07` | `LE_FUNC_COMPLEX2RECT` | `[cplx] -> [real, imag]` |
-| `0x0B` | `LE_FUNC_RECT2COMPLEX` | `[real, imag] -> [cplx]` |
-| `0x0C` | `LE_FUNC_POLAR2COMPLEX` | `[mag, angle] -> [cplx]` |
-| `0x0D` | `LE_FUNC_CLAMP_F` | `[value, min, max] -> [out]` |
-| `0x0E` | `LE_FUNC_PHASE_COMP` | `[c_a, c_b, c_c] -> [c_a', c_b', c_c']` (87T) |
+| `0x11` | `LE_FUNC_FREQ_EST` | `[sample] -> [freq_hz, valid]` (ANSI 81) |
+| `0x12` | `LE_FUNC_MUX_SELECT_F` | `[sel, in0_f, in1_f] -> [out_f]` (Float MUX) |
+| `0x13` | `LE_FUNC_MUX_SELECT_I` | `[sel, in0_i, in1_i] -> [out_i]` (Int32 MUX) |
+| `0x14` | `LE_FUNC_MUX_SELECT_C` | `[sel, in0_c, in1_c] -> [out_c]` (Complex MUX) |
 
----
+### State block X-Macro architecture (`le_blocks.def`)
+
+All stateful runtime blocks (timers, counters, DSP filters, protection elements) are declared in a centralized X-Macro table: [`src/runtime/include/le_blocks.def`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/runtime/include/le_blocks.def).
+
+```c
+LE_BLOCK_DEF(id, val, name, struct_type, feature_gate)
+```
+
+This single source of truth automatically generates:
+1. Block kind enum values (`LE_BLK_TIMER`, `LE_BLK_COUNTER`, etc.).
+2. Kind string lookup tables for disassemblers and debuggers.
+3. Concrete C state struct size resolvers (`sizeof(le_timer_state_t)`).
+4. Feature-gate validation ensuring disabled subsystems emit zero footprint.
 
 ## Zero-heap unified RAM workspace (`src/runtime/src/le_rt.c`, `le_process_image.c`)
 
@@ -193,10 +212,10 @@ activation with a hidden **phantom slot** for atomic, CRC32-verified uploads,
 allowing several independent programs to be stored and switched live.
 
 `le_nvram` provides persistent storage for:
-1. **Retentive process-image registers** (`%B`, `%I`, `%F`, `%C`), isolated **per configuration slot** (`LE_NVRAM_REGS_BYTES`) so program setpoints never collide.
+1. **Retentive process-image registers** (`%B`, `%I`, `%F`, `%C`), dynamically partitioned and isolated per configuration slot so program setpoints never collide.
 2. **Sequence of Events (SER)** transition logs with microsecond timestamps.
 3. **Event Recorder (Oscillography)** waveform fault captures.
-Supports direct byte-addressable NVRAM (FRAM, EEPROM, battery SRAM) or plain on-chip/external Flash via a built-in log-structured wear-leveling journal.
+The loaded `.lebin` circuit designates required retentive registers, SER depth, and oscillography records. The runtime validates that these fit within `LE_NVRAM_TOTAL_BYTES` and dynamically writes offsets into the NVRAM manifest at boot. Supports direct byte-addressable NVRAM (FRAM, EEPROM, battery SRAM) or plain Flash via a built-in log-structured wear-leveling journal.
 
 ---
 
@@ -221,7 +240,7 @@ Optimization levels (`-O0`..`-Os`) are set through `le_compiler_options_t`;
 `-O0` keeps the 1:1 schematic-to-bytecode mapping that the per-element assembly
 tests lock in.
 
-### Public API (`include/le_compiler.h`)
+### Public API (`src/compiler/include/le_compiler.h`)
 
 - `le_compile_json_ex(circuit, board, options, result)`
 - `le_disassemble_bin(bin, ...)` → disassembly text
@@ -238,11 +257,11 @@ tests lock in.
 | Lifecycle | `init`, `shutdown`, `get_platform_name` |
 | GPIO | `gpio_read`, `gpio_write` |
 | Analog | `adc_read`, `adc_read_raw`, `dac_write` |
-| Time | `get_time_ms`, `get_time_us` |
+| Time & Pacing | `get_time_ms`, `get_time_us`, `set_timer_rate` |
 | UART | `uart_available`, `uart_read`, `uart_write` |
-| Program Storage | `storage_read`, `storage_write` |
-| NVRAM / Persistent | `nvram_read`, `nvram_write`, `nvram_erase` |
-| Bus (optional) | `i2c_*`, `spi_transfer` |
+| Program Storage | `storage_read`, `storage_erase_sector`, `storage_write_page`, `storage_get_xip_ptr` |
+| NVRAM / Persistent | `nvram_read`, `nvram_write`, `nvram_write_page`, `nvram_erase_sector` |
+| Bus (optional) | `i2c_write`, `i2c_read`, `i2c_write_read`, `spi_transfer` |
 | Custom nodes | `ext_call(func_id, args, in_count, out_count, img)`, `get_custom_nodes_json` |
 
 See [PORTS.md](PORTS.md) and [PLATFORM_GUIDE.md](PLATFORM_GUIDE.md) for porting.

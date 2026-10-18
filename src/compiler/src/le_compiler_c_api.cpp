@@ -1,6 +1,8 @@
 #include "le_compiler.h"
 #include "le_compiler_core.h"
 #include "le_disasm_core.h"
+#include "le_loader.h"
+#include "le_crypto.h"
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -97,6 +99,25 @@ LE_COMPILER_API int le_export_c_header(
     *out_c_header = (char*)std::malloc(hdr.size() + 1);
     std::strcpy(*out_c_header, hdr.c_str());
     return 0;
+}
+
+LE_COMPILER_API int le_compiler_sign_container(
+    const uint8_t* in_container,
+    size_t in_size,
+    const uint8_t secret_key[64],
+    uint8_t* out_container,
+    size_t max_out_size,
+    size_t* out_size)
+{
+    return (int)le_loader_sign_container(in_container, in_size, secret_key, out_container, max_out_size, out_size);
+}
+
+LE_COMPILER_API int le_compiler_keygen(
+    uint8_t out_pk[32],
+    uint8_t out_sk[64],
+    const uint8_t seed[32])
+{
+    return (int)le_crypto_ed25519_keypair_from_seed(out_pk, out_sk, seed);
 }
 
 LE_COMPILER_API void le_compile_result_free(le_compile_result_t* result)

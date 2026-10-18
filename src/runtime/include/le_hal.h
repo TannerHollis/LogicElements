@@ -16,6 +16,12 @@
 extern "C" {
 #endif
 
+struct le_storage_sector_s;
+#ifndef LE_STORAGE_SECTOR_T_DEFINED
+#define LE_STORAGE_SECTOR_T_DEFINED
+typedef struct le_storage_sector_s le_storage_sector_t;
+#endif
+
 /**
  * @brief Hardware Abstraction Layer (HAL) function pointer table.
  *
@@ -40,6 +46,7 @@ typedef struct {
     /* System time */
     uint32_t    (*get_time_ms)(void);
     uint64_t    (*get_time_us)(void);
+    bool        (*set_timer_rate)(uint32_t rate_hz, uint32_t period_us);
 
     /* UART communications */
     size_t      (*uart_available)(void);
@@ -47,13 +54,16 @@ typedef struct {
     size_t      (*uart_write)(const uint8_t* buf, size_t len);
 
     /* Non-volatile configuration slot storage (.lebin program slots) */
-    bool        (*storage_read)(uint32_t offset, uint8_t* buf, size_t len);
-    bool        (*storage_write)(uint32_t offset, const uint8_t* buf, size_t len);
+    bool        (*storage_read)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len);
+    bool        (*storage_erase_sector)(const struct le_storage_sector_s* sector);
+    bool        (*storage_write_page)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len);
+    const uint8_t* (*storage_get_xip_ptr)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector);
 
     /* Dedicated Non-volatile RAM (NV registers, SER log, Event recording) */
     bool        (*nvram_read)(uint32_t offset, uint8_t* buf, size_t len);
     bool        (*nvram_write)(uint32_t offset, const uint8_t* buf, size_t len);
-    bool        (*nvram_erase)(uint32_t offset, size_t len);
+    bool        (*nvram_write_page)(uint32_t phys_addr, const uint8_t* buf, size_t len);
+    bool        (*nvram_erase_sector)(uint32_t sector_idx, uint32_t phys_addr);
 
 #if LE_ENABLE_SERIAL_BUS
     /* I2C master bus callbacks */

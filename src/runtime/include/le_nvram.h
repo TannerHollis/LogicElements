@@ -23,52 +23,58 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "le_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "le_board_config.h"
-
-/* Logical partition offsets */
+/* Logical partition manifest offset */
 #define LE_NVRAM_OFFSET_MANIFEST    0x00000000UL
-#define LE_NVRAM_OFFSET_REGS        0x00000040UL
-#define LE_NVRAM_SLOT_REGS_OFFSET(slot) (LE_NVRAM_OFFSET_REGS + ((uint32_t)(slot) * LE_NVRAM_REGS_BYTES))
-#define LE_NVRAM_OFFSET_SER         (LE_NVRAM_OFFSET_REGS + ((uint32_t)LE_MAX_CONFIG_SLOTS * LE_NVRAM_REGS_BYTES))
-#define LE_NVRAM_OFFSET_EVENT_REC   (LE_NVRAM_OFFSET_SER + LE_NVRAM_SER_BYTES)
 
 #define LE_NVRAM_MAGIC              0x4E56524DUL /* ASCII 'NVRM' */
-#define LE_NVRAM_VERSION            1
+#define LE_NVRAM_VERSION            2
 
 /**
- * @brief Partition table / manifest stored at logical offset 0.
+ * @brief Dynamic partition manifest stored at logical offset 0.
+ *
+ * Driven by circuit requirements without fixed compile-time boundaries.
  */
 typedef struct {
     uint32_t magic;             /**< LE_NVRAM_MAGIC ('NVRM') */
-    uint16_t version;           /**< Layout version (1) */
+    uint16_t version;           /**< Layout version (2) */
     uint16_t flags;             /**< Reserved flags */
-    uint32_t total_bytes;       /**< Total capacity */
+    uint32_t total_bytes;       /**< Total capacity of the physical NVRAM medium */
     uint32_t config_slots;      /**< Number of configuration slots allocated (LE_MAX_CONFIG_SLOTS) */
-    uint32_t regs_per_slot;     /**< Retentive register capacity per slot (LE_NVRAM_REGS_BYTES) */
-    uint32_t regs_offset;       /**< Base offset of retentive registers */
+    uint32_t regs_per_slot;     /**< Dynamic retentive register capacity per slot */
+    uint32_t regs_offset;       /**< Base logical offset of retentive registers */
     uint32_t regs_bytes;        /**< Total size of retentive register area across all slots */
-    uint32_t ser_offset;        /**< Offset of SER log */
-    uint32_t ser_bytes;         /**< Size of SER log */
-    uint32_t event_rec_offset;  /**< Offset of Event Recorder buffer */
-    uint32_t event_rec_bytes;   /**< Size of Event Recorder buffer */
+    uint32_t ser_offset;        /**< Offset of SER log (0 if not allocated) */
+    uint32_t ser_bytes;         /**< Size of SER log (0 if not allocated) */
+    uint32_t event_rec_offset;  /**< Offset of Event Recorder buffer (0 if not allocated) */
+    uint32_t event_rec_bytes;   /**< Size of Event Recorder buffer (0 if not allocated) */
     uint32_t crc32;             /**< CRC32 of manifest fields */
 } le_nvram_manifest_t;
+
+/* Backward-compatibility default fallbacks for unconfigured operation */
+#ifndef LE_NVRAM_DEFAULT_REGS_BYTES
+#define LE_NVRAM_DEFAULT_REGS_BYTES 1024UL
+#endif
+#ifndef LE_NVRAM_DEFAULT_SER_BYTES
+#define LE_NVRAM_DEFAULT_SER_BYTES  3072UL
+#endif
+
+/* Dynamic partition query and configuration helpers */
+#define LE_NVRAM_OFFSET_REGS            le_nvram_get_regs_offset(0)
+#define LE_NVRAM_SLOT_REGS_OFFSET(slot) le_nvram_get_regs_offset(slot)
+#define LE_NVRAM_OFFSET_SER             le_nvram_get_ser_offset()
+#define LE_NVRAM_OFFSET_EVENT_REC       le_nvram_get_event_rec_offset()
 
 /* ========================================================================== */
 /* Retentive Register Configuration                                           */
 /* ========================================================================== */
 
-#define LE_NVRAM_MAX_RANGES         8
 #define LE_NVRAM_REGS_MAGIC         0x4E565247UL /* ASCII 'NVRG' */
-
-typedef struct {
-    uint16_t start_addr;        /**< Virtual address (e.g. LE_ADDR_MAKE_BOOL_REG(0)) */
-    uint16_t count;             /**< Number of registers in range */
-} le_nvram_range_t;
 
 typedef struct {
     uint16_t         range_count;
@@ -117,14 +123,43 @@ typedef struct {
     uint32_t sector_size;       /**< Sector / block erase size (e.g. 4096, LE_NVRAM_BLOCK_SIZE) */
     uint32_t page_size;         /**< Write page size (e.g. 256, LE_NVRAM_PAGE_SIZE; 0 defaults to 256) */
     uint32_t sector_count;      /**< Number of sectors allocated (must be >= 2) */
+    uint32_t max_erase_cycles;  /**< Rated endurance per sector (e.g. 10000 to 100000; 0 uses LE_NVRAM_MAX_ERASE_CYCLES) */
     bool (*erase_sector)(uint32_t sector_idx, uint32_t physical_sector_addr);
     bool (*program)(uint32_t physical_addr, const uint8_t* data, size_t len);
     bool (*read)(uint32_t physical_addr, uint8_t* data, size_t len);
 } le_flash_wl_driver_t;
 
+/**
+ * @brief NVRAM wear-leveling and health diagnostic statistics.
+ */
+typedef struct {
+    bool     is_flash;             /**< True if running in flash wear-leveling mode, false if direct FRAM/EEPROM/RAM */
+    uint32_t active_sector_idx;    /**< Currently active journal sector index */
+    uint32_t active_seq;           /**< Monotonic sequence number of current sector */
+    uint32_t active_erase_count;   /**< Erase cycles on the active sector */
+    uint32_t max_erase_count;      /**< Maximum erase cycles observed across all flash sectors */
+    uint32_t min_erase_count;      /**< Minimum erase cycles observed across all flash sectors */
+    uint32_t avg_erase_count;      /**< Average erase cycles across all flash sectors */
+    uint32_t rated_erase_cycles;   /**< Rated endurance limit (e.g. 100,000 cycles) */
+    float    wear_pct;             /**< Flash wear level percentage (0.00% to 100.00%) */
+    float    health_pct;           /**< Remaining health percentage (100.00% - wear_pct) */
+    uint32_t sector_bytes_used;    /**< Bytes written in current sector */
+    uint32_t sector_bytes_free;    /**< Unwritten slack bytes remaining in current sector */
+    uint32_t sector_count;         /**< Total sectors allocated in wear pool */
+    uint32_t sector_size;          /**< Size of each sector in bytes */
+} le_nvram_stats_t;
+
 /* ========================================================================== */
 /* Runtime NVRAM Subsystem Functions                                          */
 /* ========================================================================== */
+
+/**
+ * @brief Retrieves wear-leveling health and erase statistics.
+ *
+ * @param stats Pointer to le_nvram_stats_t structure to receive metrics.
+ * @return True on success; false if stats pointer is NULL or NVRAM is uninitialized.
+ */
+bool le_nvram_get_stats(le_nvram_stats_t* stats);
 
 /**
  * @brief Initializes direct byte-addressable NVRAM mode (FRAM / EEPROM / RAM mirror).
@@ -235,6 +270,73 @@ bool le_nvram_restore_regs(const le_nvram_reg_cfg_t* cfg, le_process_image_t* im
  * @brief Flushes pending writes or forces compaction to persistent storage.
  */
 bool le_nvram_flush(void);
+
+/* ========================================================================== */
+/* Dynamic Circuit-Driven Partitioning Functions                              */
+/* ========================================================================== */
+
+/**
+ * @brief Dynamically configures the NVRAM partition layout based on circuit requirements.
+ *
+ * Slices the board's total NVRAM medium dynamically:
+ *   offset 0:                 Manifest header (sizeof(le_nvram_manifest_t))
+ *   offset manifest_size:     Retentive registers (config_slots * regs_per_slot)
+ *   offset regs_end:          Sequence of Events Recorder (ser_bytes)
+ *   offset ser_end:           Event Recorder buffer (event_bytes)
+ *
+ * @param regs_per_slot Retentive register bytes allocated per configuration slot.
+ * @param ser_records Number of SER transition records to buffer in NVRAM (0 = disabled).
+ * @param event_bytes Total Event Recorder buffer size in bytes (0 = disabled).
+ * @return Returns @ref LE_OK on success, or @ref LE_ERR_CAPACITY if requested sizes exceed total NVRAM.
+ */
+le_status_t le_nvram_configure_layout(uint32_t regs_per_slot, uint32_t ser_records, uint32_t event_bytes);
+
+/**
+ * @brief Returns the total byte capacity of the physical NVRAM medium.
+ */
+uint32_t le_nvram_get_total_bytes(void);
+
+/**
+ * @brief Returns the base logical byte offset for a configuration slot's retentive registers.
+ *
+ * @param slot Configuration slot index (0 .. LE_MAX_CONFIG_SLOTS - 1).
+ * @return Byte offset within logical NVRAM, or 0 if unallocated.
+ */
+uint32_t le_nvram_get_regs_offset(uint8_t slot);
+
+/**
+ * @brief Returns the retentive register capacity allocated per configuration slot.
+ */
+uint32_t le_nvram_get_regs_bytes(uint8_t slot);
+
+/**
+ * @brief Returns the base logical byte offset of the Sequence of Events (SER) log.
+ *
+ * @return Byte offset within logical NVRAM, or 0 if SER is not allocated in NVRAM.
+ */
+uint32_t le_nvram_get_ser_offset(void);
+
+/**
+ * @brief Returns the byte size allocated for the Sequence of Events (SER) log.
+ */
+uint32_t le_nvram_get_ser_bytes(void);
+
+/**
+ * @brief Returns the base logical byte offset of the Event Recorder waveform buffer.
+ *
+ * @return Byte offset within logical NVRAM, or 0 if Event Recorder is not allocated in NVRAM.
+ */
+uint32_t le_nvram_get_event_rec_offset(void);
+
+/**
+ * @brief Returns the byte size allocated for the Event Recorder waveform buffer.
+ */
+uint32_t le_nvram_get_event_rec_bytes(void);
+
+/**
+ * @brief Retrieves the active NVRAM manifest descriptor.
+ */
+const le_nvram_manifest_t* le_nvram_get_manifest(void);
 
 #ifdef __cplusplus
 }

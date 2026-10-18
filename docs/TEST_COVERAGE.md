@@ -11,10 +11,10 @@ circuit compiles into expected bytecode/state.
 
 | Suite | Binary | Assertions (current) | Focus |
 | :--- | :--- | :--- | :--- |
-| Runtime | `test_c_runtime.c` | 465+ | opcode behavior, loader/CRC, comms, storage, NVRAM wear leveling, CLI, pulses |
-| Compiler | `test_compiler.cpp` | 47 tests | JSON -> bytecode pipeline, optimizer, aliases, gate decomposition, error paths |
-| Assembly | `test_element_assembly.c` | 80 oracle rows | element -> opcode emission parity |
-| Host Comms | `test_host_comms.c` | 45 | host framing, CCITT CRC16, chunk uploader, caps parser, execution control |
+| Runtime | `test_c_runtime.c` | 1150 | opcode behavior, loader/CRC, comms/CLI pump, storage, NVRAM, multi-rate, swap, crypto |
+| Compiler | `test_compiler.cpp` | 80 tests | JSON -> bytecode pipeline, optimizer, aliases, code blocks, FMA/FMS fusion, container |
+| Assembly | `test_element_assembly.c` | 83 oracle rows | element -> opcode emission parity |
+| Host Comms | `test_host_comms.c` | Full pass | host framing, CCITT CRC16, packet serialization |
 
 ## Opcode coverage
 
@@ -63,8 +63,14 @@ circuit compiles into expected bytecode/state.
 | Arena access | test_arena_boundary_access + test_arena_unaligned_reject |
 | Storage integrity | test_storage_corrupt_slot - corruption detected, siblings isolated |
 | NVRAM wear leveling | test_nvram_journal_compaction - circular sector rollover, monotonic sequence, crash recovery |
+| Dynamic NVRAM | test_circuit_driven_dynamic_nvram - circuit-driven dynamic partitioning, bounds checks, manifest offsets |
 | NVRAM slot isolation | test_nvram_slot_isolation - independent retentive register setpoints per config slot |
 | CLI surface | test_cli_new_surface - force mnemonics, pulse durations, junk input |
+| Multi-rate prescaling | test_multi_rate_prescalers - harmonic multi-rate execution, clock dividers, phase offsets |
+| Online program swap | test_online_program_swap - bump-free online program swap preserving live register state |
+| Word & integer ops | test_word_and_int_opcodes - bit-parallel word logic, 32-bit math, shifts, bit-reversal |
+| Chunked v13 container | test_chunked_container - chunked binary format, section streaming, backward compatibility |
+| Cryptography | test_crypto_authentication - Ed25519 public key signature verification, HMAC tamper rejection |
 
 ## Compiler coverage (expansion)
 

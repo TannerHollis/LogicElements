@@ -1,0 +1,43 @@
+/**
+ * @file le_blocks.def
+ * @brief X-Macro single source of truth for runtime state block definitions.
+ *
+ * Defines all state block kinds, on-disk IDs, canonical string names, C struct types,
+ * and feature gates. Included multiple times with custom definitions of LE_BLOCK_DEF.
+ *
+ * Signature:
+ *   LE_BLOCK_DEF(id, val, name, struct_type, feature_gate)
+ */
+
+#ifndef LE_BLOCK_DEF
+#error "LE_BLOCK_DEF must be defined before including le_blocks.def"
+#endif
+
+LE_BLOCK_DEF(LE_BLK_TIMER,          1,  "TIMER",         le_timer_state_t,        1)
+LE_BLOCK_DEF(LE_BLK_COUNTER,        2,  "COUNTER",       le_counter_state_t,      1)
+LE_BLOCK_DEF(LE_BLK_SCALER,         3,  "SCALE_F",       le_scale_state_t,        1)
+LE_BLOCK_DEF(LE_BLK_LPF,            4,  "LPF_1P",        le_lpf_state_t,          LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_BIQUAD,         5,  "BIQUAD",        le_biquad_state_t,       LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_MOVING_AVG,     6,  "MOVING_AVG",    le_moving_avg_state_t,   LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_RATE_LIMITER,   7,  "RATE_LIMITER",  le_rate_limiter_state_t, LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_DEADBAND,       8,  "DEADBAND",      le_deadband_state_t,     LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_WASHOUT,        9,  "WASHOUT",       le_washout_state_t,      LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_PEAK,           10, "PEAK_DETECTOR", le_peak_state_t,         LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_RMS,            11, "RMS",           le_rms_state_t,          LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_MEDIAN,         12, "MEDIAN",        le_median_state_t,       LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_DERIVATIVE,     13, "DERIVATIVE",    le_derivative_state_t,   LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_ZERO_CROSSING,  14, "ZERO_CROSSING", le_zero_crossing_state_t, LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_LUT_1D,         15, "LUT_1D",        le_lut_1d_state_t,       LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_TOTALIZER,      16, "TOTALIZER",     le_totalizer_state_t,    LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_MIN_MAX_HOLD,   17, "MIN_MAX_HOLD",  le_min_max_hold_state_t, LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_I2C,            18, "I2C",           le_i2c_device_state_t,   LE_ENABLE_SERIAL_BUS)
+LE_BLOCK_DEF(LE_BLK_SPI,            19, "SPI",           le_spi_device_state_t,   LE_ENABLE_SERIAL_BUS)
+LE_BLOCK_DEF(LE_BLK_PID,            20, "PID",           le_pid_state_t,          LE_ENABLE_DSP)
+LE_BLOCK_DEF(LE_BLK_OVERCURRENT,    21, "OVERCURRENT",   le_overcurrent_state_t,  LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_PHASOR,         22, "PHASOR_1P",     le_phasor_state_t,       LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_SYMCOMP,        23, "SYM_COMP",      le_symcomp_state_t,      LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_21,             24, "DIST_21",       le_dist21_state_t,       LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_DIFF_87,        25, "DIFF_87",       le_diff87_state_t,       LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_PHASE_COMP,     26, "PHASE_COMP",    le_comp33_state_t,       LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_PHASOR3,        27, "PHASOR_3P",     le_phasor3_state_t,      LE_ENABLE_PROTECTION)
+LE_BLOCK_DEF(LE_BLK_FREQ_EST,       28, "FREQ_EST",      le_freq_est_state_t,     LE_ENABLE_PROTECTION)

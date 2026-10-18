@@ -5,12 +5,6 @@
     "protocol_version": 1
   },
   "limits": {
-    "digital_inputs": 16,
-    "digital_outputs": 16,
-    "coils": 128,
-    "floats": 64,
-    "complex_registers": 32,
-    "analog_inputs": 16,
     "workspace_bytes": 2048,
     "config_slots": 3,
     "slot_size_bytes": 2048,
@@ -21,30 +15,72 @@
     "complex": true,
     "analog": true,
     "dsp": true,
-    "serial_bus": true
-},
+    "serial_bus": true,
+    "i2c_devices": 4,
+    "spi_devices": 4
+  },
   "pin_map": {
-    "inputs": {
-      "%I0": {"alias": "USER_BUTTON", "pin": "PC13", "desc": "Onboard User Pushbutton (active-low)"},
-      "%I1": {"alias": "LIMIT_SW_FWD", "pin": "PA0", "desc": "Forward Limit Switch"},
-      "%I2": {"alias": "LIMIT_SW_REV", "pin": "PA1", "desc": "Reverse Limit Switch"},
-      "%I3": {"alias": "ESTOP", "pin": "PA4", "desc": "Emergency Stop Contact"}
+    "digital": {
+      "inputs": {
+        "%I0": {"alias": "USER_BUTTON", "desc": "Onboard User Pushbutton (active-low)"},
+        "%I1": {"alias": "LIMIT_SW_FWD", "desc": "Forward Limit Switch"},
+        "%I2": {"alias": "LIMIT_SW_REV", "desc": "Reverse Limit Switch"},
+        "%I3": {"alias": "ESTOP", "desc": "Emergency Stop Contact"},
+        "%I4": {"alias": "IN4", "desc": "Digital Input 4"},
+        "%I5": {"alias": "IN5", "desc": "Digital Input 5"},
+        "%I6": {"alias": "IN6", "desc": "Digital Input 6"},
+        "%I7": {"alias": "IN7", "desc": "Digital Input 7"},
+        "%I8": {"alias": "IN8", "desc": "Digital Input 8"},
+        "%I9": {"alias": "IN9", "desc": "Digital Input 9"},
+        "%I10": {"alias": "IN10", "desc": "Digital Input 10"},
+        "%I11": {"alias": "IN11", "desc": "Digital Input 11"},
+        "%I12": {"alias": "IN12", "desc": "Digital Input 12"},
+        "%I13": {"alias": "IN13", "desc": "Digital Input 13"},
+        "%I14": {"alias": "IN14", "desc": "Digital Input 14"},
+        "%I15": {"alias": "IN15", "desc": "Digital Input 15"}
+      },
+      "outputs": {
+        "%Q0": {"alias": "USER_LED", "desc": "Green Onboard LED (LD2)"},
+        "%Q1": {"alias": "MOTOR_FWD", "desc": "Motor Forward Relay"},
+        "%Q2": {"alias": "MOTOR_REV", "desc": "Motor Reverse Relay"},
+        "%Q3": {"alias": "ALARM_BUZZER", "desc": "Fault Alarm Buzzer"},
+        "%Q4": {"alias": "OUT4", "desc": "Digital Output 4"},
+        "%Q5": {"alias": "OUT5", "desc": "Digital Output 5"},
+        "%Q6": {"alias": "OUT6", "desc": "Digital Output 6"},
+        "%Q7": {"alias": "OUT7", "desc": "Digital Output 7"},
+        "%Q8": {"alias": "OUT8", "desc": "Digital Output 8"},
+        "%Q9": {"alias": "OUT9", "desc": "Digital Output 9"},
+        "%Q10": {"alias": "OUT10", "desc": "Digital Output 10"},
+        "%Q11": {"alias": "OUT11", "desc": "Digital Output 11"},
+        "%Q12": {"alias": "OUT12", "desc": "Digital Output 12"},
+        "%Q13": {"alias": "OUT13", "desc": "Digital Output 13"},
+        "%Q14": {"alias": "OUT14", "desc": "Digital Output 14"},
+        "%Q15": {"alias": "OUT15", "desc": "Digital Output 15"}
+      }
     },
-    "outputs": {
-      "%Q0": {"alias": "USER_LED", "pin": "PA5", "desc": "Green Onboard LED (LD2)"},
-      "%Q1": {"alias": "MOTOR_FWD", "pin": "PB0", "desc": "Motor Forward Relay"},
-      "%Q2": {"alias": "MOTOR_REV", "pin": "PB7", "desc": "Motor Reverse Relay"},
-      "%Q3": {"alias": "ALARM_BUZZER", "pin": "PB6", "desc": "Fault Alarm Buzzer"}
-    },
-    "i2c": {
-      "scl": "PB8",
-      "sda": "PB9"
-    },
-    "spi": {
-      "sck": "PA5",
-      "miso": "PA6",
-      "mosi": "PA7",
-      "cs": ["PB0", "PB1", "PB2", "PB10"]
+    "analog": {
+      "inputs": {
+        "%AIN0": {"alias": "AIN0", "desc": "Analog Input 0 (0-3.3V)"},
+        "%AIN1": {"alias": "AIN1", "desc": "Analog Input 1 (0-3.3V)"},
+        "%AIN2": {"alias": "AIN2", "desc": "Analog Input 2 (0-3.3V)"},
+        "%AIN3": {"alias": "AIN3", "desc": "Analog Input 3 (0-3.3V)"},
+        "%AIN4": {"alias": "AIN4", "desc": "Analog Input 4 (0-3.3V)"},
+        "%AIN5": {"alias": "AIN5", "desc": "Analog Input 5 (0-3.3V)"},
+        "%AIN6": {"alias": "AIN6", "desc": "Analog Input 6 (0-3.3V)"},
+        "%AIN7": {"alias": "AIN7", "desc": "Analog Input 7 (0-3.3V)"},
+        "%AIN8": {"alias": "AIN8", "desc": "Analog Input 8 (0-3.3V)"},
+        "%AIN9": {"alias": "AIN9", "desc": "Analog Input 9 (0-3.3V)"},
+        "%AIN10": {"alias": "AIN10", "desc": "Analog Input 10 (0-3.3V)"},
+        "%AIN11": {"alias": "AIN11", "desc": "Analog Input 11 (0-3.3V)"},
+        "%AIN12": {"alias": "AIN12", "desc": "Analog Input 12 (0-3.3V)"},
+        "%AIN13": {"alias": "AIN13", "desc": "Analog Input 13 (0-3.3V)"},
+        "%AIN14": {"alias": "AIN14", "desc": "Analog Input 14 (0-3.3V)"},
+        "%AIN15": {"alias": "AIN15", "desc": "Analog Input 15 (0-3.3V)"}
+      },
+      "outputs": {
+        "%AOUT0": {"alias": "DAC0", "desc": "Analog Output 0 (DAC1_OUT)"},
+        "%AOUT1": {"alias": "DAC1", "desc": "Analog Output 1 (DAC2_OUT)"}
+      }
     }
   },
   "custom_nodes": [

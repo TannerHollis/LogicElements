@@ -19,8 +19,10 @@ extern "C" {
 /* Protocol framing and command opcodes                                       */
 /* ========================================================================== */
 
+#ifndef LE_COMMS_SYNC_BYTE
 /** @brief Framing synchronisation byte preceding every packet frame. */
 #define LE_COMMS_SYNC_BYTE      0xAA
+#endif
 
 /** @brief Ping request sent by host. */
 #define LE_CMD_PING             0x01
@@ -81,6 +83,8 @@ extern "C" {
 #define LE_CAP_ANALOG           (1U << 5)
 /** @brief Indicates DSP and filter blocks are compiled and supported. */
 #define LE_CAP_DSP              (1U << 6)
+/** @brief Indicates hardware Floating-Point Unit (FPU) is present and enabled. */
+#define LE_CAP_FPU              (1U << 7)
 
 #pragma pack(push, 1)
 /**
@@ -99,15 +103,24 @@ typedef struct {
     uint16_t max_analog_in;          /**< Maximum analog inputs supported. */
     uint16_t max_bool_regs;          /**< Maximum internal boolean memory coils (%M) supported. */
     uint16_t max_floats;             /**< Maximum floating-point registers (%R) supported. */
-    uint16_t workspace_bytes;        /**< Unified RAM workspace capacity (LE_RAM_WORKSPACE_BYTES). */
+    uint32_t workspace_bytes;        /**< Unified RAM workspace capacity (LE_RAM_WORKSPACE_BYTES). */
     uint8_t  config_slots;           /**< Number of multi-program storage slots available. */
-    uint16_t slot_size_bytes;        /**< Maximum byte capacity per configuration slot. */
+    uint32_t slot_size_bytes;        /**< Maximum byte capacity per configuration slot. */
+    uint8_t  active_slot;            /**< Currently active config slot (never a valid upload target). */
     uint16_t feature_flags;          /**< Bitmask of enabled optional subsystems (@ref LE_CAP_PROTECTION, etc.). */
 } le_caps_payload_t;
 #pragma pack(pop)
 
+#if defined(__cplusplus)
+static_assert(sizeof(le_caps_payload_t) == 57, "le_caps_payload_t wire layout mismatch");
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+_Static_assert(sizeof(le_caps_payload_t) == 57, "le_caps_payload_t wire layout mismatch");
+#endif
+
+#ifndef LE_COMMS_MAX_PAYLOAD
 /** @brief Maximum payload size in bytes per packet frame. */
 #define LE_COMMS_MAX_PAYLOAD    128
+#endif
 
 /**
  * @brief Communications state machine instance.
@@ -155,12 +168,29 @@ void le_comms_init(le_comms_t* comms, le_vm_t* vm, le_storage_t* storage);
  */
 void le_comms_process_byte(le_comms_t* comms, uint8_t byte);
 
+#include "le_cli.h"
+
 /**
- * @brief Polls the UART peripheral through the HAL and processes available incoming bytes.
+ * @brief Drives the dual-mode UART/USB communications and CLI multiplexer pump.
  *
- * @param comms Pointer to the communications structure.
+ * Consumes available bytes from the UART receiver via the HAL. Automatically
+ * inspects packet framing: bytes starting with @ref LE_COMMS_SYNC_BYTE (0xAA)
+ * or during an active packet payload are routed to the binary packet state
+ * machine (@ref le_comms_process_byte). All other bytes are routed to the human
+ * interactive terminal CLI (@ref le_cli_process_char). When the CLI is in an
+ * active file upload session (XMODEM-CRC or raw HEX), all bytes bypass packet
+ * framing and flow straight into the CLI.
+ *
+ * After consuming available bytes, invokes @ref le_cli_poll with current system time.
+ *
+ * Buffer chunk size can be configured per board in @c le_board_config.h via
+ * @ref LE_COMMS_CLI_RX_CHUNK_SIZE (defaults to 32 bytes).
+ *
+ * @param[in,out] comms Pointer to the active communications state machine (optional, may be NULL).
+ * @param[in,out] cli Pointer to the active command line interface state machine (optional, may be NULL).
+ * @param[in] hal Pointer to the active hardware abstraction layer dispatch table (if NULL, uses g_le_hal).
  */
-void le_comms_poll(le_comms_t* comms);
+void le_comms_cli_pump(le_comms_t* comms, le_cli_t* cli, const le_hal_t* hal);
 
 #ifdef __cplusplus
 }

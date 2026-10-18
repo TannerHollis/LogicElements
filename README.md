@@ -82,11 +82,11 @@ CMakeLists.txt               # C/C++ build, library + CLI + tests
 build_element_assembly.bat   # Windows per-element assembly test build
 docs/                        # all documentation
 examples/custom_nodes/       # custom node example (circuit, board, HAL, runner)
-ports/                       # board profiles + HAL ports (stm32, rp2040, rp2350, avr, template)
+ports/                       # board profiles + reference HAL ports (template, avr, rp2040, stm32)
 src/cli/                     # Unified host CLI toolsuite (`le`) & portable comms engine (`le_host_comms`)
 src/compiler/                # C++17 compiler engine + C API
 src/hal/                     # simulator HAL
-src/runtime/                 # ANSI C runtime (VM, process image, opcodes, loader, storage, comms, cli, le_rt)
+src/runtime/                 # ANSI C runtime (VM, process image, opcodes, loader, storage, comms, cli, ringbuf, le_rt)
 tests/                       # C runtime tests, host comms tests, compiler tests, per-element assembly tests
 tools/                       # Python compiler/board/disasm SDK + simulator main
 ```
@@ -103,4 +103,4 @@ Circuit JSON + board profile
 
 ## License
 
-MIT — see the [LICENSE](LICENSE) and the headers of the core modules.
+MIT — see the headers of the core modules.

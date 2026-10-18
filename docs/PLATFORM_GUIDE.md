@@ -49,7 +49,7 @@ LogicElements turns any microcontroller into a field-programmable PLC where:
 │               │                                                             │
 │               ▼                                                             │
 │   ┌──────────────────────────────────────────────────────────────────────┐  │
-│   │ Ingestion Engine:                                                    │  │
+│   │ Ingestion Engine (le_comms_cli_pump):                                │  │
 │   │   • le_cli_process_char()    -> Interactive CLI & XMODEM-CRC engine  │  │
 │   │   • le_comms_process_byte()  -> Framed Packet Parser (0xAA SYNC)     │  │
 │   └──────────────────────────────────┬───────────────────────────────────┘  │
@@ -110,15 +110,18 @@ typedef struct {
     /* ------------------------------------------------------------------ */
     /* Non-volatile configuration slot storage (.lebin program slots)     */
     /* ------------------------------------------------------------------ */
-    bool        (*storage_read)(uint32_t offset, uint8_t* buf, size_t len);
-    bool        (*storage_write)(uint32_t offset, const uint8_t* buf, size_t len);
+    bool        (*storage_read)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len);
+    bool        (*storage_erase_sector)(const struct le_storage_sector_s* sector);
+    bool        (*storage_write_page)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len);
+    const uint8_t* (*storage_get_xip_ptr)(const struct le_storage_sector_s* sector, uint32_t offset_in_sector);
 
     /* ------------------------------------------------------------------ */
-    /* Non-volatile runtime NVRAM (retentive registers, SER, Event Rec)   */
+    /* Dedicated Non-volatile RAM (NV registers, SER log, Event recording)*/
     /* ------------------------------------------------------------------ */
     bool        (*nvram_read)(uint32_t offset, uint8_t* buf, size_t len);
     bool        (*nvram_write)(uint32_t offset, const uint8_t* buf, size_t len);
-    bool        (*nvram_erase)(uint32_t offset, size_t len);
+    bool        (*nvram_write_page)(uint32_t phys_addr, const uint8_t* buf, size_t len);
+    bool        (*nvram_erase_sector)(uint32_t sector_idx, uint32_t phys_addr);
 
 #if LE_ENABLE_SERIAL_BUS
     /* I2C and SPI master bus callbacks */
@@ -136,125 +139,112 @@ typedef struct {
 
 ---
 
-## Step 1: Implement non-volatile storage (`storage_read` and `storage_write`)
+## Step 1: Implement non-volatile storage (`storage_*` callbacks)
 
-LogicElements addresses non-volatile storage as a linear address space divided into slots:
-$$\text{Slot Offset} = \text{Slot Index} \times \text{LE\_SLOT\_SIZE\_BYTES}$$
+LogicElements manages program slot storage via declarative sector descriptors defined in `src/le_board_config.c`:
+- `LE_MAX_CONFIG_SLOTS`: Number of selectable user slots (e.g. `2` or `3`).
+- `LE_SLOT_SIZE_BYTES`: Capacity allocated per slot (e.g. `4096` to `2097152` bytes).
+- A hidden **phantom staging slot** (`slot_id = LE_SLOT_PHANTOM` or index `LE_MAX_CONFIG_SLOTS`) is reserved to buffer and verify incoming uploads without mutating live operational bytecode.
 
-- `LE_MAX_CONFIG_SLOTS` defaults to `3`.
-- `LE_SLOT_SIZE_BYTES` defaults to `2048` bytes ($2\text{ KB}$).
+The runtime storage manager handles slot lookup, page-by-page chunking, padding, and CRC32 verification. The board implementer only provides clean low-level hardware primitives in `le_port.c`:
 
 ### Recipe A: STM32 on-chip flash memory
-STM32 flash sectors must be unlocked, erased before writing, and re-locked. Flash memory on STM32F4/G4 typically supports word or half-word writes:
-
 ```c
 #include "stm32f4xx_hal.h"
-#include "le_hal.h"
+#include "le_storage.h"
 
-/* Reserve dedicated sector in upper flash for LogicElements slots (e.g. Sector 7, 128KB at 0x08060000) */
-#define LE_FLASH_BASE_ADDR   0x08060000UL
-#define LE_FLASH_SECTOR      FLASH_SECTOR_7
-
-static bool stm32_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool stm32_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
 {
-    uint32_t src_addr = LE_FLASH_BASE_ADDR + offset;
+    uint32_t src_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
     memcpy(buf, (const void*)src_addr, len);
     return true;
 }
 
-static bool stm32_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+static bool stm32_storage_erase_sector(const le_storage_sector_t* sector)
 {
-    uint32_t dest_addr = LE_FLASH_BASE_ADDR + offset;
+    if (!sector || sector->erase_size == 0) return true;
 
     HAL_FLASH_Unlock();
+    FLASH_EraseInitTypeDef erase_init;
+    erase_init.TypeErase    = FLASH_TYPEERASE_SECTORS;
+    erase_init.Sector       = sector->hw_sector_id;
+    erase_init.NbSectors    = 1;
+    erase_init.VoltageRange = FLASH_VOLTAGE_RANGE_3;
 
-    /* If writing to the start of a slot (offset aligned to slot), erase target sector/page */
-    if ((offset % LE_SLOT_SIZE_BYTES) == 0) {
-        FLASH_EraseInitTypeDef erase_init;
-        erase_init.TypeErase    = FLASH_TYPEERASE_SECTORS;
-        erase_init.Sector       = LE_FLASH_SECTOR;
-        erase_init.NbSectors    = 1;
-        erase_init.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+    uint32_t sector_error = 0;
+    HAL_StatusTypeDef status = HAL_FLASHEx_Erase(&erase_init, &sector_error);
+    HAL_FLASH_Lock();
+    return (status == HAL_OK);
+}
 
-        uint32_t sector_error = 0;
-        if (HAL_FLASHEx_Erase(&erase_init, &sector_error) != HAL_OK) {
-            HAL_FLASH_Lock();
-            return false;
-        }
-    }
+static bool stm32_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
+{
+    uint32_t dest_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
 
-    /* Program byte-by-byte */
+    HAL_FLASH_Unlock();
     for (size_t i = 0; i < len; i++) {
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, dest_addr + i, buf[i]) != HAL_OK) {
             HAL_FLASH_Lock();
             return false;
         }
     }
-
     HAL_FLASH_Lock();
     return true;
 }
+
+static const uint8_t* stm32_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
+{
+    if (!sector) return NULL;
+    return (const uint8_t*)(sector->phys_addr + offset_in_sector);
+}
 ```
 
-### Recipe B: Raspberry Pi Pico (RP2040 flash)
-The RP2040 provides 2MB external SPI flash. Writes require disabling interrupts and aligning erase operations to 4096-byte boundaries:
-
+### Recipe B: Raspberry Pi Pico (RP2040 / RP2350 QSPI flash)
 ```c
 #include "hardware/flash.h"
 #include "hardware/sync.h"
-#include "le_hal.h"
+#include "le_storage.h"
 
-/* Reserve 64KB at 1.5MB mark in flash */
-#define PICO_FLASH_OFFSET  (1536 * 1024)
-
-static bool pico_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool pico_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
 {
-    const uint8_t* flash_target = (const uint8_t*)(XIP_BASE + PICO_FLASH_OFFSET + offset);
+    uint32_t abs_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    const uint8_t* flash_target = (const uint8_t*)(XIP_BASE + abs_addr);
     memcpy(buf, flash_target, len);
     return true;
 }
 
-static bool pico_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+static bool pico_storage_erase_sector(const le_storage_sector_t* sector)
 {
-    uint32_t target_offset = PICO_FLASH_OFFSET + offset;
-
+    if (!sector || sector->erase_size == 0) return true;
     uint32_t ints = save_and_disable_interrupts();
-
-    /* Erase 4KB sector if starting at slot boundary */
-    if ((offset % 4096) == 0) {
-        flash_range_erase(target_offset, 4096);
-    }
-
-    /* Program 256-byte flash page */
-    flash_range_program(target_offset, buf, len);
-
+    flash_range_erase(sector->phys_addr, sector->erase_size);
     restore_interrupts(ints);
     return true;
 }
-```
 
-### Recipe C: External I2C/SPI EEPROM or FRAM (zero sector erase)
-For microcontrollers with limited flash or for industrial PLCs requiring high endurance, use an I2C/SPI EEPROM (e.g., 24LC256) or FRAM (e.g., MB85RS64V). FRAM requires **no erase cycles** and supports unlimited instant byte-level writes:
-
-```c
-static bool fram_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool pico_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
 {
-    return spi_fram_read(offset, buf, len);
+    uint32_t target_offset = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_program(target_offset, buf, len);
+    restore_interrupts(ints);
+    return true;
 }
 
-static bool fram_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+static const uint8_t* pico_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
 {
-    return spi_fram_write(offset, buf, len);
+    if (!sector) return NULL;
+    return (const uint8_t*)(XIP_BASE + sector->phys_addr + offset_in_sector);
 }
 ```
 
-### Recipe D: Static RAM partitions (rapid prototyping)
-If your MCU does not yet have flash drivers written, `le_storage.c` can maintain slots in static internal SRAM partitions:
-
+### Recipe C: Static RAM mirror (bring-up & simulation)
 ```c
-static uint8_t s_ram_storage[LE_MAX_CONFIG_SLOTS * LE_SLOT_SIZE_BYTES];
+static uint8_t s_ram_storage[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT];
 
-static bool ram_storage_read(uint32_t offset, uint8_t* buf, size_t len) {
+static bool ram_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
+{
+    uint32_t offset = (sector ? sector->phys_addr : 0) + offset_in_sector;
     if (offset + len <= sizeof(s_ram_storage)) {
         memcpy(buf, &s_ram_storage[offset], len);
         return true;
@@ -262,12 +252,31 @@ static bool ram_storage_read(uint32_t offset, uint8_t* buf, size_t len) {
     return false;
 }
 
-static bool ram_storage_write(uint32_t offset, const uint8_t* buf, size_t len) {
+static bool ram_storage_erase_sector(const le_storage_sector_t* sector)
+{
+    if (!sector) return false;
+    if (sector->phys_addr + sector->size_bytes <= sizeof(s_ram_storage)) {
+        memset(&s_ram_storage[sector->phys_addr], 0xFF, sector->size_bytes);
+        return true;
+    }
+    return false;
+}
+
+static bool ram_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
+{
+    uint32_t offset = (sector ? sector->phys_addr : 0) + offset_in_sector;
     if (offset + len <= sizeof(s_ram_storage)) {
         memcpy(&s_ram_storage[offset], buf, len);
         return true;
     }
     return false;
+}
+
+static const uint8_t* ram_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
+{
+    uint32_t offset = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    if (offset < sizeof(s_ram_storage)) return &s_ram_storage[offset];
+    return NULL;
 }
 ```
 
@@ -282,18 +291,20 @@ Operational NVRAM persists:
 2. **Sequence of Events (SER)**: High-resolution timestamped digital transitions logged to a circular journal.
 3. **Event Recorder**: Pre-trigger and post-trigger waveform sample captures during electrical protection trips or fault events.
 
-### NVRAM Partition Geometry
+### Circuit-Driven Dynamic NVRAM Allocation
 
-LogicElements defines a standard 16 KB (`LE_NVRAM_TOTAL_BYTES`) logical partition layout in [`le_nvram.h`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/runtime/include/le_nvram.h):
+LogicElements defines the total physical NVRAM pool capacity via `LE_NVRAM_TOTAL_BYTES` (default 16 KB) in `include/le_board_config.h` and [`le_nvram.h`](file:///c:/Users/tanne/OneDrive/Documents/GitHub/LogicElements/src/runtime/include/le_nvram.h).
 
-| Logical Offset | Size | Identifier | Description |
-| :--- | :--- | :--- | :--- |
-| `0x0000` | 64 B | `LE_NVRAM_OFFSET_MANIFEST` | Manifest header (magic `0x4D564E4C`, schema version, component lengths) |
-| `0x0040` | 1,024 B | `LE_NVRAM_OFFSET_REGS` | Retentive registers snapshot (CRC32 checked) |
-| `0x0440` | 3,072 B | `LE_NVRAM_OFFSET_SER` | SER circular event journal |
-| `0x1040` | 12,288 B | `LE_NVRAM_OFFSET_EVENT_REC` | Event recorder waveform capture buffers |
+Rather than hardcoding static partition offsets at compile time, the loaded `.lebin` circuit designates its required retentive registers, SER history depth, and oscillography event records. The runtime validates that the circuit's total requirements fit within `LE_NVRAM_TOTAL_BYTES`, dynamically calculates region offsets, and writes them into the 64-byte NVRAM manifest (`le_nvram_manifest_t`) at offset `0x0000`:
 
-The runtime accesses this region exclusively through `g_le_hal->nvram_read` and `g_le_hal->nvram_write`.
+| Region Component | Offset Determination | Description |
+| :--- | :--- | :--- |
+| **Manifest Header** | Offset `0x0000` (64 B) | Magic `0x4D564E4C` (`LNVM`), schema version, dynamic component lengths and offsets |
+| **Retentive Registers** | Offset from manifest | Slot-isolated snapshot of active retentive registers (CRC32 validated) |
+| **SER Event Journal** | Offset from manifest | Circular Sequence of Events buffer tracking contact and breaker trips |
+| **Event Recorder** | Offset from manifest | Analog oscillography pre-fault and post-fault sample capture buffers |
+
+The runtime accesses this region exclusively through `g_le_hal->nvram_read`, `g_le_hal->nvram_write`, `g_le_hal->nvram_write_page`, and `g_le_hal->nvram_erase_sector`.
 
 ### Choosing your NVRAM Backend
 
@@ -302,42 +313,52 @@ Depending on your board's hardware design, choose one of two options:
 #### Option 1: Direct Byte-Addressable NVRAM (External SPI FRAM, EEPROM, Battery-Backed SRAM)
 Industrial PLCs frequently include an SPI FRAM (e.g., Cypress/Infineon FM25V02 or Fujitsu MB85RS64) or an I2C/SPI EEPROM. FRAM supports trillions of write cycles and byte-level writing with zero erase latency.
 
-In this setup, implement `le_port_nvram_read` and `le_port_nvram_write` by directly calling your SPI/I2C driver:
+In this setup, implement `port_nvram_read` and `port_nvram_write` as internal `static` callbacks in `le_port.c` by directly calling your SPI/I2C driver:
 
 ```c
 /* In le_port.c */
-bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+static bool port_nvram_read(uint32_t offset, uint8_t* buf, size_t len)
 {
     if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
-    return bsp_spi_fram_read(offset, (uint8_t*)buf, len);
+    return bsp_spi_fram_read(offset, buf, len);
 }
 
-bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+static bool port_nvram_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
     if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
-    return bsp_spi_fram_write(offset, (const uint8_t*)buf, len);
+    return bsp_spi_fram_write(offset, buf, len);
 }
 
-bool le_port_nvram_erase(uint32_t offset, size_t len)
+static bool port_nvram_write_page(uint32_t phys_addr, const uint8_t* buf, size_t len)
 {
-    if (offset + len > LE_NVRAM_TOTAL_BYTES) return false;
-    /* FRAM supports direct byte writes without sector erase cycles: zero range */
-    uint8_t zeros[64] = {0};
-    uint32_t rem = (uint32_t)len, cur = offset;
-    while (rem > 0) {
-        uint32_t chunk = (rem > sizeof(zeros)) ? (uint32_t)sizeof(zeros) : rem;
-        if (!bsp_spi_fram_write(cur, zeros, chunk)) return false;
-        cur += chunk;
-        rem -= chunk;
-    }
+    return port_nvram_write(phys_addr, buf, len);
+}
+
+static bool port_nvram_erase_sector(uint32_t sector_idx, uint32_t phys_addr)
+{
+    (void)sector_idx; (void)phys_addr;
+    /* FRAM supports direct byte writes without sector erase cycles */
     return true;
 }
 
 /* Initialize runtime in direct mode */
 void board_nvram_init(void)
 {
+    bsp_spi_fram_init();
     le_nvram_init_direct();
 }
+```
+
+In your `s_my_mcu_hal` table:
+```c
+const le_hal_t s_my_mcu_hal = {
+    // ...
+    .nvram_read         = port_nvram_read,
+    .nvram_write        = port_nvram_write,
+    .nvram_write_page   = port_nvram_write_page,
+    .nvram_erase_sector = port_nvram_erase_sector,
+    // ...
+};
 ```
 
 #### Option 2: Flash with Built-In Runtime Wear Leveling (Zero User Algorithm Required)
@@ -395,19 +416,14 @@ static const le_flash_wl_driver_t s_pico_wl_driver = {
 };
 
 /* Port NVRAM functions delegate to the runtime wear-leveling engine */
-bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+static bool port_nvram_read(uint32_t offset, uint8_t* buf, size_t len)
 {
-    return le_nvram_read(offset, (uint8_t*)buf, len);
+    return le_nvram_read(offset, buf, len);
 }
 
-bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+static bool port_nvram_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
-    return le_nvram_write(offset, (const uint8_t*)buf, len);
-}
-
-bool le_port_nvram_erase(uint32_t offset, size_t len)
-{
-    return le_nvram_erase(offset, len);
+    return le_nvram_write(offset, buf, len);
 }
 
 /* Call once at boot */
@@ -417,7 +433,7 @@ void board_nvram_init(void)
 }
 ```
 
-Bind `le_port_nvram_read`, `le_port_nvram_write`, and `le_port_nvram_erase` to `s_my_mcu_hal.nvram_read`, `s_my_mcu_hal.nvram_write`, and `s_my_mcu_hal.nvram_erase` so the runtime engine automatically manages persistent memory.
+Bind `port_nvram_read`, `port_nvram_write`, `pico_wl_program`, and `pico_wl_erase` to `s_my_mcu_hal.nvram_read`, `s_my_mcu_hal.nvram_write`, `s_my_mcu_hal.nvram_write_page`, and `s_my_mcu_hal.nvram_erase_sector` so the runtime engine automatically manages persistent memory.
 
 
 ---
@@ -494,6 +510,7 @@ Allows technicians to use any standard serial terminal (such as PuTTY, TeraTerm,
 | `status` | VM status (RUNNING/STOPPED), active slot, cycle count | `status` |
 | `slots` | List all slots, validity flags, and CRC32 | `slots` |
 | `select <slot>` | Switch active slot and reload VM on the fly | `select 1` |
+| `swap <slot>` | Bump-free online program swap preserving live register state | `swap 1` |
 | `run` / `stop` | Start or pause PLC scan execution | `run` |
 | `reset` | Clear process image memory (`%I`, `%Q`, `%M`, `%R`) | `reset` |
 | `io` | Print live table of digital inputs, outputs, and coils | `io` |
@@ -646,13 +663,13 @@ static const le_hal_t s_my_hal = {
 };
 ```
 
-For comprehensive recipes, encoder counters, DSP filtering examples, and circuit JSON schemas, refer to the [Custom Nodes Guide](docs/CUSTOM_NODES_GUIDE.md).
+For comprehensive recipes, encoder counters, DSP filtering examples, and circuit JSON schemas, refer to the [Custom Nodes Guide](CUSTOM_NODES_GUIDE.md).
 
 ---
 
 ## Complete reference implementation (`main.c`)
 
-Here is a complete, production-ready `main.c` showing how to initialize the HAL, Storage, VM, and CLI, while executing a real-time 1 kHz PLC scan loop in parallel with non-blocking UART upload:
+Here is a complete, production-ready `main.c` showing how to initialize the HAL, Storage, VM, Comms, and CLI, while executing a real-time drift-free PLC scan loop in parallel with non-blocking UART communications:
 
 ```c
 #include <stdio.h>
@@ -660,6 +677,7 @@ Here is a complete, production-ready `main.c` showing how to initialize the HAL,
 #include "le_vm.h"
 #include "le_loader.h"
 #include "le_storage.h"
+#include "le_comms.h"
 #include "le_cli.h"
 #include "le_hal.h"
 #include "le_port.h"
@@ -670,71 +688,58 @@ extern const le_hal_t* get_my_mcu_hal(void);
 int main(void)
 {
     /* 1. Initialize Microcontroller Hardware (Clocks, GPIO, UART, Flash) */
-    le_port_init();
+    bsp_system_init();
     const le_hal_t* hal = get_my_mcu_hal();
+    if (hal->init) hal->init();
     le_hal_set(hal);
+    le_port_init();
 
     /* 2. Initialize LogicElements Engine Subsystems */
-    le_storage_t storage;
-    le_storage_init(&storage, hal);
-
     le_vm_t vm;
     le_vm_init(&vm);
+
+    le_storage_t storage;
+    le_storage_init(&storage);
+
+    le_comms_t comms;
+    le_comms_init(&comms, &vm, &storage);
 
     le_cli_t cli;
     le_cli_init(&cli, &vm, &storage);
 
-    /* 3. Automatic Bootloader: Load Active Configuration from Flash */
-    uint8_t active_slot = le_storage_get_active_slot(&storage);
-    le_slot_info_t info;
-    le_storage_get_slot_info(&storage, active_slot, &info);
+    /* 3. Automatic Bootloader: Load Active Configuration or Fallback to ROM Demo */
+    #include "test_circuit.h" // Optional embedded fallback
+    const char* boot_source = NULL;
+    le_storage_autostart_or_demo(&vm, &storage, 0, test_circuit_program, sizeof(test_circuit_program), &boot_source);
 
-    if (info.valid) {
-        le_storage_activate_slot(&storage, active_slot, &vm);
-        vm.running = true;
-    } else {
-        /* Flash empty: attempt fallback to Slot 0 or wait in CLI mode */
-        if (le_storage_activate_slot(&storage, 0, &vm)) {
-            vm.running = true;
-        }
-    }
-
-    /* 4. Real-Time PLC Scan Loop */
-    uint32_t last_scan_time = hal->get_time_ms();
-
+    /* 4. Real-Time Deterministic PLC Scan Loop */
     while (1)
     {
-        uint32_t now = hal->get_time_ms();
+        uint32_t now_us = (uint32_t)hal->get_time_us();
 
-        /* Process Incoming UART Characters (Non-blocking) */
-        uint8_t rx_buf[32];
-        size_t available = hal->uart_read(rx_buf, sizeof(rx_buf));
-        for (size_t i = 0; i < available; i++) {
-            le_cli_process_char(&cli, rx_buf[i]);
-        }
-
-        /* Execute PLC Scan Cycle at 1 kHz (every 1 ms) */
-        if (now != last_scan_time)
+        /* Non-blocking fixed-rate scan gate (drift-free): */
+        if (le_vm_scan_due(&vm, now_us))
         {
-            last_scan_time = now;
-
             if (vm.running)
             {
-                /* A. Refresh physical inputs into Process Image (%I) */
+                /* A. Refresh physical inputs into Process Image (%DIN, %AIN) */
                 le_port_read_inputs(&vm.image);
 
                 /* B. Execute LogicElements bytecode instructions */
-                le_vm_step(&vm, now);
+                le_vm_step_us(&vm, now_us);
 
-                /* C. Flush Process Image outputs (%Q) to physical relays/LEDs */
+                /* C. Flush Process Image outputs (%DOUT, %AOUT) to physical relays/LEDs */
                 le_port_write_outputs(&vm.image);
             }
             else
             {
-                /* Safety Interlock: De-energize outputs when VM is stopped / uploading */
+                /* Safety Interlock: De-energize outputs when VM is stopped */
                 le_port_deenergize_outputs();
             }
         }
+
+        /* Slack time: Process incoming UART binary packets and interactive CLI */
+        le_comms_cli_pump(&comms, &cli, hal);
     }
 }
 ```
@@ -743,7 +748,7 @@ int main(void)
 
 ## Memory footprint and resource configuration
 
-Adopters can fine-tune memory limits to match any microcontroller by setting defines in `src/runtime/include/le_board_config.h` (or via compiler `-D` flags in CMake / Makefile):
+Adopters can fine-tune memory limits, core topology, and feature switches to match any microcontroller by setting defines in `src/runtime/include/le_config.h` (or via compiler `-D` flags in CMake / Makefile or custom `-DLE_CONFIG_FILE="path/to/my_config.h"`):
 
 ```c
 /* Number of stored program slots in flash */

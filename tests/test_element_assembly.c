@@ -53,7 +53,7 @@ static const element_spec_t g_oracle[] = {
     SPEC("ANALOGOUTPUT", "MOVE_F", 1),
     SPEC("BOOLREGISTER", "MOVE", 1),
     SPEC("FLOATREGISTER", "MOVE_F", 1),
-    SPEC("INTREGISTER", "MOVE", 1),
+    SPEC("INTREGISTER", "MOVE_I", 1),
     /* Logic gates */
     SPEC("AND", "AND", 1), SPEC("OR", "OR", 1), SPEC("XOR", "XOR", 1),
     SPEC("NAND", "NAND", 1), SPEC("NOR", "NOR", 1), SPEC("NOT", "NOT", 1),

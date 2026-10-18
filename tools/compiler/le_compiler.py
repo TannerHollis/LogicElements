@@ -47,8 +47,10 @@ class _LeCompilerOptions(Structure):
         ("eliminate_dead_code", c_int),
         ("fold_constants", c_int),
         ("fold_inversions", c_int),
-        ("eliminate_common_subexpr", c_int),
         ("direct_destination", c_int),
+        ("eliminate_common_subexpr", c_int),
+        ("simplify_boolean", c_int),
+        ("fuse_instructions", c_int),
         ("inline_user_nodes", c_int),
         ("max_pass_iterations", c_int),
     ]
@@ -62,29 +64,37 @@ class _LeCompilerOptions(Structure):
             opts.eliminate_dead_code = 0
             opts.fold_constants = 0
             opts.fold_inversions = 0
-            opts.eliminate_common_subexpr = 0
             opts.direct_destination = 0
+            opts.eliminate_common_subexpr = 0
+            opts.simplify_boolean = 0
+            opts.fuse_instructions = 0
             opts.inline_user_nodes = 0
         elif level == LE_OPT_BASIC:
             opts.eliminate_dead_code = 1
-            opts.fold_constants = 1
-            opts.fold_inversions = 1
+            opts.fold_constants = 0
+            opts.fold_inversions = 0
+            opts.direct_destination = 1
             opts.eliminate_common_subexpr = 0
-            opts.direct_destination = 0
+            opts.simplify_boolean = 0
+            opts.fuse_instructions = 0
             opts.inline_user_nodes = 0
         elif level == LE_OPT_FULL:
             opts.eliminate_dead_code = 1
             opts.fold_constants = 1
             opts.fold_inversions = 1
-            opts.eliminate_common_subexpr = 1
             opts.direct_destination = 1
+            opts.eliminate_common_subexpr = 1
+            opts.simplify_boolean = 1
+            opts.fuse_instructions = 1
             opts.inline_user_nodes = 1
         elif level == LE_OPT_SIZE:
             opts.eliminate_dead_code = 1
             opts.fold_constants = 1
             opts.fold_inversions = 1
-            opts.eliminate_common_subexpr = 1
             opts.direct_destination = 1
+            opts.eliminate_common_subexpr = 1
+            opts.simplify_boolean = 1
+            opts.fuse_instructions = 1
             opts.inline_user_nodes = 0
         return opts
 
@@ -151,11 +161,8 @@ def get_compiler_lib():
         os.path.join(root_dir, "bin", "le_compiler.dll"),
     ]
 
-    lib_path = None
-    for p in candidates:
-        if os.path.isfile(p):
-            lib_path = p
-            break
+    existing = [p for p in candidates if os.path.isfile(p)]
+    lib_path = max(existing, key=os.path.getmtime) if existing else None
 
     if not lib_path:
         lib_path = ctypes.util.find_library("le_compiler")

@@ -29,7 +29,7 @@ static bool s_sim_gpio[64] = {0};
 static float s_sim_adc[16] = {0.0f};
 static uint32_t s_sim_adc_raw[16] = {0};
 static float s_sim_dac[16] = {0.0f};
-static uint8_t s_sim_flash[LE_SLOT_SIZE_BYTES * LE_PHYSICAL_SLOT_COUNT] = {0};
+static uint8_t s_sim_flash[LE_SLOT_SIZE_BYTES * (LE_MAX_CONFIG_SLOTS + 1)] = {0};
 static uint8_t s_sim_nvram[LE_NVRAM_TOTAL_BYTES] = {0};
 
 #if LE_ENABLE_SERIAL_BUS
@@ -175,22 +175,44 @@ void le_sim_capture_tx_get(uint8_t* out, size_t cap)
     memcpy(out, s_sim_tx, n);
 }
 
-static bool sim_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool sim_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
 {
-    if (offset + len <= sizeof(s_sim_flash)) {
-        memcpy(buf, &s_sim_flash[offset], len);
+    uint32_t abs_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    if (abs_addr + len <= sizeof(s_sim_flash)) {
+        memcpy(buf, &s_sim_flash[abs_addr], len);
         return true;
     }
     return false;
 }
 
-static bool sim_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+static bool sim_storage_erase_sector(const le_storage_sector_t* sector)
 {
-    if (offset + len <= sizeof(s_sim_flash)) {
-        memcpy(&s_sim_flash[offset], buf, len);
+    uint32_t abs_addr = sector ? sector->phys_addr : 0;
+    uint32_t erase_sz = (sector && sector->erase_size > 0) ? sector->erase_size : LE_STORAGE_SECTOR_SIZE;
+    if (abs_addr + erase_sz <= sizeof(s_sim_flash)) {
+        memset(&s_sim_flash[abs_addr], 0xFF, erase_sz);
         return true;
     }
     return false;
+}
+
+static bool sim_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
+{
+    uint32_t abs_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    if (abs_addr + len <= sizeof(s_sim_flash)) {
+        memcpy(&s_sim_flash[abs_addr], buf, len);
+        return true;
+    }
+    return false;
+}
+
+static const uint8_t* sim_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
+{
+    uint32_t abs_addr = (sector ? sector->phys_addr : 0) + offset_in_sector;
+    if (abs_addr < sizeof(s_sim_flash)) {
+        return &s_sim_flash[abs_addr];
+    }
+    return NULL;
 }
 
 static bool sim_nvram_read(uint32_t offset, uint8_t* buf, size_t len)
@@ -211,10 +233,20 @@ static bool sim_nvram_write(uint32_t offset, const uint8_t* buf, size_t len)
     return false;
 }
 
-static bool sim_nvram_erase(uint32_t offset, size_t len)
+static bool sim_nvram_erase_sector(uint32_t sector_idx, uint32_t phys_addr)
 {
-    if (offset + len <= sizeof(s_sim_nvram)) {
-        memset(&s_sim_nvram[offset], 0, len);
+    (void)sector_idx;
+    if (phys_addr + LE_NVRAM_BLOCK_SIZE <= sizeof(s_sim_nvram)) {
+        memset(&s_sim_nvram[phys_addr], 0xFF, LE_NVRAM_BLOCK_SIZE);
+        return true;
+    }
+    return false;
+}
+
+static bool sim_nvram_write_page(uint32_t phys_addr, const uint8_t* buf, size_t len)
+{
+    if (phys_addr + len <= sizeof(s_sim_nvram)) {
+        memcpy(&s_sim_nvram[phys_addr], buf, len);
         return true;
     }
     return false;
@@ -315,79 +347,16 @@ void le_sim_set_dac(uint8_t channel, float value)
     if (channel < 16) s_sim_dac[channel] = value;
 }
 
+#include "le_custom_node.h"
+
 static le_status_t sim_ext_call(uint8_t func_id, const uint16_t* args, int in_count, int out_count, le_process_image_t* img)
 {
-    if (!img) return LE_ERR_NULL_PTR;
-
-    switch (func_id)
-    {
-        case 0x81: {
-            if (in_count < 1 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-            /* Function 0x81: Hardware Math - Square Root: out = sqrtf(in) */
-            float a = le_process_image_get_float(img, args[0]);
-            float res = (a > 0.0f) ? sqrtf(a) : 0.0f;
-            le_process_image_set_float(img, args[in_count], res);
-            return LE_OK;
-        }
-
-        case 0x82: {
-            if (in_count < 2 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-            /* Function 0x82: Dual-Input Adder with Scaling: out = (in_a + in_b) * 1.5 */
-            float a = le_process_image_get_float(img, args[0]);
-            float b = le_process_image_get_float(img, args[1]);
-            le_process_image_set_float(img, args[in_count], (a + b) * 1.5f);
-            return LE_OK;
-        }
-
-        case 0x83: {
-            if (in_count < 2 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-            /* Function 0x83: Boolean Pulse / Strobe: out = in_a && !in_b */
-            bool a = le_process_image_get_bool(img, args[0]);
-            bool b = le_process_image_get_bool(img, args[1]);
-            le_process_image_set_bool(img, args[in_count], a && !b);
-            return LE_OK;
-        }
-
-        case 0x84: {
-            /* Function 0x84: Two-of-three majority (3-in/1-out) - proves N-arity. */
-            if (in_count < 3 || out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-            int ones = 0;
-            for (int i = 0; i < 3; i++) {
-                if (le_process_image_get_bool(img, args[i])) ones++;
-            }
-            le_process_image_set_bool(img, args[in_count], ones >= 2);
-            return LE_OK;
-        }
-
-        default:
-            break;
-    }
-
-    return LE_OK;
+    return le_custom_nodes_dispatch(func_id, args, in_count, out_count, img);
 }
 
 static const char* sim_get_custom_nodes_json(void)
 {
-    return "[\n"
-           "  {\n"
-           "    \"type_id\": \"Sim_HW_Sqrt\",\n"
-           "    \"display_name\": \"HW Square Root\",\n"
-           "    \"category\": \"Simulator\",\n"
-           "    \"description\": \"Hardware-accelerated square root calculation\",\n"
-           "    \"function_id\": 0x81,\n"
-           "    \"inputs\": [{\"name\": \"In\", \"type\": \"float\", \"default\": 0.0}],\n"
-           "    \"outputs\": [{\"name\": \"Out\", \"type\": \"float\"}]\n"
-           "  },\n"
-           "  {\n"
-           "    \"type_id\": \"Sim_Scaled_Add\",\n"
-           "    \"display_name\": \"Scaled Adder\",\n"
-           "    \"category\": \"Simulator\",\n"
-           "    \"description\": \"Adds two inputs and scales by 1.5\",\n"
-           "    \"function_id\": 0x82,\n"
-           "    \"inputs\": [{\"name\": \"A\", \"type\": \"float\", \"default\": 0.0}, {\"name\": \"B\", \"type\": \"float\", \"default\": 0.0}],\n"
-           "    \"outputs\": [{\"name\": \"Out\", \"type\": \"float\"}]\n"
-           "  }\n"
-           "]";
+    return le_custom_nodes_get_json();
 }
 
 static const le_hal_t s_sim_hal = {
@@ -405,10 +374,13 @@ static const le_hal_t s_sim_hal = {
     .uart_read = sim_uart_read,
     .uart_write = sim_uart_write,
     .storage_read = sim_storage_read,
-    .storage_write = sim_storage_write,
+    .storage_erase_sector = sim_storage_erase_sector,
+    .storage_write_page = sim_storage_write_page,
+    .storage_get_xip_ptr = sim_storage_get_xip_ptr,
     .nvram_read = sim_nvram_read,
     .nvram_write = sim_nvram_write,
-    .nvram_erase = sim_nvram_erase,
+    .nvram_write_page = sim_nvram_write_page,
+    .nvram_erase_sector = sim_nvram_erase_sector,
 #if LE_ENABLE_SERIAL_BUS
     .i2c_write = sim_i2c_write,
     .i2c_read = sim_i2c_read,

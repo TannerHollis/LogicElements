@@ -5,6 +5,7 @@
 
 #include "le_cli.h"
 #include "le_hal.h"
+#include "le_nvram.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -68,6 +69,7 @@ static void cmd_help(void)
     cli_print("  status                  VM status & execution cycle count\r\n");
     cli_print("  slots                   List all configuration slots\r\n");
     cli_print("  select <slot>           Switch active slot and reload VM\r\n");
+    cli_print("  swap <slot>             Bump-free online swap to slot preserving live state\r\n");
     cli_print("  run                     Start logic execution\r\n");
     cli_print("  stop                    Pause logic execution\r\n");
     cli_print("  reset                   Reset process image memory\r\n");
@@ -78,49 +80,20 @@ cli_print("  pulse <name> [sec]       Pulse an alias for N seconds (default 1 s)
     cli_print("  upload <slot> hex       Upload .lebin by pasting Hex string\r\n");
 }
 
+#include "le_custom_node.h"
+
+static void cli_stream_writer(const char* chunk, void* user_data)
+{
+    (void)user_data;
+    cli_print(chunk);
+}
+
 static void cmd_caps(le_cli_t* cli)
 {
     (void)cli;
-    const char* plat = (g_le_hal && g_le_hal->get_platform_name) ? g_le_hal->get_platform_name() : "Generic MCU";
-    char buf[128];
-
-    cli_print("\r\n{\r\n");
-    cli_print("  \"device\": {\r\n");
-    snprintf(buf, sizeof(buf), "    \"name\": \"%s\",\r\n", plat); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"firmware_version\": \"%d.0\",\r\n", LE_BIN_VERSION); cli_print(buf);
-    cli_print("    \"protocol_version\": 1\r\n");
-    cli_print("  },\r\n");
-    cli_print("  \"limits\": {\r\n");
-    snprintf(buf, sizeof(buf), "    \"digital_inputs\": %d,\r\n", LE_MAX_DIGITAL_IN); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"digital_outputs\": %d,\r\n", LE_MAX_DIGITAL_OUT); cli_print(buf);
-#if LE_ENABLE_ANALOG
-    snprintf(buf, sizeof(buf), "    \"analog_inputs\": %d,\r\n", LE_MAX_ANALOG_IN); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"analog_outputs\": %d,\r\n", LE_MAX_ANALOG_OUT); cli_print(buf);
-#endif
-    snprintf(buf, sizeof(buf), "    \"workspace_bytes\": %d,\r\n", LE_RAM_WORKSPACE_BYTES); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"config_slots\": %d,\r\n", LE_MAX_CONFIG_SLOTS); cli_print(buf);
-    snprintf(buf, sizeof(buf), "    \"slot_size_bytes\": %d\r\n", LE_SLOT_SIZE_BYTES); cli_print(buf);
-    cli_print("  },\r\n");
-    cli_print("  \"features\": {\r\n");
-#if LE_ENABLE_PROTECTION
-    cli_print("    \"protection\": true,\r\n");
-#else
-    cli_print("    \"protection\": false,\r\n");
-#endif
-#if LE_ENABLE_SERIAL_BUS
-    cli_print("    \"serial_bus\": true,\r\n");
-#else
-    cli_print("    \"serial_bus\": false,\r\n");
-#endif
-    cli_print("  },\r\n");
-    cli_print("  \"custom_nodes\": ");
-    const char* cnodes = (g_le_hal && g_le_hal->get_custom_nodes_json) ?
-                         g_le_hal->get_custom_nodes_json() : "[]";
-    if (!cnodes || cnodes[0] == '\0') {
-        cnodes = "[]";
-    }
-    cli_print(cnodes);
-    cli_print("\r\n}\r\n");
+    cli_print("\r\n");
+    le_config_stream_profile_json(cli_stream_writer, NULL);
+    cli_print("\r\n");
 }
 
 static void cmd_info(le_cli_t* cli)
@@ -139,6 +112,20 @@ static void cmd_info(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "  Physical I/O:    DIN:%d, DOUT:%d\r\n",
              LE_MAX_DIGITAL_IN, LE_MAX_DIGITAL_OUT); cli_print(buf);
 #endif
+    le_nvram_stats_t nvs;
+    if (le_nvram_get_stats(&nvs)) {
+        if (nvs.is_flash) {
+            snprintf(buf, sizeof(buf), "  NVRAM Storage:   Flash WL (%u KB across %u sectors of %u B, endurance %u cycles)\r\n",
+                     (unsigned int)(LE_NVRAM_TOTAL_BYTES / 1024),
+                     (unsigned int)nvs.sector_count,
+                     (unsigned int)nvs.sector_size,
+                     (unsigned int)nvs.rated_erase_cycles);
+        } else {
+            snprintf(buf, sizeof(buf), "  NVRAM Storage:   Direct FRAM / EEPROM / RAM (%u KB)\r\n",
+                     (unsigned int)(LE_NVRAM_TOTAL_BYTES / 1024));
+        }
+        cli_print(buf);
+    }
     (void)cli;
 }
 
@@ -149,19 +136,41 @@ static void cmd_status(le_cli_t* cli)
     snprintf(buf, sizeof(buf), "  State:           %s\r\n", (cli->vm && cli->vm->running) ? "RUNNING" : "STOPPED"); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Active Slot:     Slot %d\r\n", cli->storage ? cli->storage->active_slot : 0); cli_print(buf);
     snprintf(buf, sizeof(buf), "  Instructions:    %d\r\n", cli->vm ? cli->vm->instruction_count : 0); cli_print(buf);
-    snprintf(buf, sizeof(buf), "  Cycle Count:     %u cycles\r\n", cli->vm ? cli->vm->cycle_count : 0); cli_print(buf);
+    snprintf(buf, sizeof(buf), "  Cycle Count:     %u cycles\r\n", cli->vm ? (unsigned int)cli->vm->cycle_count : 0u); cli_print(buf);
+    extern volatile uint16_t g_last_exec_pc;
+    extern volatile uint8_t  g_last_exec_op;
+    extern volatile uint8_t  g_last_exec_mod;
+    if (cli->vm && cli->vm->last_step_status != LE_OK) {
+        snprintf(buf, sizeof(buf), "  Last Error:      status=%d at PC=%u [opcode=0x%02X mod=0x%02X]\r\n",
+                 (int)cli->vm->last_step_status, (unsigned int)g_last_exec_pc, (unsigned int)g_last_exec_op, (unsigned int)g_last_exec_mod);
+        cli_print(buf);
+    }
     if (cli->vm && cli->vm->scan_period_us > 0) {
         snprintf(buf, sizeof(buf), "  Scan Period:     %u us (%u Hz)\r\n",
-                 cli->vm->scan_period_us,
-                 cli->vm->scan_period_us ? (1000000u / cli->vm->scan_period_us) : 0u); cli_print(buf);
+                 (unsigned int)cli->vm->scan_period_us,
+                 (unsigned int)(cli->vm->scan_period_us ? (1000000u / cli->vm->scan_period_us) : 0u)); cli_print(buf);
         if (cli->vm->timing_feasible) {
-            snprintf(buf, sizeof(buf), "  Timing:          est %u us of %u us period (%u%% margin) [%u overruns]\r\n",
-                     cli->vm->timed_worst_us, cli->vm->scan_period_us,
-                     cli->vm->scan_period_us ? (uint16_t)(100u - (uint64_t)cli->vm->timed_worst_us * 100u / cli->vm->scan_period_us) : 0,
-                     cli->vm->scan_overruns); cli_print(buf);
+            snprintf(buf, sizeof(buf), "  Timing:          est %u us (observed %u us) of %u us period (%u%% margin) [%u overruns]\r\n",
+                     (unsigned int)cli->vm->timed_worst_us,
+                     (unsigned int)cli->vm->observed_worst_us,
+                     (unsigned int)cli->vm->scan_period_us,
+                     cli->vm->scan_period_us ? (unsigned int)(100u - (uint64_t)cli->vm->timed_worst_us * 100u / cli->vm->scan_period_us) : 0u,
+                     (unsigned int)cli->vm->scan_overruns); cli_print(buf);
         } else {
             snprintf(buf, sizeof(buf), "  Timing:          no program loaded / not budgeted\r\n"); cli_print(buf);
         }
+    }
+    le_nvram_stats_t nvs;
+    if (le_nvram_get_stats(&nvs)) {
+        if (nvs.is_flash) {
+            snprintf(buf, sizeof(buf), "  Flash NVRAM:     Sector %u/%u (seq %u), Erase: %u (wear: %.2f%%, health: %.2f%%) [%u B used, %u B slack]\r\n",
+                     (unsigned int)nvs.active_sector_idx, (unsigned int)nvs.sector_count, (unsigned int)nvs.active_seq,
+                     (unsigned int)nvs.active_erase_count, nvs.wear_pct, nvs.health_pct,
+                     (unsigned int)nvs.sector_bytes_used, (unsigned int)nvs.sector_bytes_free);
+        } else {
+            snprintf(buf, sizeof(buf), "  NVRAM Status:    Direct FRAM / EEPROM (Health: 100.00%%)\r\n");
+        }
+        cli_print(buf);
     }
 }
 
@@ -180,7 +189,7 @@ static void cmd_slots(le_cli_t* cli)
 
         if (info.valid) {
             snprintf(buf, sizeof(buf), "  Slot %d: [VALID]   %3d inst, %4u bytes, CRC 0x%08X %s\r\n",
-                     s, info.instruction_count, info.program_size, info.crc32, is_active ? "(ACTIVE)" : "");
+                     s, info.instruction_count, (unsigned int)info.program_size, (unsigned int)info.crc32, is_active ? "(ACTIVE)" : "");
         } else {
             snprintf(buf, sizeof(buf), "  Slot %d: [EMPTY]   No valid program %s\r\n", s, is_active ? "(ACTIVE)" : "");
         }
@@ -204,6 +213,25 @@ static void cmd_select(le_cli_t* cli, const char* arg)
         cli_print(buf);
     } else {
         cli_print("Error: Slot does not contain a valid .lebin program.\r\n");
+    }
+}
+
+static void cmd_swap(le_cli_t* cli, const char* arg)
+{
+    if (!cli->storage || !cli->vm) return;
+    int slot = atoi(arg);
+    if (slot < 0 || slot >= LE_MAX_CONFIG_SLOTS) {
+        cli_print("Error: Invalid slot number.\r\n");
+        return;
+    }
+
+    if (le_storage_swap_slot_online(cli->storage, (uint8_t)slot, cli->vm)) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Online swapped to Slot %d. Loaded %d instructions.\r\n",
+                 slot, cli->vm->instruction_count);
+        cli_print(buf);
+    } else {
+        cli_print("Error: Slot does not contain a valid .lebin program or swap failed.\r\n");
     }
 }
 
@@ -441,11 +469,11 @@ static void handle_command(le_cli_t* cli, char* line)
         cmd_help();
     } else if (strcmp(cmd, "info") == 0) {
         cmd_info(cli);
-    } else if (strcmp(cmd, "caps") == 0 || strcmp(cmd, "config") == 0) {
+    } else if (strcmp(cmd, "caps") == 0 || strcmp(cmd, "config") == 0 || strcmp(cmd, "profile") == 0 || strcmp(cmd, "export-config") == 0) {
         cmd_caps(cli);
     } else if (strcmp(cmd, "nodes") == 0 || strcmp(cmd, "custom_nodes") == 0) {
         const char* cnodes = (g_le_hal && g_le_hal->get_custom_nodes_json) ?
-                             g_le_hal->get_custom_nodes_json() : "[]";
+                             g_le_hal->get_custom_nodes_json() : le_custom_nodes_get_json();
         cli_print("\r\n=== Custom Board Nodes ===\r\n");
         cli_print(cnodes ? cnodes : "[]");
         cli_print("\r\n");
@@ -455,6 +483,8 @@ static void handle_command(le_cli_t* cli, char* line)
         cmd_slots(cli);
     } else if (strcmp(cmd, "select") == 0) {
         cmd_select(cli, arg1);
+    } else if (strcmp(cmd, "swap") == 0 || strcmp(cmd, "reload") == 0) {
+        cmd_swap(cli, arg1);
     } else if (strcmp(cmd, "run") == 0) {
         if (cli->vm) le_vm_start(cli->vm);
         cli_print("VM Started.\r\n");

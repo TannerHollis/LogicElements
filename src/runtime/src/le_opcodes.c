@@ -6,11 +6,21 @@
 #include "le_opcodes.h"
 #include "le_rt.h"
 #include "le_hal.h"
+#include "le_eval_dsp.h"
+#include "le_eval_relay.h"
+#include "le_eval_block.h"
+#include "le_custom_node.h"
 #include <math.h>
 #include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
+#endif
+
+#ifndef fmaf
+#if !defined(__STDC_VERSION__) || (__STDC_VERSION__ < 199901L && !defined(_MSC_VER) && !defined(__GNUC__))
+#define fmaf(a, b, c) (((a) * (b)) + (c))
+#endif
 #endif
 
 le_status_t le_exec_instruction(const le_instruction_t* inst, le_process_image_t* img, uint32_t now_ms)
@@ -25,7 +35,48 @@ le_status_t le_exec_instruction_ex(const le_instruction_t* inst, le_process_imag
     return le_exec_program(inst, 1, img, now_ms, blocks, block_count);
 }
 
+#ifndef LE_USE_THREADED_DISPATCH
+#define LE_USE_THREADED_DISPATCH 0
+#endif
+
+volatile uint16_t g_last_exec_pc = 0;
+volatile uint8_t  g_last_exec_op = 0;
+volatile uint8_t  g_last_exec_mod = 0;
+
+#if LE_USE_THREADED_DISPATCH
+#define LE_OP_LBL(op) op_lbl_##op:
+#define LE_STEP_OK do { \
+    if (++vm_pc >= count) return LE_OK; \
+    inst = &instructions[vm_pc]; \
+    op = inst->opcode; \
+    mod = inst->modifier; \
+    g_last_exec_pc = vm_pc; \
+    g_last_exec_op = op; \
+    g_last_exec_mod = mod; \
+    goto *s_dispatch_table[op]; \
+} while (0)
+#else
+#define LE_OP_LBL(op)
 #define LE_STEP_OK goto next_instruction
+#endif
+
+static inline float le_safe_div_f(float num, float den)
+{
+    if (fabsf(den) <= 1e-9f) {
+#if LE_DIV_BY_ZERO_POLICY == LE_DIV_BY_ZERO_SATURATE
+        return (num >= 0.0f) ? 3.402823466e+38F : -3.402823466e+38F;
+#elif LE_DIV_BY_ZERO_POLICY == LE_DIV_BY_ZERO_INFINITY
+        return (num >= 0.0f) ? (float)INFINITY : (float)-INFINITY;
+#else
+        return 0.0f;
+#endif
+    }
+    float r = num / den;
+#if LE_FLUSH_NAN_TO_ZERO
+    if (isnan(r)) return 0.0f;
+#endif
+    return r;
+}
 
 le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count,
                             le_process_image_t* img, uint32_t now_ms,
@@ -38,11 +89,49 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
     const float scan_dt = le_rt_scan_dt();
     const float scan_srate = (scan_dt > 0.0f) ? (1.0f / scan_dt) : 1000.0f;
 
-    for (uint16_t pc = 0; pc < count; pc++)
+#if LE_USE_THREADED_DISPATCH
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winitializer-overrides"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+#endif
+
+    static const void* const s_dispatch_table[256] = {
+        [0 ... 255] = &&op_lbl_unknown,
+#define LE_DISP_ENTRY(opcode) [opcode] = &&op_lbl_##opcode,
+        LE_ACTIVE_OPCODES(LE_DISP_ENTRY)
+#undef LE_DISP_ENTRY
+    };
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+    uint16_t vm_pc = 0;
+    const le_instruction_t* inst = &instructions[0];
+    uint8_t op = inst->opcode;
+    uint8_t mod = inst->modifier;
+    g_last_exec_pc = 0;
+    g_last_exec_op = op;
+    g_last_exec_mod = mod;
+    goto *s_dispatch_table[op];
+
+    while (0) {
+        switch (0)
+        {
+#else
+    for (uint16_t vm_pc = 0; vm_pc < count; vm_pc++)
     {
-        const le_instruction_t* inst = &instructions[pc];
+        const le_instruction_t* inst = &instructions[vm_pc];
         uint8_t op = inst->opcode;
         uint8_t mod = inst->modifier;
+        g_last_exec_pc = vm_pc;
+        g_last_exec_op = op;
+        g_last_exec_mod = mod;
 
         /* Single flat dispatch: every opcode is a labeled case (reserved placeholders
          * included) so the compiler can emit one dense O(1) jump table. Feature-switch
@@ -51,10 +140,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
          * return LE_ERR_UNKNOWN_OPCODE so they are loudly rejected but cheap. */
         switch (op)
         {
-            case LE_OP_NOP:
+#endif
+            LE_OP_LBL(LE_OP_NOP) case LE_OP_NOP:
                 LE_STEP_OK;
 
-        case LE_OP_MOVE: {
+        LE_OP_LBL(LE_OP_MOVE) case LE_OP_MOVE: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             if (mod & LE_MOD_INVERT_A) a = !a;
             bool res = a;
@@ -62,7 +152,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_NOT: {
+        LE_OP_LBL(LE_OP_NOT) case LE_OP_NOT: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             if (mod & LE_MOD_INVERT_A) a = !a;
             bool res = !a;
@@ -70,7 +160,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_AND: {
+        LE_OP_LBL(LE_OP_AND) case LE_OP_AND: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             bool b = le_pi_get_bool_fast(img, inst->in_b);
             if (mod & LE_MOD_INVERT_A) a = !a;
@@ -80,7 +170,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_OR: {
+        LE_OP_LBL(LE_OP_OR) case LE_OP_OR: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             bool b = le_pi_get_bool_fast(img, inst->in_b);
             if (mod & LE_MOD_INVERT_A) a = !a;
@@ -90,7 +180,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_XOR: {
+        LE_OP_LBL(LE_OP_XOR) case LE_OP_XOR: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             bool b = le_pi_get_bool_fast(img, inst->in_b);
             if (mod & LE_MOD_INVERT_A) a = !a;
@@ -100,7 +190,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_NAND: {
+        LE_OP_LBL(LE_OP_NAND) case LE_OP_NAND: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             bool b = le_pi_get_bool_fast(img, inst->in_b);
             if (mod & LE_MOD_INVERT_A) a = !a;
@@ -110,7 +200,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_NOR: {
+        LE_OP_LBL(LE_OP_NOR) case LE_OP_NOR: {
             bool a = le_pi_get_bool_fast(img, inst->in_a);
             bool b = le_pi_get_bool_fast(img, inst->in_b);
             if (mod & LE_MOD_INVERT_A) a = !a;
@@ -120,7 +210,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_MUX: {
+        LE_OP_LBL(LE_OP_MUX) case LE_OP_MUX: {
             /* MUX: in_a is input 0, in_b is input 1; the active select is
              * handled by the LE_FUNC_MUX_SELECT block builtin. */
             bool a = le_pi_get_bool_fast(img, inst->in_a);
@@ -133,53 +223,83 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
 
-        case LE_OP_RESERVED_09:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_0A:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_0B:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_0C:
-            return LE_ERR_UNKNOWN_OPCODE;
+        LE_OP_LBL(LE_OP_WORD_AND) case LE_OP_WORD_AND: {
+            uint32_t a = le_pi_get_word32_fast(img, inst->in_a);
+            uint32_t b = le_pi_get_word32_fast(img, inst->in_b);
+            le_pi_set_word32_fast(img, inst->out, a & b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_WORD_OR) case LE_OP_WORD_OR: {
+            uint32_t a = le_pi_get_word32_fast(img, inst->in_a);
+            uint32_t b = le_pi_get_word32_fast(img, inst->in_b);
+            le_pi_set_word32_fast(img, inst->out, a | b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_WORD_XOR) case LE_OP_WORD_XOR: {
+            uint32_t a = le_pi_get_word32_fast(img, inst->in_a);
+            uint32_t b = le_pi_get_word32_fast(img, inst->in_b);
+            le_pi_set_word32_fast(img, inst->out, a ^ b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_WORD_NOT) case LE_OP_WORD_NOT: {
+            uint32_t a = le_pi_get_word32_fast(img, inst->in_a);
+            le_pi_set_word32_fast(img, inst->out, ~a);
+            LE_STEP_OK;
+        }
         case LE_OP_RESERVED_0D:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_0E:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_0F:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_10:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_11:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_12:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_13:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_14:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_15:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_16:
-            return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_17:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_18:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_19:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_1A:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_1B:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_1C:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_1D:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_1E:
-            return LE_ERR_UNKNOWN_OPCODE;
+        LE_OP_LBL(LE_OP_MOVE_I) case LE_OP_MOVE_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            le_pi_set_int_fast(img, inst->out, a);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_ADD_I) case LE_OP_ADD_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            int32_t b = le_pi_get_int_fast(img, inst->in_b);
+            le_pi_set_int_fast(img, inst->out, a + b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_SUB_I) case LE_OP_SUB_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            int32_t b = le_pi_get_int_fast(img, inst->in_b);
+            le_pi_set_int_fast(img, inst->out, a - b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_MUL_I) case LE_OP_MUL_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            int32_t b = le_pi_get_int_fast(img, inst->in_b);
+            le_pi_set_int_fast(img, inst->out, a * b);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_DIV_I) case LE_OP_DIV_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            int32_t b = le_pi_get_int_fast(img, inst->in_b);
+            le_pi_set_int_fast(img, inst->out, (b != 0) ? (a / b) : 0);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_NEG_I) case LE_OP_NEG_I: {
+            int32_t a = le_pi_get_int_fast(img, inst->in_a);
+            le_pi_set_int_fast(img, inst->out, -a);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_LOAD_I) case LE_OP_LOAD_I: {
+            int32_t val = (int32_t)(((uint32_t)inst->in_b << 16) | (uint32_t)inst->in_a);
+            le_pi_set_int_fast(img, inst->out, val);
+            LE_STEP_OK;
+        }
         case LE_OP_RESERVED_1F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RTRIG: {
+        LE_OP_LBL(LE_OP_RTRIG) case LE_OP_RTRIG: {
             /* in_a = input signal, in_b = history coil, out = pulse out */
             bool cur = le_pi_get_bool_fast(img, inst->in_a);
             bool prev = le_pi_get_bool_fast(img, inst->in_b);
@@ -188,7 +308,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->in_b, cur);
             LE_STEP_OK;
         }
-        case LE_OP_FTRIG: {
+        LE_OP_LBL(LE_OP_FTRIG) case LE_OP_FTRIG: {
             bool cur = le_pi_get_bool_fast(img, inst->in_a);
             bool prev = le_pi_get_bool_fast(img, inst->in_b);
             bool pulse = !cur && prev;
@@ -196,7 +316,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->in_b, cur);
             LE_STEP_OK;
         }
-        case LE_OP_SR: {
+        LE_OP_LBL(LE_OP_SR) case LE_OP_SR: {
             /* Set-dominant latch: in_a = Set, in_b = Reset, out = Q */
             bool s = le_pi_get_bool_fast(img, inst->in_a);
             bool r = le_pi_get_bool_fast(img, inst->in_b);
@@ -205,7 +325,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, q);
             LE_STEP_OK;
         }
-        case LE_OP_RS: {
+        LE_OP_LBL(LE_OP_RS) case LE_OP_RS: {
             /* Reset-dominant latch: in_a = Set, in_b = Reset, out = Q */
             bool s = le_pi_get_bool_fast(img, inst->in_a);
             bool r = le_pi_get_bool_fast(img, inst->in_b);
@@ -238,64 +358,100 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_2F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_TON: {
+        LE_OP_LBL(LE_OP_TON) case LE_OP_TON: {
             uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
+            if (inst->in_b != LE_ADDR_UNUSED) {
+                int32_t pt = le_pi_get_int_fast(img, inst->in_b);
+                if (pt >= 0) t->preset_ms = (uint32_t)pt;
+            }
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
             if (in_val) {
                 if (!t->prev_in) {
                     t->start_time_ms = now_ms;
-                    t->q = false;
-                } else {
-                    if (!t->q && (now_ms - t->start_time_ms >= t->preset_ms)) {
+                    t->elapsed_ms = 0;
+                    t->q = (t->preset_ms == 0);
+                } else if (!t->q) {
+                    uint32_t elapsed = now_ms - t->start_time_ms;
+                    if (elapsed >= t->preset_ms) {
+                        t->elapsed_ms = t->preset_ms;
                         t->q = true;
+                    } else {
+                        t->elapsed_ms = elapsed;
                     }
+                } else {
+                    t->elapsed_ms = t->preset_ms;
                 }
             } else {
+                t->elapsed_ms = 0;
                 t->q = false;
             }
             t->prev_in = in_val;
             le_pi_set_bool_fast(img, inst->out, t->q);
             LE_STEP_OK;
         }
-        case LE_OP_TOF: {
+        LE_OP_LBL(LE_OP_TOF) case LE_OP_TOF: {
             uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
+            if (inst->in_b != LE_ADDR_UNUSED) {
+                int32_t pt = le_pi_get_int_fast(img, inst->in_b);
+                if (pt >= 0) t->preset_ms = (uint32_t)pt;
+            }
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
             if (in_val) {
                 t->q = true;
+                t->elapsed_ms = 0;
             } else {
                 if (t->prev_in) {
                     t->start_time_ms = now_ms;
                 }
-                if (t->q && (now_ms - t->start_time_ms >= t->preset_ms)) {
-                    t->q = false;
+                if (t->q) {
+                    uint32_t elapsed = now_ms - t->start_time_ms;
+                    if (elapsed >= t->preset_ms) {
+                        t->elapsed_ms = t->preset_ms;
+                        t->q = false;
+                    } else {
+                        t->elapsed_ms = elapsed;
+                    }
                 }
             }
             t->prev_in = in_val;
             le_pi_set_bool_fast(img, inst->out, t->q);
             LE_STEP_OK;
         }
-        case LE_OP_TP: {
+        LE_OP_LBL(LE_OP_TP) case LE_OP_TP: {
             uint16_t t_idx = inst->modifier;
             le_timer_state_t* t = le_process_image_timer(img, t_idx);
             if (!t) return LE_ERR_OUT_OF_BOUNDS;
+            if (inst->in_b != LE_ADDR_UNUSED) {
+                int32_t pt = le_pi_get_int_fast(img, inst->in_b);
+                if (pt >= 0) t->preset_ms = (uint32_t)pt;
+            }
             bool in_val = le_pi_get_bool_fast(img, inst->in_a);
             if (in_val && !t->prev_in && !t->q) {
                 t->start_time_ms = now_ms;
-                t->q = true;
+                t->q = (t->preset_ms > 0);
+                t->elapsed_ms = 0;
             }
-            if (t->q && (now_ms - t->start_time_ms >= t->preset_ms)) {
-                t->q = false;
+            if (t->q) {
+                uint32_t elapsed = now_ms - t->start_time_ms;
+                if (elapsed >= t->preset_ms) {
+                    t->q = false;
+                    t->elapsed_ms = in_val ? t->preset_ms : 0;
+                } else {
+                    t->elapsed_ms = elapsed;
+                }
+            } else if (!in_val) {
+                t->elapsed_ms = 0;
             }
             t->prev_in = in_val;
             le_pi_set_bool_fast(img, inst->out, t->q);
             LE_STEP_OK;
         }
 
-        case LE_OP_CTU: {
+        LE_OP_LBL(LE_OP_CTU) case LE_OP_CTU: {
             uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
@@ -311,7 +467,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, c->qu);
             LE_STEP_OK;
         }
-        case LE_OP_CTD: {
+        LE_OP_LBL(LE_OP_CTD) case LE_OP_CTD: {
             uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
@@ -326,7 +482,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, c->qd);
             LE_STEP_OK;
         }
-        case LE_OP_CTUD: {
+        LE_OP_LBL(LE_OP_CTUD) case LE_OP_CTUD: {
             uint16_t c_idx = inst->modifier;
             le_counter_state_t* c = le_process_image_counter(img, c_idx);
             if (!c) return LE_ERR_OUT_OF_BOUNDS;
@@ -343,12 +499,27 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, c->qu);
             LE_STEP_OK;
         }
-        case LE_OP_RESERVED_36:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_37:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_38:
-            return LE_ERR_UNKNOWN_OPCODE;
+        LE_OP_LBL(LE_OP_COUNTER_CV) case LE_OP_COUNTER_CV: {
+            uint16_t c_idx = inst->modifier;
+            le_counter_state_t* c = le_process_image_counter(img, c_idx);
+            if (!c) return LE_ERR_OUT_OF_BOUNDS;
+            le_pi_set_int_fast(img, inst->out, c->count);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_COUNTER_QD) case LE_OP_COUNTER_QD: {
+            uint16_t c_idx = inst->modifier;
+            le_counter_state_t* c = le_process_image_counter(img, c_idx);
+            if (!c) return LE_ERR_OUT_OF_BOUNDS;
+            le_pi_set_bool_fast(img, inst->out, c->qd);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_TIMER_ET) case LE_OP_TIMER_ET: {
+            uint16_t t_idx = inst->modifier;
+            le_timer_state_t* t = le_process_image_timer(img, t_idx);
+            if (!t) return LE_ERR_OUT_OF_BOUNDS;
+            le_pi_set_int_fast(img, inst->out, (int32_t)t->elapsed_ms);
+            LE_STEP_OK;
+        }
         case LE_OP_RESERVED_39:
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_3A:
@@ -363,62 +534,62 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_3F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_MOVE_F: {
+        LE_OP_LBL(LE_OP_MOVE_F) case LE_OP_MOVE_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             le_pi_set_float_fast(img, inst->out, a);
             LE_STEP_OK;
         }
-        case LE_OP_ADD_F: {
+        LE_OP_LBL(LE_OP_ADD_F) case LE_OP_ADD_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             le_pi_set_float_fast(img, inst->out, a + b);
             LE_STEP_OK;
         }
-        case LE_OP_SUB_F: {
+        LE_OP_LBL(LE_OP_SUB_F) case LE_OP_SUB_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             le_pi_set_float_fast(img, inst->out, a - b);
             LE_STEP_OK;
         }
-        case LE_OP_MUL_F: {
+        LE_OP_LBL(LE_OP_MUL_F) case LE_OP_MUL_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             le_pi_set_float_fast(img, inst->out, a * b);
             LE_STEP_OK;
         }
-        case LE_OP_DIV_F: {
+        LE_OP_LBL(LE_OP_DIV_F) case LE_OP_DIV_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
-            le_pi_set_float_fast(img, inst->out, (fabsf(b) > 1e-9f) ? (a / b) : 0.0f);
+            le_pi_set_float_fast(img, inst->out, le_safe_div_f(a, b));
             LE_STEP_OK;
         }
-        case LE_OP_NEG_F: {
+        LE_OP_LBL(LE_OP_NEG_F) case LE_OP_NEG_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             le_pi_set_float_fast(img, inst->out, -a);
             LE_STEP_OK;
         }
-        case LE_OP_ABS_F: {
+        LE_OP_LBL(LE_OP_ABS_F) case LE_OP_ABS_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             le_pi_set_float_fast(img, inst->out, fabsf(a));
             LE_STEP_OK;
         }
-        case LE_OP_MIN_F: {
+        LE_OP_LBL(LE_OP_MIN_F) case LE_OP_MIN_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             le_pi_set_float_fast(img, inst->out, (a < b) ? a : b);
             LE_STEP_OK;
         }
-        case LE_OP_MAX_F: {
+        LE_OP_LBL(LE_OP_MAX_F) case LE_OP_MAX_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             le_pi_set_float_fast(img, inst->out, (a > b) ? a : b);
             LE_STEP_OK;
         }
-        case LE_OP_CLAMP_F:
+        LE_OP_LBL(LE_OP_CLAMP_F) case LE_OP_CLAMP_F:
             /* Scalar clamp opcode is unused (the CLAMP element emits the
              * LE_FUNC_CLAMP_F block builtin); reject loudly if ever emitted. */
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_SCALE_F: {
+        LE_OP_LBL(LE_OP_SCALE_F) case LE_OP_SCALE_F: {
             uint8_t s_idx = inst->modifier & 0xFF;
             float a = le_pi_get_float_fast(img, inst->in_a);
             float in_val;
@@ -451,11 +622,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             }
             LE_STEP_OK;
         }
-        case LE_OP_CADD_F:
-        case LE_OP_CSUB_F:
-        case LE_OP_CMUL_F:
-        case LE_OP_CDIV_F:
-        case LE_OP_MOVE_C:
+        LE_OP_LBL(LE_OP_CADD_F) case LE_OP_CADD_F:
+        LE_OP_LBL(LE_OP_CSUB_F) case LE_OP_CSUB_F:
+        LE_OP_LBL(LE_OP_CMUL_F) case LE_OP_CMUL_F:
+        LE_OP_LBL(LE_OP_CDIV_F) case LE_OP_CDIV_F:
+        LE_OP_LBL(LE_OP_MOVE_C) case LE_OP_MOVE_C:
 #if LE_ENABLE_COMPLEX
         {
             le_complex_t a = le_pi_get_complex_fast(img, inst->in_a);
@@ -479,39 +650,92 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
         }
 #endif
 
-        case LE_OP_RESERVED_50:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_51:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_52:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_53:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_54:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_55:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_56:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_57:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_58:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_59:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_5A:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_5B:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_5C:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_5D:
-            return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_RESERVED_5E:
-            return LE_ERR_UNKNOWN_OPCODE;
+        LE_OP_LBL(LE_OP_FMA_F) case LE_OP_FMA_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            float b = le_pi_get_float_fast(img, inst->in_b);
+            float c = le_pi_get_float_fast(img, inst->out);
+            le_pi_set_float_fast(img, inst->out, fmaf(a, b, c));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_FMS_F) case LE_OP_FMS_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            float b = le_pi_get_float_fast(img, inst->in_b);
+            float c = le_pi_get_float_fast(img, inst->out);
+            le_pi_set_float_fast(img, inst->out, fmaf(-a, b, c));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_LOAD_F) case LE_OP_LOAD_F: {
+            uint32_t raw = ((uint32_t)inst->in_b << 16) | (uint32_t)inst->in_a;
+            float val;
+            memcpy(&val, &raw, sizeof(float));
+            le_pi_set_float_fast(img, inst->out, val);
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_SQRT_F) case LE_OP_SQRT_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_sqrt(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_SIN_F) case LE_OP_SIN_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_sin(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_COS_F) case LE_OP_COS_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_cos(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_TAN_F) case LE_OP_TAN_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_tan(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_ASIN_F) case LE_OP_ASIN_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_asin(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_ACOS_F) case LE_OP_ACOS_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_acos(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_ATAN_F) case LE_OP_ATAN_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_atan(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_ATAN2_F) case LE_OP_ATAN2_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            float b = le_pi_get_float_fast(img, inst->in_b);
+            le_pi_set_float_fast(img, inst->out, le_fast_atan2(a, b));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_EXP_F) case LE_OP_EXP_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_exp(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_LOG_F) case LE_OP_LOG_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_log(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_LOG10_F) case LE_OP_LOG10_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            le_pi_set_float_fast(img, inst->out, le_fast_log10(a));
+            LE_STEP_OK;
+        }
+        LE_OP_LBL(LE_OP_POW_F) case LE_OP_POW_F: {
+            float a = le_pi_get_float_fast(img, inst->in_a);
+            float b = le_pi_get_float_fast(img, inst->in_b);
+            le_pi_set_float_fast(img, inst->out, le_fast_pow(a, b));
+            LE_STEP_OK;
+        }
         case LE_OP_RESERVED_5F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_CMP_GT: {
+        LE_OP_LBL(LE_OP_CMP_GT) case LE_OP_CMP_GT: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (a > b);
@@ -519,7 +743,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_CMP_LT: {
+        LE_OP_LBL(LE_OP_CMP_LT) case LE_OP_CMP_LT: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (a < b);
@@ -527,7 +751,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_CMP_GE: {
+        LE_OP_LBL(LE_OP_CMP_GE) case LE_OP_CMP_GE: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (a >= b);
@@ -535,7 +759,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_CMP_LE: {
+        LE_OP_LBL(LE_OP_CMP_LE) case LE_OP_CMP_LE: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (a <= b);
@@ -543,7 +767,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_CMP_EQ: {
+        LE_OP_LBL(LE_OP_CMP_EQ) case LE_OP_CMP_EQ: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (fabsf(a - b) < 1e-6f);
@@ -551,7 +775,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_bool_fast(img, inst->out, res);
             LE_STEP_OK;
         }
-        case LE_OP_CMP_NE: {
+        LE_OP_LBL(LE_OP_CMP_NE) case LE_OP_CMP_NE: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             float b = le_pi_get_float_fast(img, inst->in_b);
             bool res = (fabsf(a - b) >= 1e-6f);
@@ -579,38 +803,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_6F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_PID:
+        LE_OP_LBL(LE_OP_PID) case LE_OP_PID:
 #if LE_ENABLE_DSP
         {
-            uint16_t pid_idx = inst->modifier & 0xFF;
-            le_pid_state_t* p = (le_pid_state_t*)le_process_image_kind_state(img, LE_BLK_PID, pid_idx);
-            if (!p) return LE_ERR_OUT_OF_BOUNDS;
-            float sp = le_pi_get_float_fast(img, inst->in_a);
-            float pv = le_pi_get_float_fast(img, inst->in_b);
-            float error = sp - pv;
-
-            float dt = (now_ms - p->last_time_ms) * 0.001f;
-            if (dt <= 0.0f || dt > 1.0f) dt = scan_dt; /* default to the enforced scan period */
-            p->last_time_ms = now_ms;
-
-            /* Proportional */
-            float p_out = p->kp * error;
-
-            /* Integral */
-            p->integral += p->ki * error * dt;
-            /* Anti-windup */
-            if (p->integral > p->out_max) p->integral = p->out_max;
-            if (p->integral < p->out_min) p->integral = p->out_min;
-
-            /* Derivative */
-            float d_out = p->kd * (error - p->prev_error) / dt;
-            p->prev_error = error;
-
-            float output = p_out + p->integral + d_out;
-            if (output > p->out_max) output = p->out_max;
-            if (output < p->out_min) output = p->out_min;
-
-            le_pi_set_float_fast(img, inst->out, output);
+            le_status_t st = le_eval_pid(inst, mod, img, now_ms, scan_dt);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -622,40 +819,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
 
         case LE_OP_RESERVED_71:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_SYM_COMP:
+        LE_OP_LBL(LE_OP_SYM_COMP) case LE_OP_SYM_COMP:
 #if LE_ENABLE_PROTECTION
         {
-            uint16_t sc_idx = inst->modifier & 0x07;
-            uint16_t base_p = (inst->in_a != LE_ADDR_UNUSED) ? (inst->in_a & 0xFF) : 0;
-
-            le_symcomp_state_t* sc = (le_symcomp_state_t*)le_process_image_kind_state(img, LE_BLK_SYMCOMP, sc_idx);
-            if (!sc) return LE_ERR_OUT_OF_BOUNDS;
-            le_phasor_state_t* pa = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p);
-            le_phasor_state_t* pb = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p + 1);
-            le_phasor_state_t* pc = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, base_p + 2);
-            sc->phase_a = pa ? pa->phasor : le_c_make(0, 0);
-            sc->phase_b = pb ? pb->phasor : le_c_make(0, 0);
-            sc->phase_c = pc ? pc->phasor : le_c_make(0, 0);
-
-            /* alpha = 1 < 120 deg = -0.5 + j(sqrt(3)/2) */
-            const le_complex_t alpha  = { -0.5f,  0.8660254f };
-            /* alpha^2 = 1 < 240 deg = -0.5 - j(sqrt(3)/2) */
-            const le_complex_t alpha2 = { -0.5f, -0.8660254f };
-
-            /* I0 = (A + B + C) / 3 */
-            le_complex_t sum0 = le_c_add(le_c_add(sc->phase_a, sc->phase_b), sc->phase_c);
-            sc->seq_0 = le_c_scale(sum0, 1.0f / 3.0f);
-
-            /* I1 = (A + alpha*B + alpha2*C) / 3 */
-            le_complex_t sum1 = le_c_add(sc->phase_a, le_c_add(le_c_mul(alpha, sc->phase_b), le_c_mul(alpha2, sc->phase_c)));
-            sc->seq_1 = le_c_scale(sum1, 1.0f / 3.0f);
-
-            /* I2 = (A + alpha2*B + alpha*C) / 3 */
-            le_complex_t sum2 = le_c_add(sc->phase_a, le_c_add(le_c_mul(alpha2, sc->phase_b), le_c_mul(alpha, sc->phase_c)));
-            sc->seq_2 = le_c_scale(sum2, 1.0f / 3.0f);
-
-            /* Write positive sequence magnitude to out */
-            le_pi_set_float_fast(img, inst->out, le_c_mag(sc->seq_1));
+            le_status_t st = le_eval_sym_comp(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -664,84 +832,15 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_DIST_21:
+        LE_OP_LBL(LE_OP_DIST_21) case LE_OP_DIST_21:
             /* Marker: the active DIST_21 path is the variable-arity BLOCK
              * builtin LE_FUNC_DIST_21. */
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_I2C:
+        LE_OP_LBL(LE_OP_I2C) case LE_OP_I2C:
 #if LE_ENABLE_SERIAL_BUS
         {
-            uint8_t idx = inst->modifier;
-            le_i2c_device_state_t* dev =
-                (le_i2c_device_state_t*)le_process_image_kind_state(img, LE_BLK_I2C, idx);
-            if (!dev) return LE_ERR_OUT_OF_BOUNDS;
-
-            /* 1. Startup Code: execute on first scan if not initialized */
-            if (!dev->initialized) {
-                if (dev->startup_len > 0 && g_le_hal && g_le_hal->i2c_write) {
-                    dev->initialized = g_le_hal->i2c_write(dev->addr_7bit, dev->startup_data, dev->startup_len);
-                } else {
-                    dev->initialized = true;
-                }
-            }
-
-            /* 2. Rising-edge trigger evaluation on in_a */
-            bool trigger = le_process_image_get_bool(img, inst->in_a);
-            bool rising_edge = (trigger && !dev->prev_trigger);
-            dev->prev_trigger = trigger;
-
-            /* 3. Determine if poll should occur: rising edge OR polling rate expired */
-            bool do_poll = false;
-            if (rising_edge) {
-                do_poll = true;
-            } else if (dev->poll_rate_ms > 0 && (now_ms - dev->last_poll_ms >= dev->poll_rate_ms)) {
-                do_poll = true;
-            }
-
-            bool success = false;
-            if (do_poll) {
-                dev->last_poll_ms = now_ms;
-                if (g_le_hal) {
-                    if (dev->poll_tx_len > 0 && g_le_hal->i2c_write_read) {
-                        success = g_le_hal->i2c_write_read(dev->addr_7bit, dev->poll_tx_data, dev->poll_tx_len,
-                                                           dev->rx_buf, dev->poll_rx_len);
-                    } else if (g_le_hal->i2c_read && dev->poll_rx_len > 0) {
-                        success = g_le_hal->i2c_read(dev->addr_7bit, dev->rx_buf, dev->poll_rx_len);
-                    }
-                }
-
-                if (success) {
-                    dev->poll_count++;
-                    dev->last_success = true;
-
-                    /* Store received data in process image if destination configured */
-                    if (dev->data_dest_addr != LE_ADDR_UNUSED) {
-                        if (LE_ADDR_IS_FLOAT(dev->data_dest_addr))
-                        {
-                            float val = 0.0f;
-                            if (dev->poll_rx_len >= 4) {
-                                memcpy(&val, dev->rx_buf, 4);
-                            } else if (dev->poll_rx_len >= 2) {
-                                int16_t raw16 = (int16_t)(((uint16_t)dev->rx_buf[0] << 8) | dev->rx_buf[1]);
-                                val = (float)raw16;
-                            } else if (dev->poll_rx_len == 1) {
-                                val = (float)dev->rx_buf[0];
-                            }
-                            le_process_image_set_float(img, dev->data_dest_addr, val);
-                        } else {
-                            bool b = (dev->rx_buf[0] != 0);
-                            le_process_image_set_bool(img, dev->data_dest_addr, b);
-                        }
-                    }
-                } else {
-                    dev->last_success = false;
-                }
-            }
-
-            /* 4. Output status / strobe */
-            if (inst->out != LE_ADDR_UNUSED) {
-                le_process_image_set_bool(img, inst->out, do_poll ? success : dev->last_success);
-            }
+            le_status_t st = le_eval_i2c(inst, img, now_ms);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -750,75 +849,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_SPI:
+        LE_OP_LBL(LE_OP_SPI) case LE_OP_SPI:
 #if LE_ENABLE_SERIAL_BUS
         {
-            uint8_t idx = inst->modifier;
-            le_spi_device_state_t* dev =
-                (le_spi_device_state_t*)le_process_image_kind_state(img, LE_BLK_SPI, idx);
-            if (!dev) return LE_ERR_OUT_OF_BOUNDS;
-
-            /* 1. Startup Code: execute on first scan if not initialized */
-            if (!dev->initialized) {
-                if (dev->startup_len > 0 && g_le_hal && g_le_hal->spi_transfer) {
-                    dev->initialized = g_le_hal->spi_transfer(dev->cs_pin, dev->startup_data, NULL, dev->startup_len);
-                } else {
-                    dev->initialized = true;
-                }
-            }
-
-            /* 2. Rising-edge trigger evaluation on in_a */
-            bool trigger = le_process_image_get_bool(img, inst->in_a);
-            bool rising_edge = (trigger && !dev->prev_trigger);
-            dev->prev_trigger = trigger;
-
-            /* 3. Determine if poll should occur */
-            bool do_poll = false;
-            if (rising_edge) {
-                do_poll = true;
-            } else if (dev->poll_rate_ms > 0 && (now_ms - dev->last_poll_ms >= dev->poll_rate_ms)) {
-                do_poll = true;
-            }
-
-            bool success = false;
-            if (do_poll) {
-                dev->last_poll_ms = now_ms;
-                if (g_le_hal && g_le_hal->spi_transfer && dev->poll_len > 0) {
-                    success = g_le_hal->spi_transfer(dev->cs_pin, dev->poll_tx_data, dev->rx_buf, dev->poll_len);
-                }
-
-                if (success) {
-                    dev->poll_count++;
-                    dev->last_success = true;
-
-                    /* Store received data in process image if destination configured */
-                    if (dev->data_dest_addr != LE_ADDR_UNUSED) {
-                        if (LE_ADDR_IS_FLOAT(dev->data_dest_addr))
-                        {
-                            float val = 0.0f;
-                            if (dev->poll_len >= 4) {
-                                memcpy(&val, dev->rx_buf, 4);
-                            } else if (dev->poll_len >= 2) {
-                                int16_t raw16 = (int16_t)(((uint16_t)dev->rx_buf[0] << 8) | dev->rx_buf[1]);
-                                val = (float)raw16;
-                            } else if (dev->poll_len == 1) {
-                                val = (float)dev->rx_buf[0];
-                            }
-                            le_process_image_set_float(img, dev->data_dest_addr, val);
-                        } else {
-                            bool b = (dev->rx_buf[0] != 0);
-                            le_process_image_set_bool(img, dev->data_dest_addr, b);
-                        }
-                    }
-                } else {
-                    dev->last_success = false;
-                }
-            }
-
-            /* 4. Output status / strobe */
-            if (inst->out != LE_ADDR_UNUSED) {
-                le_process_image_set_bool(img, inst->out, do_poll ? success : dev->last_success);
-            }
+            le_status_t st = le_eval_spi(inst, img, now_ms);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -847,13 +882,16 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_7F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_EXT_CALL: {
+        LE_OP_LBL(LE_OP_EXT_CALL) case LE_OP_EXT_CALL: {
             uint8_t func_id = mod; /* function ID passed in modifier */
+            const uint16_t args[3] = { inst->in_a, inst->in_b, inst->out };
             if (g_le_hal && g_le_hal->ext_call)
             {
-                /* Legacy two-operand call: extract the 2-in/1-out operands. */
-                const uint16_t args[3] = { inst->in_a, inst->in_b, inst->out };
                 return g_le_hal->ext_call(func_id, args, 2, 1, img);
+            }
+            le_status_t st = le_custom_nodes_dispatch(func_id, args, 2, 1, img);
+            if (st != LE_ERR_UNKNOWN_OPCODE) {
+                return st;
             }
             /* Default fallback: NOP if no board handler registered */
             LE_STEP_OK;
@@ -889,28 +927,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_8F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_LPF_1P:
+        LE_OP_LBL(LE_OP_LPF_1P) case LE_OP_LPF_1P:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_lpf_state_t* f = (le_lpf_state_t*)le_process_image_kind_state(img, LE_BLK_LPF, idx);
-            if (!f) return LE_ERR_OUT_OF_BOUNDS;
-            float alpha = f->alpha;
-            if (inst->in_b != LE_ADDR_UNUSED) {
-                float dyn_alpha = le_pi_get_float_fast(img, inst->in_b);
-                if (dyn_alpha >= 0.0f && dyn_alpha <= 1.0f) alpha = dyn_alpha;
-            }
-            if (!f->initialized) {
-                f->prev_y = in_x;
-                f->initialized = true;
-                out_y = in_x;
-            } else {
-                out_y = f->prev_y + alpha * (in_x - f->prev_y);
-                f->prev_y = out_y;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_lpf_1p(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -919,21 +940,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_BIQUAD_IIR:
+        LE_OP_LBL(LE_OP_BIQUAD_IIR) case LE_OP_BIQUAD_IIR:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_biquad_state_t* b = (le_biquad_state_t*)le_process_image_kind_state(img, LE_BLK_BIQUAD, idx);
-            if (!b) return LE_ERR_OUT_OF_BOUNDS;
-            /* Direct Form II Canonical Form */
-            float w = in_x - (b->a1 * b->w1) - (b->a2 * b->w2);
-            out_y = (b->b0 * w) + (b->b1 * b->w1) + (b->b2 * b->w2);
-            b->w2 = b->w1;
-            b->w1 = w;
-            b->initialized = true;
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_biquad_iir(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -942,30 +953,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_MOVING_AVG:
+        LE_OP_LBL(LE_OP_MOVING_AVG) case LE_OP_MOVING_AVG:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_moving_avg_state_t* m = (le_moving_avg_state_t*)le_process_image_kind_state(img, LE_BLK_MOVING_AVG, idx);
-            if (!m) return LE_ERR_OUT_OF_BOUNDS;
-            uint16_t wsz = (m->window_size > 0 && m->window_size <= LE_MOVING_AVG_MAX_WINDOW) ? m->window_size : 8;
-            if (m->count < wsz) {
-                m->buffer[m->write_idx] = in_x;
-                m->sum += in_x;
-                m->count++;
-                m->write_idx++;
-                if (m->write_idx >= wsz) m->write_idx = 0;
-                out_y = m->sum / (float)m->count;
-            } else {
-                m->sum = m->sum - m->buffer[m->write_idx] + in_x;
-                m->buffer[m->write_idx] = in_x;
-                m->write_idx++;
-                if (m->write_idx >= wsz) m->write_idx = 0;
-                out_y = m->sum / (float)wsz;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_moving_avg(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -974,30 +966,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_RATE_LIMITER:
+        LE_OP_LBL(LE_OP_RATE_LIMITER) case LE_OP_RATE_LIMITER:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_rate_limiter_state_t* r = (le_rate_limiter_state_t*)le_process_image_kind_state(img, LE_BLK_RATE_LIMITER, idx);
-            if (!r) return LE_ERR_OUT_OF_BOUNDS;
-            if (!r->initialized) {
-                r->prev_y = in_x;
-                r->initialized = true;
-                out_y = in_x;
-            } else {
-                float delta = in_x - r->prev_y;
-                if (delta > r->rising_rate) {
-                    out_y = r->prev_y + r->rising_rate;
-                } else if (delta < -r->falling_rate) {
-                    out_y = r->prev_y - r->falling_rate;
-                } else {
-                    out_y = in_x;
-                }
-                r->prev_y = out_y;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_rate_limiter(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1006,23 +979,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_DEADBAND:
+        LE_OP_LBL(LE_OP_DEADBAND) case LE_OP_DEADBAND:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            const le_deadband_state_t* d = (le_deadband_state_t*)le_process_image_kind_state(img, LE_BLK_DEADBAND, idx);
-            if (!d) return LE_ERR_OUT_OF_BOUNDS;
-            float diff = in_x - d->center;
-            if (fabsf(diff) <= d->threshold) {
-                out_y = d->center;
-            } else if (diff > d->threshold) {
-                out_y = d->center + (diff - d->threshold);
-            } else {
-                out_y = d->center + (diff + d->threshold);
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_deadband(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1031,25 +992,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_WASHOUT:
+        LE_OP_LBL(LE_OP_WASHOUT) case LE_OP_WASHOUT:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_washout_state_t* w = (le_washout_state_t*)le_process_image_kind_state(img, LE_BLK_WASHOUT, idx);
-            if (!w) return LE_ERR_OUT_OF_BOUNDS;
-            if (!w->initialized) {
-                w->prev_x = in_x;
-                w->prev_y = 0.0f;
-                w->initialized = true;
-                out_y = 0.0f;
-            } else {
-                out_y = w->alpha * (w->prev_y + in_x - w->prev_x);
-                w->prev_x = in_x;
-                w->prev_y = out_y;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_washout(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1058,28 +1005,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_PEAK_DETECTOR:
+        LE_OP_LBL(LE_OP_PEAK_DETECTOR) case LE_OP_PEAK_DETECTOR:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_peak_state_t* p = (le_peak_state_t*)le_process_image_kind_state(img, LE_BLK_PEAK, idx);
-            if (!p) return LE_ERR_OUT_OF_BOUNDS;
-            float mag = fabsf(in_x);
-            if (!p->initialized) {
-                p->peak = mag;
-                p->initialized = true;
-                out_y = mag;
-            } else {
-                if (mag >= p->peak) {
-                    p->peak = mag;
-                } else {
-                    p->peak = p->peak * p->decay_rate;
-                }
-                out_y = p->peak;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_peak_detector(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1088,32 +1018,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_RMS:
+        LE_OP_LBL(LE_OP_RMS) case LE_OP_RMS:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_rms_state_t* rms = (le_rms_state_t*)le_process_image_kind_state(img, LE_BLK_RMS, idx);
-            if (!rms) return LE_ERR_OUT_OF_BOUNDS;
-            float sq = in_x * in_x;
-            uint16_t wsz = (rms->window_size > 0 && rms->window_size <= LE_RMS_MAX_WINDOW) ? rms->window_size : 16;
-            if (rms->count < wsz) {
-                rms->buffer[rms->write_idx] = sq;
-                rms->sum_sq += sq;
-                rms->count++;
-                rms->write_idx++;
-                if (rms->write_idx >= wsz) rms->write_idx = 0;
-                out_y = sqrtf(rms->sum_sq / (float)rms->count);
-            } else {
-                rms->sum_sq = rms->sum_sq - rms->buffer[rms->write_idx] + sq;
-                if (rms->sum_sq < 0.0f) rms->sum_sq = 0.0f;
-                rms->buffer[rms->write_idx] = sq;
-                rms->write_idx++;
-                if (rms->write_idx >= wsz) rms->write_idx = 0;
-                out_y = sqrtf(rms->sum_sq / (float)wsz);
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_rms(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1122,36 +1031,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_MEDIAN:
+        LE_OP_LBL(LE_OP_MEDIAN) case LE_OP_MEDIAN:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_median_state_t* m = (le_median_state_t*)le_process_image_kind_state(img, LE_BLK_MEDIAN, idx);
-            if (!m) return LE_ERR_OUT_OF_BOUNDS;
-            uint16_t wsz = (m->window_size > 0 && m->window_size <= LE_MAX_MEDIAN_WINDOW) ? m->window_size : 5;
-            m->buffer[m->write_idx] = in_x;
-            m->write_idx++;
-            if (m->write_idx >= wsz) m->write_idx = 0;
-            if (m->count < wsz) m->count++;
-
-            float sort_buf[LE_MAX_MEDIAN_WINDOW];
-            uint16_t n = m->count;
-            for (uint16_t i = 0; i < n; i++) {
-                sort_buf[i] = m->buffer[i];
-            }
-            for (uint16_t i = 1; i < n; i++) {
-                float key = sort_buf[i];
-                int32_t j = (int32_t)i - 1;
-                while (j >= 0 && sort_buf[j] > key) {
-                    sort_buf[j + 1] = sort_buf[j];
-                    j--;
-                }
-                sort_buf[j + 1] = key;
-            }
-            out_y = sort_buf[n / 2];
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_median(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1160,34 +1044,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_DERIVATIVE:
+        LE_OP_LBL(LE_OP_DERIVATIVE) case LE_OP_DERIVATIVE:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_derivative_state_t* d = (le_derivative_state_t*)le_process_image_kind_state(img, LE_BLK_DERIVATIVE, idx);
-            if (!d) return LE_ERR_OUT_OF_BOUNDS;
-            float alpha = d->alpha;
-            if (inst->in_b != LE_ADDR_UNUSED) {
-                float dyn_alpha = le_pi_get_float_fast(img, inst->in_b);
-                if (dyn_alpha >= 0.0f && dyn_alpha <= 1.0f) alpha = dyn_alpha;
-            }
-            if (!d->initialized) {
-                d->prev_x = in_x;
-                d->prev_y = 0.0f;
-                d->initialized = true;
-                out_y = 0.0f;
-            } else {
-                float dx = in_x - d->prev_x;
-                /* Cadence derived strictly from the VM scan period; `gain` remains
-                 * an optional engineering-unit multiplier (default 1.0). */
-                float raw_deriv = dx * scan_srate * d->gain;
-                out_y = d->prev_y + alpha * (raw_deriv - d->prev_y);
-                d->prev_x = in_x;
-                d->prev_y = out_y;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_derivative(inst, mod, img, scan_srate);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1196,44 +1057,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_ZERO_CROSSING:
+        LE_OP_LBL(LE_OP_ZERO_CROSSING) case LE_OP_ZERO_CROSSING:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_zero_crossing_state_t* zc = (le_zero_crossing_state_t*)le_process_image_kind_state(img, LE_BLK_ZERO_CROSSING, idx);
-            if (!zc) return LE_ERR_OUT_OF_BOUNDS;
-            if (inst->in_b != LE_ADDR_UNUSED && le_pi_get_bool_fast(img, inst->in_b)) {
-                zc->frequency_hz = 0.0f;
-                zc->samples_since_cross = 0;
-                zc->last_state = 0;
-            } else {
-                /* Cadence derived strictly from the VM scan period. */
-                float srate = scan_srate;
-                zc->samples_since_cross++;
-                int8_t current_state = zc->last_state;
-                if (in_x > zc->hysteresis) {
-                    current_state = 1;
-                } else if (in_x < -zc->hysteresis) {
-                    current_state = -1;
-                }
-
-                if (zc->last_state == -1 && current_state == 1) {
-                    if (zc->samples_since_cross > 0) {
-                        zc->frequency_hz = srate / (float)zc->samples_since_cross;
-                    }
-                    zc->samples_since_cross = 0;
-                }
-
-                if (zc->samples_since_cross > (uint32_t)(srate * 2.0f)) {
-                    zc->frequency_hz = 0.0f;
-                }
-
-                zc->last_state = current_state;
-            }
-            out_y = zc->frequency_hz;
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_zero_crossing(inst, mod, img, scan_srate);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1242,36 +1070,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_LUT_1D:
+        LE_OP_LBL(LE_OP_LUT_1D) case LE_OP_LUT_1D:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            const le_lut_1d_state_t* lut = (const le_lut_1d_state_t*)le_process_image_kind_state(img, LE_BLK_LUT_1D, idx);
-            if (!lut) return LE_ERR_OUT_OF_BOUNDS;
-            if (lut->num_points < 2) {
-                out_y = (lut->num_points == 1) ? lut->y[0] : in_x;
-            } else if (in_x <= lut->x[0]) {
-                out_y = lut->y[0];
-            } else if (in_x >= lut->x[lut->num_points - 1]) {
-                out_y = lut->y[lut->num_points - 1];
-            } else {
-                out_y = lut->y[lut->num_points - 1];
-                for (uint16_t i = 0; i < lut->num_points - 1; i++) {
-                    if (in_x >= lut->x[i] && in_x <= lut->x[i + 1]) {
-                        float dx = lut->x[i + 1] - lut->x[i];
-                        if (fabsf(dx) > 1e-9f) {
-                            float t = (in_x - lut->x[i]) / dx;
-                            out_y = lut->y[i] + t * (lut->y[i + 1] - lut->y[i]);
-                        } else {
-                            out_y = lut->y[i];
-                        }
-                        break;
-                    }
-                }
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_lut_1d(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1280,48 +1083,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_TOTALIZER:
+        LE_OP_LBL(LE_OP_TOTALIZER) case LE_OP_TOTALIZER:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_totalizer_state_t* tot = (le_totalizer_state_t*)le_process_image_kind_state(img, LE_BLK_TOTALIZER, idx);
-            if (!tot) return LE_ERR_OUT_OF_BOUNDS;
-            bool reset = false;
-            if (inst->in_b != LE_ADDR_UNUSED) {
-                reset = le_pi_get_bool_fast(img, inst->in_b);
-            }
-            if (reset) {
-                tot->accumulator = 0.0f;
-                tot->compensation = 0.0f;
-                tot->prev_x = in_x;
-                tot->initialized = true;
-            } else if (!tot->initialized) {
-                tot->prev_x = in_x;
-                tot->initialized = true;
-            } else {
-                /* Cadence derived strictly from the VM scan period. */
-                float dt = scan_dt;
-                float tb = tot->time_base_sec;
-                if (tb <= 0.0f) tb = 1.0f;
-                float avg_rate = 0.5f * (in_x + tot->prev_x);
-                float delta = (avg_rate * (dt / tb)) * tot->scale_factor;
-
-                /* Kahan compensated summation (48-bit equivalent mantissa precision) */
-                float y = delta - tot->compensation;
-                float t = tot->accumulator + y;
-                tot->compensation = (t - tot->accumulator) - y;
-                tot->accumulator = t;
-
-                if (tot->max_limit > 0.0f && tot->accumulator > tot->max_limit) {
-                    tot->accumulator = tot->max_limit;
-                    tot->compensation = 0.0f;
-                }
-                tot->prev_x = in_x;
-            }
-            out_y = tot->accumulator;
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_totalizer(inst, mod, img, scan_dt);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1330,34 +1096,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 #endif
-        case LE_OP_MIN_MAX_HOLD:
+        LE_OP_LBL(LE_OP_MIN_MAX_HOLD) case LE_OP_MIN_MAX_HOLD:
 #if LE_ENABLE_DSP
         {
-            uint8_t idx = mod & 0xFF;
-            float in_x = le_pi_get_float_fast(img, inst->in_a);
-            float out_y = 0.0f;
-            le_min_max_hold_state_t* h = (le_min_max_hold_state_t*)le_process_image_kind_state(img, LE_BLK_MIN_MAX_HOLD, idx);
-            if (!h) return LE_ERR_OUT_OF_BOUNDS;
-            bool reset = false;
-            if (inst->in_b != LE_ADDR_UNUSED) {
-                reset = le_pi_get_bool_fast(img, inst->in_b);
-            }
-            if (reset || !h->initialized) {
-                h->min_val = in_x;
-                h->max_val = in_x;
-                h->initialized = true;
-            } else {
-                if (in_x < h->min_val) h->min_val = in_x;
-                if (in_x > h->max_val) h->max_val = in_x;
-            }
-            if (h->mode == 1) {
-                out_y = h->min_val;
-            } else if (h->mode == 2) {
-                out_y = h->max_val - h->min_val;
-            } else {
-                out_y = h->max_val;
-            }
-            le_pi_set_float_fast(img, inst->out, out_y);
+            le_status_t st = le_eval_min_max_hold(inst, mod, img);
+            if (st != LE_OK) return st;
             LE_STEP_OK;
         }
 #else
@@ -1370,7 +1113,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         case LE_OP_RESERVED_9F:
             return LE_ERR_UNKNOWN_OPCODE;
-        case LE_OP_BLOCK: {
+        LE_OP_LBL(LE_OP_BLOCK) case LE_OP_BLOCK: {
             if (inst->in_a >= block_count || !blocks) {
                 return LE_ERR_OUT_OF_BOUNDS;
             }
@@ -1384,832 +1127,11 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
                 desc = (const le_block_desc_t*)((const uint8_t*)desc + LE_BLOCK_DESC_HEADER_BYTES +
                                                 (size_t)wc * sizeof(uint16_t));
             }
-            uint16_t argc = (uint16_t)desc->in_count + (uint16_t)desc->out_count;
             const uint16_t* args = (const uint16_t*)(desc + 1); /* args follow the header */
 
-            if (mod < LE_FUNC_CUSTOM_BASE) {
-                /* Builtin function dispatch (modifier-domain table). */
-                switch (mod) {
-                    case LE_FUNC_MUX_SELECT: {
-                        /* args = [sel, in0, in1, out] (3-in/1-out) */
-                        if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        bool sel = le_pi_get_bool_fast(img, args[0]);
-                        bool in0 = le_pi_get_bool_fast(img, args[1]);
-                        bool in1 = le_pi_get_bool_fast(img, args[2]);
-                        le_pi_set_bool_fast(img, args[3], sel ? in1 : in0);
-                        LE_STEP_OK;
-                    }
-
-                    case LE_FUNC_RECT2POLAR:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* args = [real, imag, out_mag, out_angle_rad] (2-in/2-out) */
-                        if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        float x = le_pi_get_float_fast(img, args[0]);
-                        float y = le_pi_get_float_fast(img, args[1]);
-                        float mag = le_fast_cmplx_mag(x, y);
-                        float ang = le_fast_atan2(y, x);
-                        le_pi_set_float_fast(img, args[2], mag);
-                        le_pi_set_float_fast(img, args[3], ang);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_POLAR2RECT:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* args = [mag, angle_rad, out_real, out_imag] (2-in/2-out) */
-                        if (desc->in_count < 2 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        float mag = le_pi_get_float_fast(img, args[0]);
-                        float ang = le_pi_get_float_fast(img, args[1]);
-                        float s, c;
-                        le_sincos(ang, &s, &c);
-                        le_pi_set_float_fast(img, args[2], mag * c);
-                        le_pi_set_float_fast(img, args[3], mag * s);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_COMPLEX2POLAR:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* complex in -> {mag, angle} (1-in/2-out) */
-                        if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        le_complex_t c = le_pi_get_complex_fast(img, args[0]);
-                        le_pi_set_float_fast(img, args[1], le_c_mag(c));
-                        le_pi_set_float_fast(img, args[2], le_c_ang(c));
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_COMPLEX2RECT:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* complex in -> {real, imag} (1-in/2-out) */
-                        if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        le_complex_t c = le_pi_get_complex_fast(img, args[0]);
-                        le_pi_set_float_fast(img, args[1], c.r);
-                        le_pi_set_float_fast(img, args[2], c.i);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_RECT2COMPLEX:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* {real, imag} floats -> complex out (2-in/1-out) */
-                        if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        float re = le_pi_get_float_fast(img, args[0]);
-                        float im = le_pi_get_float_fast(img, args[1]);
-                        le_pi_set_complex_fast(img, args[2], le_c_make(re, im));
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_POLAR2COMPLEX:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* {mag, angle} floats -> complex out (2-in/1-out) */
-                        if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        float mag = le_pi_get_float_fast(img, args[0]);
-                        float ang = le_pi_get_float_fast(img, args[1]);
-                        le_pi_set_complex_fast(img, args[2], le_c_polar(mag, ang));
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_PHASOR_SHIFT:
-#if LE_ENABLE_COMPLEX
-                    {
-                        /* args = [real, imag, delta_rad, out_real, out_imag] (3-in/2-out) */
-                        if (desc->in_count < 3 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        float x = le_pi_get_float_fast(img, args[0]);
-                        float y = le_pi_get_float_fast(img, args[1]);
-                        float delta = le_pi_get_float_fast(img, args[2]);
-                        float sn, cs;
-                        le_sincos(delta, &sn, &cs);
-                        le_pi_set_float_fast(img, args[3], x * cs - y * sn);
-                        le_pi_set_float_fast(img, args[4], x * sn + y * cs);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_CLAMP_F: {
-                        /* [value, min, max] -> [out] (3-in/1-out) */
-                        if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        float v = le_pi_get_float_fast(img, args[0]);
-                        float mn = le_pi_get_float_fast(img, args[1]);
-                        float mx = le_pi_get_float_fast(img, args[2]);
-                        float lo = (mn < mx) ? mn : mx;   /* robust to swapped bounds */
-                        float hi = (mn < mx) ? mx : mn;
-                        float r = (v < lo) ? lo : ((v > hi) ? hi : v);
-                        le_pi_set_float_fast(img, args[3], r);
-                        LE_STEP_OK;
-                    }
-                    case LE_FUNC_PHASOR_1P:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* Dynamic frequency phasor extractor with self-sync support.
-                         * args = [sample, sync_complex, freq_hz, out_complex] (3-in/1-out)
-                         * 
-                         * The freq_hz input determines the DFT window:
-                         * - Higher freq = fewer samples per cycle in the buffer
-                         * - Lower freq = more samples per cycle in the buffer
-                         * - DFT window size = (1.0f / dt) / freq_hz
-                         * 
-                         * Self-sync mode (state property):
-                         * - true: Output angle is 0-degree referenced (self-synchronized)
-                         * - false: Output angle referenced to sync phasor
-                         */
-                        if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t p_idx = desc->reserved;
-                        le_phasor_state_t* p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, p_idx);
-                        if (!p) p = (le_phasor_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR, 0);
-                        if (!p) return LE_ERR_OUT_OF_BOUNDS;
-                        
-                        // Get inputs: [sample, sync] (2-in) or [sample, sync, freq_hz] (3-in)
-                        float sample = le_pi_get_float_fast(img, args[0]);
-                        le_complex_t sync = le_pi_get_complex_fast(img, args[1]);
-                        float freq_hz = 60.0f;
-                        uint16_t out_addr = args[2];
-                        if (desc->in_count >= 3) {
-                            freq_hz = le_pi_get_float_fast(img, args[2]);
-                            out_addr = args[3];
-                        }
-                        
-                        // Derive sample rate strictly from enforced VM scan cadence
-                        float sample_rate = scan_srate;
-                        
-                        // Validate freq_hz
-                        if (freq_hz <= 0.0f) freq_hz = 60.0f;  // fallback to 60 Hz
-                        if (freq_hz > sample_rate / 2.0f) freq_hz = sample_rate / 2.0f;  // Nyquist
-                        
-                        // Compute samples needed for one cycle at this frequency
-                        float samples_per_cycle = sample_rate / freq_hz;
-                        if (samples_per_cycle < 4.0f) samples_per_cycle = 4.0f;
-                        if (samples_per_cycle > (float)LE_MAX_RAW_SAMPLES) samples_per_cycle = (float)LE_MAX_RAW_SAMPLES;
-                        
-                        uint16_t N = (uint16_t)(samples_per_cycle + 0.5f);
-                        if (N < 4) N = 4;
-                        if (N > LE_MAX_RAW_SAMPLES) N = LE_MAX_RAW_SAMPLES;
-                        p->samples_per_cycle = N;
-                        
-                        // Store sample in circular buffer of length N
-                        if (p->raw_write_idx >= N) p->raw_write_idx = 0;
-                        p->raw_samples[p->raw_write_idx] = sample;
-                        p->raw_write_idx++;
-                        if (p->raw_write_idx >= N) p->raw_write_idx = 0;
-                        
-                        // Full-cycle Discrete Fourier Transform with Angle-Step Recurrence
-                        // Evaluates cos/sin step ONCE per scan (arm_math accelerated on ARM);
-                        // inner loop uses pure Euler rotation (zero trig calls, zero stack spills).
-                        float sum_cos = 0.0f, sum_sin = 0.0f;
-                        float angle_step = 2.0f * (float)M_PI / (float)N;
-                        float sin_step, cos_step;
-                        le_sincos(angle_step, &sin_step, &cos_step);
-                        float c = 1.0f, s = 0.0f;
-
-                        uint16_t s_idx = p->raw_write_idx;
-                        for (uint16_t k = 0; k < N; k++) {
-                            float s_val = p->raw_samples[s_idx];
-                            sum_cos += s_val * c;
-                            sum_sin -= s_val * s;
-                            s_idx++;
-                            if (s_idx >= N) s_idx = 0;
-                            float c_next = c * cos_step - s * sin_step;
-                            float s_next = s * cos_step + c * sin_step;
-                            c = c_next;
-                            s = s_next;
-                        }
-                        
-                        float real = (2.0f / (float)N) * sum_cos;
-                        float imag = (2.0f / (float)N) * sum_sin;
-                        le_complex_t ph = le_c_make(real, imag);
-                        
-                        // Synchronization logic via direct rectangular complex division
-                        le_complex_t out;
-                        float mag, ang;
-                        if (p->self_sync) {
-                            mag = le_c_mag(ph);
-                            ang = 0.0f;
-                            out = le_c_make(mag, 0.0f);
-                        } else {
-                            float sync_sq = sync.r * sync.r + sync.i * sync.i;
-                            if (sync_sq > 1e-12f) {
-                                float inv_sq = 1.0f / sync_sq;
-                                float out_r = (ph.r * sync.r + ph.i * sync.i) * inv_sq;
-                                float out_i = (ph.i * sync.r - ph.r * sync.i) * inv_sq;
-                                out = le_c_make(out_r, out_i);
-                                mag = le_fast_cmplx_mag(out_r, out_i);
-                                ang = le_fast_atan2(out_i, out_r);
-                            } else {
-                                out = ph;
-                                mag = le_c_mag(ph);
-                                ang = le_c_ang(ph);
-                            }
-                        }
-                        
-                        p->magnitude = mag;
-                        p->angle_rad = ang;
-                        p->phasor = out;
-                        le_pi_set_complex_fast(img, out_addr, out);
-                        
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_PHASOR_3P:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* Three-phase dynamic frequency phasor extractor (PHASOR_3P).
-                         * args = [sample_a, sample_b, sample_c, sync_cplx, freq_hz,
-                         *         out_a, out_b, out_c]  (5-in/3-out)
-                         * Runs three independent single-phase phasor extractors (a, b, c),
-                         * each with its own circular sample buffer and DFT accumulator,
-                         * all sharing a single bus reference phasor (sync) and a single
-                         * system frequency input (freq_hz). The samples_per_cycle and
-                         * self_sync properties apply identically to every
-                         * phase, exactly as PHASOR_1P applies them to one phase. */
-                        if (desc->in_count < 5 || desc->out_count < 3) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t p_idx = desc->reserved;
-                        le_phasor3_state_t* p = (le_phasor3_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR3, p_idx);
-                        if (!p) p = (le_phasor3_state_t*)le_process_image_kind_state(img, LE_BLK_PHASOR3, 0);
-                        if (!p) return LE_ERR_OUT_OF_BOUNDS;
-
-                        // Shared inputs: sync phasor + system frequency
-                        le_complex_t sync = le_pi_get_complex_fast(img, args[3]);
-                        float freq_hz = le_pi_get_float_fast(img, args[4]);
-
-                        // Derive sample rate strictly from enforced VM scan cadence
-                        float sample_rate = scan_srate;
-
-                        // Validate freq_hz (shared across phases)
-                        if (freq_hz <= 0.0f) freq_hz = 60.0f;  // fallback to 60 Hz
-                        if (freq_hz > sample_rate / 2.0f) freq_hz = sample_rate / 2.0f;  // Nyquist
-
-                        // Compute samples needed for one cycle at this frequency (shared DFT window)
-                        float samples_per_cycle = sample_rate / freq_hz;
-                        if (samples_per_cycle < 4.0f) samples_per_cycle = 4.0f;
-                        if (samples_per_cycle > (float)LE_MAX_RAW_SAMPLES) samples_per_cycle = (float)LE_MAX_RAW_SAMPLES;
-
-                        uint16_t N = (uint16_t)(samples_per_cycle + 0.5f);
-                        if (N < 4) N = 4;
-                        if (N > LE_MAX_RAW_SAMPLES) N = LE_MAX_RAW_SAMPLES;
-                        p->samples_per_cycle = N;
-
-                        // Store incoming samples into per-phase circular buffers of length N
-                        float sample_a = le_pi_get_float_fast(img, args[0]);
-                        float sample_b = le_pi_get_float_fast(img, args[1]);
-                        float sample_c = le_pi_get_float_fast(img, args[2]);
-
-                        if (p->raw_write_idx_a >= N) p->raw_write_idx_a = 0;
-                        p->raw_samples_a[p->raw_write_idx_a] = sample_a;
-                        p->raw_write_idx_a++;
-                        if (p->raw_write_idx_a >= N) p->raw_write_idx_a = 0;
-
-                        if (p->raw_write_idx_b >= N) p->raw_write_idx_b = 0;
-                        p->raw_samples_b[p->raw_write_idx_b] = sample_b;
-                        p->raw_write_idx_b++;
-                        if (p->raw_write_idx_b >= N) p->raw_write_idx_b = 0;
-
-                        if (p->raw_write_idx_c >= N) p->raw_write_idx_c = 0;
-                        p->raw_samples_c[p->raw_write_idx_c] = sample_c;
-                        p->raw_write_idx_c++;
-                        if (p->raw_write_idx_c >= N) p->raw_write_idx_c = 0;
-
-                        // Concurrent 3-phase Full-cycle DFT with Angle-Step Euler Recurrence
-                        // Evaluates cos/sin step ONCE per scan (arm_math accelerated on ARM).
-                        // The inner loop processes phases A, B, and C in lockstep with zero trig calls.
-                        float angle_step = 2.0f * (float)M_PI / (float)N;
-                        float sin_step, cos_step;
-                        le_sincos(angle_step, &sin_step, &cos_step);
-
-                        float sum_cos_a = 0.0f, sum_sin_a = 0.0f;
-                        float sum_cos_b = 0.0f, sum_sin_b = 0.0f;
-                        float sum_cos_c = 0.0f, sum_sin_c = 0.0f;
-                        float c = 1.0f, s = 0.0f;
-
-                        uint16_t idx_a = p->raw_write_idx_a;
-                        uint16_t idx_b = p->raw_write_idx_b;
-                        uint16_t idx_c = p->raw_write_idx_c;
-
-                        for (uint16_t k = 0; k < N; k++) {
-                            float sa = p->raw_samples_a[idx_a];
-                            float sb = p->raw_samples_b[idx_b];
-                            float sc = p->raw_samples_c[idx_c];
-
-                            sum_cos_a += sa * c; sum_sin_a -= sa * s;
-                            sum_cos_b += sb * c; sum_sin_b -= sb * s;
-                            sum_cos_c += sc * c; sum_sin_c -= sc * s;
-
-                            idx_a++; if (idx_a >= N) idx_a = 0;
-                            idx_b++; if (idx_b >= N) idx_b = 0;
-                            idx_c++; if (idx_c >= N) idx_c = 0;
-
-                            float c_next = c * cos_step - s * sin_step;
-                            float s_next = s * cos_step + c * sin_step;
-                            c = c_next;
-                            s = s_next;
-                        }
-
-                        float scale = 2.0f / (float)N;
-                        le_complex_t ph_a = le_c_make(scale * sum_cos_a, scale * sum_sin_a);
-                        le_complex_t ph_b = le_c_make(scale * sum_cos_b, scale * sum_sin_b);
-                        le_complex_t ph_c = le_c_make(scale * sum_cos_c, scale * sum_sin_c);
-
-                        // Synchronization logic via direct rectangular complex division
-                        le_complex_t out_a, out_b, out_c;
-                        float mag_a, mag_b, mag_c;
-                        float ang_a, ang_b, ang_c;
-
-                        if (p->self_sync) {
-                            mag_a = le_c_mag(ph_a); ang_a = 0.0f; out_a = le_c_make(mag_a, 0.0f);
-                            mag_b = le_c_mag(ph_b); ang_b = 0.0f; out_b = le_c_make(mag_b, 0.0f);
-                            mag_c = le_c_mag(ph_c); ang_c = 0.0f; out_c = le_c_make(mag_c, 0.0f);
-                        } else {
-                            float sync_sq = sync.r * sync.r + sync.i * sync.i;
-                            if (sync_sq > 1e-12f) {
-                                float inv_sq = 1.0f / sync_sq;
-                                float out_ar = (ph_a.r * sync.r + ph_a.i * sync.i) * inv_sq;
-                                float out_ai = (ph_a.i * sync.r - ph_a.r * sync.i) * inv_sq;
-                                out_a = le_c_make(out_ar, out_ai);
-                                mag_a = le_fast_cmplx_mag(out_ar, out_ai);
-                                ang_a = le_fast_atan2(out_ai, out_ar);
-
-                                float out_br = (ph_b.r * sync.r + ph_b.i * sync.i) * inv_sq;
-                                float out_bi = (ph_b.i * sync.r - ph_b.r * sync.i) * inv_sq;
-                                out_b = le_c_make(out_br, out_bi);
-                                mag_b = le_fast_cmplx_mag(out_br, out_bi);
-                                ang_b = le_fast_atan2(out_bi, out_br);
-
-                                float out_cr = (ph_c.r * sync.r + ph_c.i * sync.i) * inv_sq;
-                                float out_ci = (ph_c.i * sync.r - ph_c.r * sync.i) * inv_sq;
-                                out_c = le_c_make(out_cr, out_ci);
-                                mag_c = le_fast_cmplx_mag(out_cr, out_ci);
-                                ang_c = le_fast_atan2(out_ci, out_cr);
-                            } else {
-                                out_a = ph_a; mag_a = le_c_mag(ph_a); ang_a = le_c_ang(ph_a);
-                                out_b = ph_b; mag_b = le_c_mag(ph_b); ang_b = le_c_ang(ph_b);
-                                out_c = ph_c; mag_c = le_c_mag(ph_c); ang_c = le_c_ang(ph_c);
-                            }
-                        }
-
-                        p->magnitude_a = mag_a; p->angle_rad_a = ang_a; p->phasor_a = out_a;
-                        p->magnitude_b = mag_b; p->angle_rad_b = ang_b; p->phasor_b = out_b;
-                        p->magnitude_c = mag_c; p->angle_rad_c = ang_c; p->phasor_c = out_c;
-
-                        le_pi_set_complex_fast(img, args[5], out_a);
-                        le_pi_set_complex_fast(img, args[6], out_b);
-                        le_pi_set_complex_fast(img, args[7], out_c);
-
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_FREQ_EST:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* ANSI 81 dynamic frequency estimator (FREQ_EST).
-                         * args = [sample, out_freq_hz, out_valid]  (1-in/2-out)
-                         * Tracks fundamental frequency from instantaneous samples with
-                         * hysteresis noise rejection and fractional sub-sample
-                         * zero-crossing interpolation. Sampling rate is strictly
-                         * derived from the enforced VM cadence (le_rt_scan_dt()).
-                         *
-                         * Semantics (see le_freq_est_state_t):
-                         *  - Healthy in-bounds measurement  -> freq_hz = measured, valid = true
-                         *  - Out-of-bounds but measured      -> freq_hz = measured, valid = false
-                         *    (so 81U/81O still see a real under/over-frequency event)
-                         *  - Loss of potential / stall        -> freq_hz = nominal,   valid = false */
-                        if (desc->in_count < 1 || desc->out_count < 2) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t f_idx = desc->reserved;
-                        le_freq_est_state_t* p = (le_freq_est_state_t*)le_process_image_kind_state(img, LE_BLK_FREQ_EST, f_idx);
-                        if (!p) p = (le_freq_est_state_t*)le_process_image_kind_state(img, LE_BLK_FREQ_EST, 0);
-                        if (!p) return LE_ERR_OUT_OF_BOUNDS;
-
-                        float sample = le_pi_get_float_fast(img, args[0]);
-                        float fs = scan_srate;
-
-                        /* 1. Hysteresis Schmitt-trigger arming state machine. */
-                        int8_t cur = p->armed_state;
-                        bool fresh_cross = false;
-                        if (sample <= -p->hysteresis) {
-                            cur = -1;
-                        } else if (sample >= p->hysteresis && p->armed_state == -1) {
-                            cur = 1;          /* positive-going zero crossing */
-                            fresh_cross = true;
-                        }
-
-                        /* 2. Advance the sample counter. */
-                        p->samples_since_cross++;
-
-                        /* 3. Measure the period ONLY on the actual transition sample. */
-                        bool measured = false;
-                        if (fresh_cross) {
-                            /* Fractional sub-sample offset of this crossing (0..1). */
-                            float frac = 0.5f;
-                            float denom = sample - p->prev_sample;
-                            if (denom > 1e-12f) {
-                                frac = (0.0f - p->prev_sample) / denom;
-                                if (frac < 0.0f) frac = 0.0f;
-                                if (frac > 1.0f) frac = 1.0f;
-                            }
-                            if (p->initialized) {
-                                /* One complete period between the previous and this crossing. */
-                                float n_period = (float)p->samples_since_cross + frac - p->prev_cross_frac;
-                                if (n_period > 1.0f) {
-                                    float f_raw = fs / n_period;
-                                    float prev_out = p->tracked_freq_hz;
-                                    /* Optional EWMA smoothing against the prior output. */
-                                    float f_out = (p->filter_alpha > 0.0f)
-                                        ? (prev_out + p->filter_alpha * (f_raw - prev_out))
-                                        : f_raw;
-                                    if (f_raw >= p->min_freq_hz && f_raw <= p->max_freq_hz) {
-                                        p->tracked_freq_hz = f_out;   /* measured & healthy */
-                                        p->valid = true;
-                                    } else {
-                                        p->tracked_freq_hz = f_out;   /* measured but out of bounds */
-                                        p->valid = false;
-                                    }
-                                    measured = true;
-                                }
-                            }
-                            p->prev_cross_frac = frac;
-                            p->samples_since_cross = 0;
-                            p->initialized = true;
-                        }
-                        p->armed_state = cur;
-                        p->prev_sample = sample;
-
-                        /* 4. Loss-of-potential / dead-signal timeout -> nominal fallback. */
-                        float n_timeout = 1.25f * (fs / p->min_freq_hz);
-                        if (!measured && p->samples_since_cross > (uint32_t)n_timeout) {
-                            p->tracked_freq_hz = p->nominal_freq_hz;
-                            p->valid = false;
-                        }
-
-                        /* 5. Publish outputs. */
-                        le_pi_set_float_fast(img, args[1], p->tracked_freq_hz);
-                        le_pi_set_bool_fast(img, args[2], p->valid);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_PHASE_COMP:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* 3-phase transformer phase-shift compensation (ANSI 87T).
-                         * args = [c_a, c_b, c_c, out_a, out_b, out_c]  (3-in/3-out).
-                         * Applies the SEL delta/wye compensation matrix M(k) (k = comp,
-                         * 1..12, baked in le_comp33_state_t) to the three winding phasors:
-                         *   I'_x = s * sum_j M[k][x][j] * I_j
-                         * with scalar s = 1/sqrt(3) for odd k, 1/3 for even k. */
-                        if (desc->in_count < 3 || desc->out_count < 3) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t c_idx = desc->reserved;
-                        le_comp33_state_t* c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, c_idx);
-                        if (!c33) c33 = (le_comp33_state_t*)le_process_image_kind_state(img, LE_BLK_PHASE_COMP, 0);
-                        if (!c33) return LE_ERR_OUT_OF_BOUNDS;
-                        int k = (int)c33->comp;
-                        if (k < 1) k = 1;
-                        if (k > 12) k = 12;
-                        float s = (k & 1) ? (1.0f / sqrtf(3.0f)) : (1.0f / 3.0f);
-
-                        le_complex_t ia = le_pi_get_complex_fast(img, args[0]);
-                        le_complex_t ib = le_pi_get_complex_fast(img, args[1]);
-                        le_complex_t ic = le_pi_get_complex_fast(img, args[2]);
-
-                        int8_t m[3][3];
-                        switch (k) {
-                            case 1:  m[0][0]=1;m[0][1]=-1;m[0][2]=0;  m[1][0]=0;m[1][1]=1;m[1][2]=-1; m[2][0]=-1;m[2][1]=0;m[2][2]=1; break;
-                            case 2:  m[0][0]=1;m[0][1]=-2;m[0][2]=1;  m[1][0]=1;m[1][1]=1;m[1][2]=-2; m[2][0]=-2;m[2][1]=1;m[2][2]=1; break;
-                            case 3:  m[0][0]=0;m[0][1]=-1;m[0][2]=1;  m[1][0]=1;m[1][1]=0;m[1][2]=-1; m[2][0]=-1;m[2][1]=1;m[2][2]=0; break;
-                            case 4:  m[0][0]=-1;m[0][1]=-1;m[0][2]=2;  m[1][0]=2;m[1][1]=-1;m[1][2]=-1; m[2][0]=-1;m[2][1]=2;m[2][2]=-1; break;
-                            case 5:  m[0][0]=-1;m[0][1]=0;m[0][2]=1;  m[1][0]=1;m[1][1]=-1;m[1][2]=0; m[2][0]=0;m[2][1]=1;m[2][2]=-1; break;
-                            case 6:  m[0][0]=-2;m[0][1]=1;m[0][2]=1;  m[1][0]=1;m[1][1]=-2;m[1][2]=1; m[2][0]=1;m[2][1]=1;m[2][2]=-2; break;
-                            case 7:  m[0][0]=-1;m[0][1]=1;m[0][2]=0;  m[1][0]=0;m[1][1]=-1;m[1][2]=1; m[2][0]=1;m[2][1]=0;m[2][2]=-1; break;
-                            case 8:  m[0][0]=-1;m[0][1]=2;m[0][2]=-1;  m[1][0]=-1;m[1][1]=-1;m[1][2]=2; m[2][0]=2;m[2][1]=-1;m[2][2]=-1; break;
-                            case 9:  m[0][0]=0;m[0][1]=1;m[0][2]=-1;  m[1][0]=-1;m[1][1]=0;m[1][2]=1; m[2][0]=1;m[2][1]=-1;m[2][2]=0; break;
-                            case 10: m[0][0]=1;m[0][1]=1;m[0][2]=-2;  m[1][0]=-2;m[1][1]=1;m[1][2]=1; m[2][0]=1;m[2][1]=-2;m[2][2]=1; break;
-                            case 11: m[0][0]=1;m[0][1]=0;m[0][2]=-1;  m[1][0]=-1;m[1][1]=1;m[1][2]=0; m[2][0]=0;m[2][1]=-1;m[2][2]=1; break;
-                            default: m[0][0]=2;m[0][1]=-1;m[0][2]=-1;  m[1][0]=-1;m[1][1]=2;m[1][2]=-1; m[2][0]=-1;m[2][1]=-1;m[2][2]=2; break; /* k=12 */
-                        }
-
-                        le_complex_t oa = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[0][0]), le_c_scale(ib, (float)m[0][1])), le_c_scale(ic, (float)m[0][2])), s);
-                        le_complex_t ob = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[1][0]), le_c_scale(ib, (float)m[1][1])), le_c_scale(ic, (float)m[1][2])), s);
-                        le_complex_t oc = le_c_scale(le_c_add(le_c_add(le_c_scale(ia, (float)m[2][0]), le_c_scale(ib, (float)m[2][1])), le_c_scale(ic, (float)m[2][2])), s);
-                        le_pi_set_complex_fast(img, args[3], oa);
-                        le_pi_set_complex_fast(img, args[4], ob);
-                        le_pi_set_complex_fast(img, args[5], oc);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_DIFF_87:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* N-complex dual-slope differential protection (ANSI 87).
-                         * args = [cph0, cph1, ..., cphN-1, out_bool]  (N-in/1-out)
-                         * Operate current = |vector sum of all phasors|; restraint
-                         * current = SUM of phasor magnitudes (large-bus convention,
-                         * no averaging). Trips when operate exceeds the dual-slope
-                         * threshold from the baked le_diff87_state_t:
-                         *   th = o87p + slp1*I_rt                 for I_rt <= irs1
-                         *   th = o87p + slp1*irs1 + slp2*(I_rt-irs1) for I_rt > irs1  */
-                        if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        int cin = desc->in_count;
-                        uint16_t d_idx = desc->reserved;
-                        le_diff87_state_t* d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, d_idx);
-                        if (!d87) d87 = (le_diff87_state_t*)le_process_image_kind_state(img, LE_BLK_DIFF_87, 0);
-                        if (!d87) return LE_ERR_OUT_OF_BOUNDS;
-                        le_complex_t op_sum = le_c_make(0.0f, 0.0f);
-                        float rt_sum = 0.0f;
-                        for (int k = 0; k < cin; k++) {
-                            le_complex_t c = le_pi_get_complex_fast(img, args[k]);
-                            op_sum = le_c_add(op_sum, c);
-                            rt_sum += le_c_mag(c);
-                        }
-                        float i_op = le_c_mag(op_sum);
-                        float i_rt = rt_sum;   /* restraint = sum of magnitudes (no averaging) */
-                        d87->operate = i_op;
-                        d87->restraint = i_rt;
-
-                        /* SEL-style dual-slope percentage threshold (O87P + SLP1/SLP2). */
-                        float o87p = (d87->o87p > 0.0f) ? d87->o87p : 0.3f;
-                        float slp1 = (d87->slp1 > 0.0f) ? d87->slp1 : 0.25f;
-                        float irs1 = d87->irs1;
-                        float slp2 = (d87->slp2 > 0.0f) ? d87->slp2 : 0.60f;
-                        float trip_threshold = o87p;
-                        if (i_rt <= irs1) trip_threshold += slp1 * i_rt;
-                        else trip_threshold += slp1 * irs1 + slp2 * (i_rt - irs1);
-
-                        d87->tripped = (i_op > trip_threshold);
-                        le_pi_set_bool_fast(img, args[cin], d87->tripped);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-                    case LE_FUNC_DIST_21:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* Mho distance (21) block with prefault voltage memory.
-                         * args = [v_c, i_c, offset_on, out_bool] (3-in/1-out)
-                         * v_c, i_c are complex phasors; offset_on gates the mho-offset
-                         * circle shift. Computes Z = V/I and trips when Z is inside the
-                         * offset-mho circle. */
-                        if (desc->in_count < 3 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t d_idx = desc->reserved;
-                        le_dist21_state_t* dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, d_idx);
-                        if (!dist) dist = (le_dist21_state_t*)le_process_image_kind_state(img, LE_BLK_21, 0);
-                        if (!dist) return LE_ERR_OUT_OF_BOUNDS;
-
-                        le_complex_t v = le_pi_get_complex_fast(img, args[0]);
-                        le_complex_t i = le_pi_get_complex_fast(img, args[1]);
-                        bool offset_on = le_pi_get_bool_fast(img, args[2]);
-
-                        /* Prefault voltage memory. */
-                        float v_mag = le_c_mag(v);
-                        bool faulted = (dist->prefault_v_threshold > 0.0f) && (v_mag < dist->prefault_v_threshold);
-                        if (!faulted) {
-                            dist->prefault_v = v;
-                            dist->prefault_armed = false;
-                            dist->prefault_arm_ms = 0;
-                        } else if (!dist->prefault_armed) {
-                            dist->prefault_armed = true;
-                            dist->prefault_arm_ms = now_ms;
-                        }
-
-                        le_complex_t v_use = v;
-                        if (dist->prefault_armed) {
-                            if (now_ms - dist->prefault_arm_ms < dist->prefault_duration_ms) {
-                                v_use = dist->prefault_v;
-                            } else {
-                                dist->prefault_armed = false;
-                                v_use = v;
-                            }
-                        }
-
-                        float i_mag = le_c_mag(i);
-                        if (i_mag < 0.05f) {
-                            le_pi_set_bool_fast(img, args[3], false);
-                            LE_STEP_OK;
-                        }
-
-                        le_complex_t z = le_c_div(v_use, i);
-                        dist->r_meas = z.r;
-                        dist->x_meas = z.i;
-
-                        if (!dist->geom_cached) {
-                            float la = dist->line_angle_deg * (float)M_PI / 180.0f;
-                            float sla, cla;
-                            le_sincos(la, &sla, &cla);
-                            float radius = dist->reach_ohms * 0.5f;
-                            dist->radius_sq = radius * radius;
-                            dist->r_center_norm = radius * cla;
-                            dist->x_center_norm = radius * sla;
-
-                            if (dist->offset_mag > 0.0f) {
-                                float oa = dist->offset_angle_deg * (float)M_PI / 180.0f;
-                                float soa, coa;
-                                le_sincos(oa, &soa, &coa);
-                                float oc = dist->offset_mag * coa;
-                                float os = dist->offset_mag * soa;
-                                dist->r_center_off = dist->r_center_norm + oc;
-                                dist->x_center_off = dist->x_center_norm + os;
-                            } else {
-                                dist->r_center_off = dist->r_center_norm;
-                                dist->x_center_off = dist->x_center_norm;
-                            }
-                            dist->geom_cached = true;
-                        }
-
-                        float r_center = (offset_on && dist->offset_mag > 0.0f) ? dist->r_center_off : dist->r_center_norm;
-                        float x_center = (offset_on && dist->offset_mag > 0.0f) ? dist->x_center_off : dist->x_center_norm;
-                        float dr = dist->r_meas - r_center;
-                        float dx = dist->x_meas - x_center;
-                        dist->tripped = ((dr * dr + dx * dx) <= dist->radius_sq);
-                        le_pi_set_bool_fast(img, args[3], dist->tripped);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    case LE_FUNC_OVERCURRENT_51:
-#if LE_ENABLE_PROTECTION
-                    {
-                        /* IEC/IEEE inverse-time overcurrent (ANSI 51) as a block.
-                         * args = [i_c (complex phasor), enable (bool), out_bool]
-                         * (2-in/1-out). The phasor MAGNITUDE drives the inverse-time
-                         * accumulator. The boolean ENABLE is AND'd with the pickup
-                         * evaluation BEFORE the timing function: while disabled, the
-                         * element never accumulates a trip (it decays), so wiring a
-                         * directionality boolean to it yields a ground-directional
-                         * overcurrent element, and other booleans simply enable/
-                         * disable the element. Unconnected enable = LE_CONST_TRUE. */
-                        if (desc->in_count < 2 || desc->out_count < 1) return LE_ERR_OUT_OF_BOUNDS;
-                        uint16_t oc_idx = desc->reserved;
-                        le_overcurrent_state_t* oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, oc_idx);
-                        if (!oc) oc = (le_overcurrent_state_t*)le_process_image_kind_state(img, LE_BLK_OVERCURRENT, 0);
-                        if (!oc) return LE_ERR_OUT_OF_BOUNDS;
-
-                        /* Defaults if not baked by the compiler/loader. */
-                        if (oc->pickup <= 0.0f) oc->pickup = 1.0f;       /* default 1.0 pu pickup */
-                        if (oc->time_dial <= 0.0f) oc->time_dial = 1.0f;
-
-                        /* Curve coefficients: the compiler BAKES a/b/p (and custom
-                         * curves) into the state, so a loaded program skips the table.
-                         * This table only resolves coefficients for hand-assembled /
-                         * legacy images that set curve_type but left a/b/p = 0. The
-                         * curve_type value (0 = IEC Normal ... 8 = Custom) is used
-                         * verbatim — a 0 is a real curve, never "unset". */
-                        if (oc->a_coeff == 0.0f && oc->b_coeff == 0.0f && oc->p_coeff == 0.0f) {
-                            float A = 13.5f, B = 0.0f, P = 1.0f;   /* IEC Very Inverse default */
-                            switch (oc->curve_type) {
-                                case LE_CURVE_IEC_NORMAL:      A = 0.14f;     B = 0.0f;    P = 0.02f; break;
-                                case LE_CURVE_IEC_VERY:        A = 13.5f;     B = 0.0f;    P = 1.0f;  break;
-                                case LE_CURVE_IEC_EXTREME:     A = 80.0f;     B = 0.0f;    P = 2.0f;  break;
-                                case LE_CURVE_IEEE_MODERATELY: A = 0.0515f;   B = 0.1140f; P = 0.02f; break;
-                                case LE_CURVE_IEEE_VERY:       A = 19.61f;    B = 0.491f;  P = 2.0f;  break;
-                                case LE_CURVE_IEEE_EXTREME:    A = 28.2f;     B = 0.1217f; P = 2.0f;  break;
-                                case LE_CURVE_IEEE_SHORT:      A = 0.00342f;  B = 0.00262f;P = 0.02f; break;
-                                case LE_CURVE_IEEE_LONG:       A = 26.13f;    B = 0.349f;  P = 2.0f;  break;
-                                default: break;               /* stays IEC Very Inverse (covers CUSTOM w/ no coeffs) */
-                            }
-                            oc->a_coeff = A; oc->b_coeff = B; oc->p_coeff = P;
-                        }
-                        /* Sanitize: a degenerate/custom curve with no meaningful
-                         * coefficients falls back to IEC Very Inverse. */
-                        if (!(oc->a_coeff > 0.0f) || !(oc->p_coeff > 0.0f)) {
-                            oc->a_coeff = 13.5f; oc->b_coeff = 0.0f; oc->p_coeff = 1.0f;
-                        }
-
-                        le_complex_t i_c = le_pi_get_complex_fast(img, args[0]);
-                        bool enable = le_pi_get_bool_fast(img, args[1]);
-                        float M = le_c_mag(i_c) / oc->pickup;   /* M = I / pickup in pu */
-                        float time_dial = oc->time_dial;
-
-                        /* Time-dependent protection uses the fixed scan period (the
-                         * enforced cadence determines dt so the inverse-time curve is
-                         * deterministic). */
-                        float dt = (scan_dt > 0.0f) ? scan_dt : 0.01f;
-
-                        /* Enable is AND'd with pickup BEFORE the timing: only an
-                         * ENABLED element with M > 1 accrues operate time. Off-pickup
-                         * (or disabled-over-fault, treated as resting in pickup) cools
-                         * along the reset curve, so it can never magically charge. */
-                        if (enable && M > 1.0f) {
-                            /* Inverse-time operate:
-                              *   t_operate = time_dial * (A / (M^p - 1) + B)
-                              * accumulator advances by dt / t_operate and trips at 1.0
-                              * (= the full operate time has elapsed). */
-                            float mp;
-                            if (oc->p_coeff == 1.0f) {
-                                mp = M;
-                            } else if (oc->p_coeff == 2.0f) {
-                                mp = M * M;
-                            } else {
-                                mp = powf(M, oc->p_coeff);
-                            }
-                            float denom = mp - 1.0f;       /* > 0 whenever M > 1 */
-                            if (denom < 1e-6f) denom = 1e-6f;   /* guard M ~ 1 */
-                            float t_operate = time_dial * (oc->a_coeff / denom + oc->b_coeff);
-                            if (!(t_operate > 1e-6f)) t_operate = 1e-6f;
-                            oc->accumulator += dt / t_operate;
-                            if (oc->accumulator >= 1.0f) oc->accumulator = 1.0f;
-                        } else {
-                            /* Cooling reset curve:
-                              *   t_reset = time_dial * (4.6 / (1 - M_r^2))
-                              * M_r is clamped below 1 so the denominator stays positive
-                              * even when M >= 1 (a disabled element resting "at pickup"). */
-                            float Mr = M;
-                            if (Mr < 0.0f) Mr = 0.0f;
-                            if (Mr >= 0.999f) Mr = 0.999f;
-                            float denom_r = 1.0f - Mr * Mr;
-                            if (denom_r < 1e-6f) denom_r = 1e-6f;
-                            float t_reset = time_dial * (4.6f / denom_r);
-                            if (!(t_reset > 1e-6f)) t_reset = 1e-6f;
-                            oc->accumulator -= dt / t_reset;
-                            if (oc->accumulator < 0.0f) oc->accumulator = 0.0f;
-                        }
-
-                        oc->tripped = (oc->accumulator >= 1.0f);
-                        le_pi_set_bool_fast(img, args[2], oc->tripped);
-                        LE_STEP_OK;
-                    }
-#else
-                    {
-                        (void)argc;
-                        return LE_ERR_UNKNOWN_OPCODE;
-                    }
-#endif
-
-                    default:
-                        return LE_ERR_UNKNOWN_OPCODE;
-                }
-            }
-
-            /* Custom node: hand the whole operand list to the board HAL. */
-            if (g_le_hal && g_le_hal->ext_call) {
-                return g_le_hal->ext_call(mod, args, desc->in_count, desc->out_count, img);
-            }
-            LE_STEP_OK; /* no board handler registered */
+            le_status_t st = le_eval_block(mod, desc, args, img, now_ms, scan_dt, scan_srate);
+            if (st != LE_OK) return st;
+            LE_STEP_OK;
         }
         case LE_OP_RESERVED_A1:
             return LE_ERR_UNKNOWN_OPCODE;
@@ -2403,10 +1325,17 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             return LE_ERR_UNKNOWN_OPCODE;
         }
 
+#if !LE_USE_THREADED_DISPATCH
     next_instruction:
         continue;
     }
+#else
+    }
+    op_lbl_unknown:
+        return LE_ERR_UNKNOWN_OPCODE;
+#endif
 
     return LE_OK;
 }
 #undef LE_STEP_OK
+#undef LE_OP_LBL

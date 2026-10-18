@@ -45,6 +45,7 @@ static void print_caps_report(const le_caps_payload_t& caps)
               << "   - Serial Bus:       " << ((caps.feature_flags & LE_CAP_SERIAL_BUS) ? "YES" : "NO") << "\n"
               << "   - DSP & Filters:    " << ((caps.feature_flags & LE_CAP_DSP) ? "YES" : "NO") << "\n"
               << "   - Complex Arith:    " << ((caps.feature_flags & LE_CAP_COMPLEX) ? "YES" : "NO") << "\n"
+              << "   - Hardware FPU:     " << ((caps.feature_flags & LE_CAP_FPU) ? "YES" : "NO") << "\n"
               << "============================================================\n";
 }
 
@@ -199,7 +200,8 @@ int cmd_board(int argc, char* argv[])
                     << "  \"features\": {\n"
                     << "    \"protection\": " << ((caps.feature_flags & LE_CAP_PROTECTION) ? "true" : "false") << ",\n"
                     << "    \"serial_bus\": " << ((caps.feature_flags & LE_CAP_SERIAL_BUS) ? "true" : "false") << ",\n"
-                    << "    \"dsp\": " << ((caps.feature_flags & LE_CAP_DSP) ? "true" : "false") << "\n"
+                    << "    \"dsp\": " << ((caps.feature_flags & LE_CAP_DSP) ? "true" : "false") << ",\n"
+                    << "    \"fpu\": " << ((caps.feature_flags & LE_CAP_FPU) ? "true" : "false") << "\n"
                     << "  }\n"
                     << "}\n";
                 out.close();

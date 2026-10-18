@@ -28,7 +28,8 @@ Optimizer::Optimizer(const le_compiler_options_t& options)
 void Optimizer::build_ir(const std::vector<JsonValue>& elements,
                          const std::vector<JsonValue>& nets,
                          const std::map<std::string, std::string>& alias_to_addr,
-                         const std::map<std::string, CustomNodeInfo>& custom_nodes)
+                         const std::map<std::string, CustomNodeInfo>& custom_nodes,
+                         const std::set<std::string>& feedback_state_nodes)
 {
     m_nodes.clear();
     m_execution_order.clear();
@@ -46,13 +47,19 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         node.type = type;
         node.raw_json = el;
 
+        if (feedback_state_nodes.count(name)) {
+            node.is_root = true;
+            node.is_feedback_state = true;
+        }
+
         // Classify roots and stateful elements
         if (type == "DIGITALOUTPUT" || type == "OUTPUT" || (type == "LE_NODE_DIGITAL" && (name.rfind("OUT", 0) == 0 || name.rfind("DO", 0) == 0)) ||
             type == "ANALOGOUTPUT" || type == "LE_ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "AOUT") {
             node.is_root = true;
         } else if (type == "BOOLREGISTER" || type == "LE_BOOLREGISTER" ||
                    type == "INTREGISTER" || type == "LE_INTREGISTER" ||
-                   type == "FLOATREGISTER" || type == "LE_FLOATREGISTER") {
+                   type == "FLOATREGISTER" || type == "LE_FLOATREGISTER" ||
+                   type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER") {
             node.is_root = true;
         } else if (type.find("TAG") != std::string::npos) {
             std::string dir = to_lower(el.get("direction").as_string());
@@ -119,10 +126,40 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
         else if (type == "NAND" || type == "LE_NAND") node.opcode = LE_OP_NAND;
         else if (type == "NOR" || type == "LE_NOR") node.opcode = LE_OP_NOR;
         else if (type == "MUX" || type == "LE_MUX") node.opcode = LE_OP_MUX;
+        else if (type == "MOVE" || type == "LE_MOVE") node.opcode = LE_OP_MOVE;
+        else if (type == "MOVE_I" || type == "LE_MOVE_I") node.opcode = LE_OP_MOVE_I;
+        else if (type == "MOVE_F" || type == "LE_MOVE_F") node.opcode = LE_OP_MOVE_F;
+        else if (type == "MOVE_C" || type == "LE_MOVE_C") node.opcode = LE_OP_MOVE_C;
+        else if (type == "ADD_I" || type == "LE_ADD_I") node.opcode = LE_OP_ADD_I;
+        else if (type == "SUB_I" || type == "LE_SUB_I") node.opcode = LE_OP_SUB_I;
+        else if (type == "MUL_I" || type == "LE_MUL_I") node.opcode = LE_OP_MUL_I;
+        else if (type == "DIV_I" || type == "LE_DIV_I") node.opcode = LE_OP_DIV_I;
+        else if (type == "NEG_I" || type == "LE_NEG_I") node.opcode = LE_OP_NEG_I;
+        else if (type == "WORD_AND" || type == "LE_WORD_AND") node.opcode = LE_OP_WORD_AND;
+        else if (type == "WORD_OR" || type == "LE_WORD_OR") node.opcode = LE_OP_WORD_OR;
+        else if (type == "WORD_XOR" || type == "LE_WORD_XOR") node.opcode = LE_OP_WORD_XOR;
+        else if (type == "WORD_NOT" || type == "LE_WORD_NOT") node.opcode = LE_OP_WORD_NOT;
         else if (type == "ADD" || type == "LE_ADD") node.opcode = LE_OP_ADD_F;
         else if (type == "SUB" || type == "SUBTRACT" || type == "LE_SUB") node.opcode = LE_OP_SUB_F;
         else if (type == "MUL" || type == "MULTIPLY" || type == "LE_MUL") node.opcode = LE_OP_MUL_F;
         else if (type == "DIV" || type == "DIVIDE" || type == "LE_DIV") node.opcode = LE_OP_DIV_F;
+        else if (type == "FMA" || type == "LE_FMA" || type == "MAC" || type == "LE_MAC") node.opcode = LE_OP_FMA_F;
+        else if (type == "FMS" || type == "LE_FMS") node.opcode = LE_OP_FMS_F;
+        else if (type == "ABS" || type == "LE_ABS") node.opcode = LE_OP_ABS_F;
+        else if (type == "MIN" || type == "LE_MIN") node.opcode = LE_OP_MIN_F;
+        else if (type == "MAX" || type == "LE_MAX") node.opcode = LE_OP_MAX_F;
+        else if (type == "SQRT" || type == "LE_SQRT") node.opcode = LE_OP_SQRT_F;
+        else if (type == "SIN" || type == "LE_SIN") node.opcode = LE_OP_SIN_F;
+        else if (type == "COS" || type == "LE_COS") node.opcode = LE_OP_COS_F;
+        else if (type == "TAN" || type == "LE_TAN") node.opcode = LE_OP_TAN_F;
+        else if (type == "ASIN" || type == "LE_ASIN") node.opcode = LE_OP_ASIN_F;
+        else if (type == "ACOS" || type == "LE_ACOS") node.opcode = LE_OP_ACOS_F;
+        else if (type == "ATAN" || type == "LE_ATAN") node.opcode = LE_OP_ATAN_F;
+        else if (type == "ATAN2" || type == "LE_ATAN2") node.opcode = LE_OP_ATAN2_F;
+        else if (type == "EXP" || type == "LE_EXP") node.opcode = LE_OP_EXP_F;
+        else if (type == "LOG" || type == "LN" || type == "LE_LOG" || type == "LE_LN") node.opcode = LE_OP_LOG_F;
+        else if (type == "LOG10" || type == "LE_LOG10") node.opcode = LE_OP_LOG10_F;
+        else if (type == "POW" || type == "POWER" || type == "LE_POW" || type == "LE_POWER") node.opcode = LE_OP_POW_F;
         else if (type == "CADD" || type == "LE_CADD" || type == "C_ADD") node.opcode = LE_OP_CADD_F;
         else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") node.opcode = LE_OP_CSUB_F;
         else if (type == "CMUL" || type == "LE_CMUL" || type == "C_MUL") node.opcode = LE_OP_CMUL_F;
@@ -230,25 +267,39 @@ OptimizationStats Optimizer::run_passes()
         int prev_const = m_stats.folded_constants;
         int prev_inv = m_stats.folded_inversions;
         int prev_cse = m_stats.eliminated_subexprs;
+        int prev_bool = m_stats.simplified_boolean_rules;
+        int prev_fused = m_stats.fused_instructions;
 
         // Pass 1: Constant Folding & Propagation
         if (m_options.fold_constants) {
             pass_constant_folding();
         }
 
-        // Pass 2: Inversion Folding into consumer modifiers
+        // Pass 2: Boolean Algebraic Simplification
+        if (m_options.simplify_boolean) {
+            pass_boolean_simplification();
+        }
+
+        // Pass 3: Inversion Folding into consumer modifiers
         if (m_options.fold_inversions) {
             pass_inversion_folding();
         }
 
-        // Pass 3: Common Subexpression Elimination
+        // Pass 4: Common Subexpression Elimination
         if (m_options.eliminate_common_subexpr) {
             pass_common_subexpression_elimination();
         }
 
+        // Pass 5: Instruction Fusion (FMA / FMS)
+        if (m_options.fuse_instructions) {
+            pass_instruction_fusion();
+        }
+
         if (m_stats.folded_constants == prev_const &&
             m_stats.folded_inversions == prev_inv &&
-            m_stats.eliminated_subexprs == prev_cse) {
+            m_stats.eliminated_subexprs == prev_cse &&
+            m_stats.simplified_boolean_rules == prev_bool &&
+            m_stats.fused_instructions == prev_fused) {
             break;
         }
     }
@@ -295,6 +346,7 @@ void Optimizer::pass_dead_code_elimination()
 
         if (m_nodes.find(curr) == m_nodes.end()) continue;
         const auto& node = m_nodes[curr];
+        if (node.is_dead) continue;
 
         for (const auto& port_src : node.inputs) {
             const std::string& src = port_src.second;
@@ -483,13 +535,408 @@ void Optimizer::pass_constant_folding()
     }
 }
 
+void Optimizer::pass_boolean_simplification()
+{
+    compute_topological_order();
+
+    struct BoolLit {
+        std::string node;
+        bool inverted = false;
+
+        bool empty() const { return node.empty(); }
+        bool operator==(const BoolLit& o) const {
+            return node == o.node && inverted == o.inverted;
+        }
+        bool is_opposite(const BoolLit& o) const {
+            return node == o.node && inverted != o.inverted;
+        }
+    };
+
+    auto find_input_port = [](const OptNode& n, const std::vector<std::string>& candidates) -> std::pair<std::string, std::string> {
+        for (const auto& p : candidates) {
+            auto it = n.inputs.find(p);
+            if (it != n.inputs.end() && !it->second.empty()) {
+                return {it->first, it->second};
+            }
+        }
+        return {"", ""};
+    };
+
+    auto get_port_lit = [&](const OptNode& n, int port_idx, const std::string& src_name) -> BoolLit {
+        if (src_name.empty()) return BoolLit();
+
+        bool inv = false;
+        if (port_idx == 0 && (n.modifier & LE_MOD_INVERT_A)) inv = !inv;
+        if (port_idx == 1 && (n.modifier & LE_MOD_INVERT_B)) inv = !inv;
+
+        std::string curr = src_name;
+        std::set<std::string> visited;
+
+        while (!curr.empty() && visited.insert(curr).second) {
+            auto it = m_nodes.find(curr);
+            if (it == m_nodes.end() || it->second.is_dead || it->second.is_root || it->second.is_stateful || it->second.is_const) {
+                break;
+            }
+            if (it->second.opcode == LE_OP_NOT) {
+                auto not_p = find_input_port(it->second, {"in", "a", "in_a", "in_0", "input_0", "input"});
+                if (not_p.second.empty() && !it->second.inputs.empty()) {
+                    not_p = *it->second.inputs.begin();
+                }
+                if (!not_p.second.empty()) {
+                    inv = !inv;
+                    if (it->second.modifier & LE_MOD_INVERT_A) {
+                        inv = !inv;
+                    }
+                    curr = not_p.second;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        BoolLit lit;
+        lit.node = curr;
+        lit.inverted = inv;
+        return lit;
+    };
+
+    auto simplify_to_const = [&](OptNode& node, bool val) {
+        node.is_const = true;
+        node.is_dead = true;
+        node.const_type = "bool";
+        node.const_bool = val;
+        node.inputs.clear();
+        m_stats.simplified_boolean_rules++;
+        m_stats.eliminated_instructions++;
+        m_stats.eliminated_registers++;
+    };
+
+    auto forward_to_node = [&](OptNode& node, const std::string& target) {
+        if (node.name == target) return;
+        for (const std::string& cname : node.consumers) {
+            auto itc = m_nodes.find(cname);
+            if (itc != m_nodes.end()) {
+                for (auto& port_src : itc->second.inputs) {
+                    if (port_src.second == node.name) {
+                        port_src.second = target;
+                    }
+                }
+            }
+        }
+        node.is_dead = true;
+        m_stats.simplified_boolean_rules++;
+        m_stats.eliminated_instructions++;
+        m_stats.eliminated_registers++;
+    };
+
+    auto simplify_to_lit = [&](OptNode& node, const BoolLit& lit) {
+        if (lit.empty()) return;
+        if (!lit.inverted) {
+            forward_to_node(node, lit.node);
+        } else {
+            // Convert to single NOT gate; inversion folding will fold into consumers if supported
+            node.opcode = LE_OP_NOT;
+            node.type = "NOT";
+            node.modifier = 0;
+            node.inputs.clear();
+            node.inputs["in"] = lit.node;
+            m_stats.simplified_boolean_rules++;
+        }
+    };
+
+    for (const std::string& name : m_execution_order) {
+        auto it = m_nodes.find(name);
+        if (it == m_nodes.end() || it->second.is_dead || it->second.is_root || it->second.is_stateful || it->second.is_const) {
+            continue;
+        }
+        OptNode& node = it->second;
+
+        // Only evaluate 2-input boolean logic gates
+        bool is_bool_gate = (node.opcode == LE_OP_AND || node.opcode == LE_OP_OR ||
+                             node.opcode == LE_OP_XOR || node.opcode == LE_OP_NAND ||
+                             node.opcode == LE_OP_NOR);
+        if (!is_bool_gate) continue;
+        if (node.inputs.size() > 2) continue; // Preserve wide fan-in gates (> 2 inputs)
+
+        auto p0 = find_input_port(node, {"a", "in_a", "in_0", "input_0", "in", "input"});
+        auto p1 = find_input_port(node, {"b", "in_b", "in_1", "input_1"});
+        if (p0.second.empty() || p1.second.empty()) continue;
+
+        BoolLit L0 = get_port_lit(node, 0, p0.second);
+        BoolLit L1 = get_port_lit(node, 1, p1.second);
+        if (L0.empty() || L1.empty()) continue;
+
+        // 1. Annihilation: A op ~A
+        if (L0.is_opposite(L1)) {
+            if (node.opcode == LE_OP_AND) {
+                simplify_to_const(node, false);
+                continue;
+            } else if (node.opcode == LE_OP_OR) {
+                simplify_to_const(node, true);
+                continue;
+            } else if (node.opcode == LE_OP_XOR) {
+                simplify_to_const(node, true);
+                continue;
+            } else if (node.opcode == LE_OP_NAND) {
+                simplify_to_const(node, true);
+                continue;
+            } else if (node.opcode == LE_OP_NOR) {
+                simplify_to_const(node, false);
+                continue;
+            }
+        }
+
+        // 2. Idempotence: A op A
+        if (L0 == L1) {
+            if (node.opcode == LE_OP_AND) {
+                simplify_to_lit(node, L0);
+                continue;
+            } else if (node.opcode == LE_OP_OR) {
+                simplify_to_lit(node, L0);
+                continue;
+            } else if (node.opcode == LE_OP_XOR) {
+                simplify_to_const(node, false);
+                continue;
+            } else if (node.opcode == LE_OP_NAND) {
+                simplify_to_lit(node, {L0.node, !L0.inverted});
+                continue;
+            } else if (node.opcode == LE_OP_NOR) {
+                simplify_to_lit(node, {L0.node, !L0.inverted});
+                continue;
+            }
+        }
+
+        // 3. Absorption & Redundancy:
+        // Case 3.1: OR(A, AND(B, C))
+        if (node.opcode == LE_OP_OR) {
+            // Check if port 1 is driven by an AND gate (non-inverted on this OR)
+            if (!(node.modifier & LE_MOD_INVERT_B)) {
+                auto it_sub = m_nodes.find(p1.second);
+                if (it_sub != m_nodes.end() && !it_sub->second.is_dead &&
+                    !it_sub->second.is_root && !it_sub->second.is_stateful &&
+                    it_sub->second.opcode == LE_OP_AND && it_sub->second.inputs.size() <= 2) {
+                    auto sp0 = find_input_port(it_sub->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1 = find_input_port(it_sub->second, {"b", "in_b", "in_1", "input_1"});
+                    BoolLit sub_L0 = get_port_lit(it_sub->second, 0, sp0.second);
+                    BoolLit sub_L1 = get_port_lit(it_sub->second, 1, sp1.second);
+
+                    // A | (A & B) -> A
+                    if (L0 == sub_L0 || L0 == sub_L1) {
+                        simplify_to_lit(node, L0);
+                        continue;
+                    }
+                    // A | (~A & B) -> A | B
+                    if (L0.is_opposite(sub_L0) && !sub_L1.empty()) {
+                        node.inputs[p1.first] = sub_L1.node;
+                        if (sub_L1.inverted) node.modifier |= LE_MOD_INVERT_B;
+                        else node.modifier &= ~LE_MOD_INVERT_B;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                    // A | (B & ~A) -> A | B
+                    if (L0.is_opposite(sub_L1) && !sub_L0.empty()) {
+                        node.inputs[p1.first] = sub_L0.node;
+                        if (sub_L0.inverted) node.modifier |= LE_MOD_INVERT_B;
+                        else node.modifier &= ~LE_MOD_INVERT_B;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                }
+            }
+
+            // Check if port 0 is driven by an AND gate (non-inverted on this OR)
+            if (!(node.modifier & LE_MOD_INVERT_A)) {
+                auto it_sub = m_nodes.find(p0.second);
+                if (it_sub != m_nodes.end() && !it_sub->second.is_dead &&
+                    !it_sub->second.is_root && !it_sub->second.is_stateful &&
+                    it_sub->second.opcode == LE_OP_AND && it_sub->second.inputs.size() <= 2) {
+                    auto sp0 = find_input_port(it_sub->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1 = find_input_port(it_sub->second, {"b", "in_b", "in_1", "input_1"});
+                    BoolLit sub_L0 = get_port_lit(it_sub->second, 0, sp0.second);
+                    BoolLit sub_L1 = get_port_lit(it_sub->second, 1, sp1.second);
+
+                    // (A & B) | A -> A
+                    if (L1 == sub_L0 || L1 == sub_L1) {
+                        simplify_to_lit(node, L1);
+                        continue;
+                    }
+                    // (~A & B) | A -> B | A
+                    if (L1.is_opposite(sub_L0) && !sub_L1.empty()) {
+                        node.inputs[p0.first] = sub_L1.node;
+                        if (sub_L1.inverted) node.modifier |= LE_MOD_INVERT_A;
+                        else node.modifier &= ~LE_MOD_INVERT_A;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                    // (B & ~A) | A -> B | A
+                    if (L1.is_opposite(sub_L1) && !sub_L0.empty()) {
+                        node.inputs[p0.first] = sub_L0.node;
+                        if (sub_L0.inverted) node.modifier |= LE_MOD_INVERT_A;
+                        else node.modifier &= ~LE_MOD_INVERT_A;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Case 3.2: AND(A, OR(B, C))
+        if (node.opcode == LE_OP_AND) {
+            // Check if port 1 is driven by an OR gate (non-inverted on this AND)
+            if (!(node.modifier & LE_MOD_INVERT_B)) {
+                auto it_sub = m_nodes.find(p1.second);
+                if (it_sub != m_nodes.end() && !it_sub->second.is_dead &&
+                    !it_sub->second.is_root && !it_sub->second.is_stateful &&
+                    it_sub->second.opcode == LE_OP_OR && it_sub->second.inputs.size() <= 2) {
+                    auto sp0 = find_input_port(it_sub->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1 = find_input_port(it_sub->second, {"b", "in_b", "in_1", "input_1"});
+                    BoolLit sub_L0 = get_port_lit(it_sub->second, 0, sp0.second);
+                    BoolLit sub_L1 = get_port_lit(it_sub->second, 1, sp1.second);
+
+                    // A & (A | B) -> A
+                    if (L0 == sub_L0 || L0 == sub_L1) {
+                        simplify_to_lit(node, L0);
+                        continue;
+                    }
+                    // A & (~A | B) -> A & B
+                    if (L0.is_opposite(sub_L0) && !sub_L1.empty()) {
+                        node.inputs[p1.first] = sub_L1.node;
+                        if (sub_L1.inverted) node.modifier |= LE_MOD_INVERT_B;
+                        else node.modifier &= ~LE_MOD_INVERT_B;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                    // A & (B | ~A) -> A & B
+                    if (L0.is_opposite(sub_L1) && !sub_L0.empty()) {
+                        node.inputs[p1.first] = sub_L0.node;
+                        if (sub_L0.inverted) node.modifier |= LE_MOD_INVERT_B;
+                        else node.modifier &= ~LE_MOD_INVERT_B;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                }
+            }
+
+            // Check if port 0 is driven by an OR gate (non-inverted on this AND)
+            if (!(node.modifier & LE_MOD_INVERT_A)) {
+                auto it_sub = m_nodes.find(p0.second);
+                if (it_sub != m_nodes.end() && !it_sub->second.is_dead &&
+                    !it_sub->second.is_root && !it_sub->second.is_stateful &&
+                    it_sub->second.opcode == LE_OP_OR && it_sub->second.inputs.size() <= 2) {
+                    auto sp0 = find_input_port(it_sub->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1 = find_input_port(it_sub->second, {"b", "in_b", "in_1", "input_1"});
+                    BoolLit sub_L0 = get_port_lit(it_sub->second, 0, sp0.second);
+                    BoolLit sub_L1 = get_port_lit(it_sub->second, 1, sp1.second);
+
+                    // (A | B) & A -> A
+                    if (L1 == sub_L0 || L1 == sub_L1) {
+                        simplify_to_lit(node, L1);
+                        continue;
+                    }
+                    // (~A | B) & A -> B & A
+                    if (L1.is_opposite(sub_L0) && !sub_L1.empty()) {
+                        node.inputs[p0.first] = sub_L1.node;
+                        if (sub_L1.inverted) node.modifier |= LE_MOD_INVERT_A;
+                        else node.modifier &= ~LE_MOD_INVERT_A;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                    // (B | ~A) & A -> B & A
+                    if (L1.is_opposite(sub_L1) && !sub_L0.empty()) {
+                        node.inputs[p0.first] = sub_L0.node;
+                        if (sub_L0.inverted) node.modifier |= LE_MOD_INVERT_A;
+                        else node.modifier &= ~LE_MOD_INVERT_A;
+                        m_stats.simplified_boolean_rules++;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // 4. Complementary Merging: (A & B) | (A & ~B) -> A, and dual (A | B) & (A | ~B) -> A
+        if ((node.modifier & (LE_MOD_INVERT_A | LE_MOD_INVERT_B)) == 0) {
+            if (node.opcode == LE_OP_OR) {
+                auto it0 = m_nodes.find(p0.second);
+                auto it1 = m_nodes.find(p1.second);
+                if (it0 != m_nodes.end() && !it0->second.is_dead && !it0->second.is_root && !it0->second.is_stateful &&
+                    it1 != m_nodes.end() && !it1->second.is_dead && !it1->second.is_root && !it1->second.is_stateful &&
+                    it0->second.opcode == LE_OP_AND && it0->second.inputs.size() <= 2 &&
+                    it1->second.opcode == LE_OP_AND && it1->second.inputs.size() <= 2) {
+                    auto sp0_0 = find_input_port(it0->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp0_1 = find_input_port(it0->second, {"b", "in_b", "in_1", "input_1"});
+                    auto sp1_0 = find_input_port(it1->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1_1 = find_input_port(it1->second, {"b", "in_b", "in_1", "input_1"});
+
+                    BoolLit P0 = get_port_lit(it0->second, 0, sp0_0.second);
+                    BoolLit Q0 = get_port_lit(it0->second, 1, sp0_1.second);
+                    BoolLit P1 = get_port_lit(it1->second, 0, sp1_0.second);
+                    BoolLit Q1 = get_port_lit(it1->second, 1, sp1_1.second);
+
+                    if (!P0.empty() && !Q0.empty() && !P1.empty() && !Q1.empty()) {
+                        if (P0 == P1 && Q0.is_opposite(Q1)) {
+                            simplify_to_lit(node, P0);
+                            continue;
+                        } else if (P0 == Q1 && Q0.is_opposite(P1)) {
+                            simplify_to_lit(node, P0);
+                            continue;
+                        } else if (Q0 == P1 && P0.is_opposite(Q1)) {
+                            simplify_to_lit(node, Q0);
+                            continue;
+                        } else if (Q0 == Q1 && P0.is_opposite(P1)) {
+                            simplify_to_lit(node, Q0);
+                            continue;
+                        }
+                    }
+                }
+            } else if (node.opcode == LE_OP_AND) {
+                auto it0 = m_nodes.find(p0.second);
+                auto it1 = m_nodes.find(p1.second);
+                if (it0 != m_nodes.end() && !it0->second.is_dead && !it0->second.is_root && !it0->second.is_stateful &&
+                    it1 != m_nodes.end() && !it1->second.is_dead && !it1->second.is_root && !it1->second.is_stateful &&
+                    it0->second.opcode == LE_OP_OR && it0->second.inputs.size() <= 2 &&
+                    it1->second.opcode == LE_OP_OR && it1->second.inputs.size() <= 2) {
+                    auto sp0_0 = find_input_port(it0->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp0_1 = find_input_port(it0->second, {"b", "in_b", "in_1", "input_1"});
+                    auto sp1_0 = find_input_port(it1->second, {"a", "in_a", "in_0", "input_0", "in", "input"});
+                    auto sp1_1 = find_input_port(it1->second, {"b", "in_b", "in_1", "input_1"});
+
+                    BoolLit P0 = get_port_lit(it0->second, 0, sp0_0.second);
+                    BoolLit Q0 = get_port_lit(it0->second, 1, sp0_1.second);
+                    BoolLit P1 = get_port_lit(it1->second, 0, sp1_0.second);
+                    BoolLit Q1 = get_port_lit(it1->second, 1, sp1_1.second);
+
+                    if (!P0.empty() && !Q0.empty() && !P1.empty() && !Q1.empty()) {
+                        if (P0 == P1 && Q0.is_opposite(Q1)) {
+                            simplify_to_lit(node, P0);
+                            continue;
+                        } else if (P0 == Q1 && Q0.is_opposite(P1)) {
+                            simplify_to_lit(node, P0);
+                            continue;
+                        } else if (Q0 == P1 && P0.is_opposite(Q1)) {
+                            simplify_to_lit(node, Q0);
+                            continue;
+                        } else if (Q0 == Q1 && P0.is_opposite(P1)) {
+                            simplify_to_lit(node, Q0);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    update_consumer_lists();
+}
+
 void Optimizer::pass_inversion_folding()
 {
     update_consumer_lists();
 
     for (auto& kv : m_nodes) {
         OptNode& not_node = kv.second;
-        if (not_node.is_dead || not_node.opcode != LE_OP_NOT) continue;
+        if (not_node.is_dead || not_node.is_root || not_node.is_feedback_state || not_node.opcode != LE_OP_NOT) continue;
 
         auto it_in = not_node.inputs.find("in");
         if (it_in == not_node.inputs.end()) it_in = not_node.inputs.find("a");
@@ -586,21 +1033,25 @@ void Optimizer::pass_common_subexpression_elimination()
             return "";
         };
 
-        std::string in0 = find_input({"a", "in_a", "in", "input", "input_0"});
-        std::string in1 = find_input({"b", "in_b", "input_1"});
+        std::string in0 = find_input({"a", "in_a", "in", "input", "input_0", "in0"});
+        std::string in1 = find_input({"b", "in_b", "input_1", "in1"});
+        std::string in_sel = find_input({"sel", "select", "selector", "s", "in_sel"});
+        std::string in2 = find_input({"c", "in_c", "in_2", "input_2", "acc", "addend"});
 
         // Commutative sorting
         bool is_commutative = (node.opcode == LE_OP_AND || node.opcode == LE_OP_OR ||
                                node.opcode == LE_OP_XOR || node.opcode == LE_OP_NAND ||
                                node.opcode == LE_OP_NOR || node.opcode == LE_OP_ADD_F ||
-                               node.opcode == LE_OP_MUL_F);
+                               node.opcode == LE_OP_MUL_F || node.opcode == LE_OP_ADD_I ||
+                               node.opcode == LE_OP_MUL_I || node.opcode == LE_OP_WORD_AND ||
+                               node.opcode == LE_OP_WORD_OR || node.opcode == LE_OP_WORD_XOR);
         if (is_commutative && in0 > in1) {
             std::swap(in0, in1);
         }
 
         std::ostringstream ss;
         ss << static_cast<int>(node.opcode) << ":" << static_cast<int>(node.modifier)
-           << ":" << in0 << ":" << in1;
+           << ":" << in0 << ":" << in1 << ":" << in_sel << ":" << in2;
         std::string sig = ss.str();
 
         auto sit = signature_to_node.find(sig);
@@ -632,6 +1083,128 @@ void Optimizer::pass_common_subexpression_elimination()
     update_consumer_lists();
 }
 
+void Optimizer::pass_instruction_fusion()
+{
+    update_consumer_lists();
+
+    for (auto& kv : m_nodes) {
+        OptNode& node = kv.second;
+        if (node.is_dead || node.is_stateful || node.is_feedback_state) continue;
+
+        if (node.opcode != LE_OP_ADD_F && node.opcode != LE_OP_SUB_F) continue;
+
+        // An addition or subtraction needs at least two inputs
+        std::string in_a_src, in_b_src;
+        for (const auto& inp : node.inputs) {
+            std::string k = to_lower(inp.first);
+            if (k == "a" || k == "in_a" || k == "input_0" || k == "in") in_a_src = inp.second;
+            else if (k == "b" || k == "in_b" || k == "input_1") in_b_src = inp.second;
+        }
+        if (in_a_src.empty() && node.inputs.size() >= 1) in_a_src = node.inputs.begin()->second;
+        if (in_b_src.empty() && node.inputs.size() >= 2) {
+            auto it = node.inputs.begin();
+            ++it;
+            in_b_src = it->second;
+        }
+        if (in_a_src.empty() || in_b_src.empty()) continue;
+
+        // Check if a node is a single-consumer multiplication suitable for fusion
+        auto is_fusable_mul = [&](const std::string& name) -> bool {
+            auto it = m_nodes.find(name);
+            if (it == m_nodes.end()) return false;
+            const OptNode& m = it->second;
+            if (m.is_dead || m.is_root || m.is_stateful || m.is_feedback_state) return false;
+            if (!m.direct_dest_node.empty()) return false;
+            if (m.opcode != LE_OP_MUL_F) return false;
+            if (m.consumers.size() != 1 || m.consumers[0] != node.name) return false;
+            return true;
+        };
+
+        if (node.opcode == LE_OP_ADD_F) {
+            std::string mul_name;
+            std::string addend_name;
+            if (is_fusable_mul(in_a_src)) {
+                mul_name = in_a_src;
+                addend_name = in_b_src;
+            } else if (is_fusable_mul(in_b_src)) {
+                mul_name = in_b_src;
+                addend_name = in_a_src;
+            } else {
+                continue;
+            }
+
+            OptNode& mul_node = m_nodes[mul_name];
+            std::string mul_in_a, mul_in_b;
+            for (const auto& inp : mul_node.inputs) {
+                std::string k = to_lower(inp.first);
+                if (k == "a" || k == "in_a" || k == "input_0" || k == "in") mul_in_a = inp.second;
+                else if (k == "b" || k == "in_b" || k == "input_1") mul_in_b = inp.second;
+            }
+            if (mul_in_a.empty() && mul_node.inputs.size() >= 1) mul_in_a = mul_node.inputs.begin()->second;
+            if (mul_in_b.empty() && mul_node.inputs.size() >= 2) {
+                auto it = mul_node.inputs.begin();
+                ++it;
+                mul_in_b = it->second;
+            }
+            if (mul_in_a.empty() || mul_in_b.empty()) continue;
+
+            // Fuse: node becomes FMA (a * b + c)
+            node.opcode = LE_OP_FMA_F;
+            node.type = "FMA";
+            node.inputs.clear();
+            node.inputs["a"] = mul_in_a;
+            node.inputs["b"] = mul_in_b;
+            node.inputs["c"] = addend_name;
+
+            mul_node.is_dead = true;
+            mul_node.inputs.clear();
+
+            m_stats.fused_instructions++;
+            m_stats.eliminated_instructions++;
+            m_stats.eliminated_registers++;
+        } else if (node.opcode == LE_OP_SUB_F) {
+            // In SUB: out = in_a - in_b.
+            // When in_b is the product (a*b): out = in_a - (a*b), which is FMS!
+            if (!is_fusable_mul(in_b_src)) continue;
+
+            std::string mul_name = in_b_src;
+            std::string addend_name = in_a_src;
+
+            OptNode& mul_node = m_nodes[mul_name];
+            std::string mul_in_a, mul_in_b;
+            for (const auto& inp : mul_node.inputs) {
+                std::string k = to_lower(inp.first);
+                if (k == "a" || k == "in_a" || k == "input_0" || k == "in") mul_in_a = inp.second;
+                else if (k == "b" || k == "in_b" || k == "input_1") mul_in_b = inp.second;
+            }
+            if (mul_in_a.empty() && mul_node.inputs.size() >= 1) mul_in_a = mul_node.inputs.begin()->second;
+            if (mul_in_b.empty() && mul_node.inputs.size() >= 2) {
+                auto it = mul_node.inputs.begin();
+                ++it;
+                mul_in_b = it->second;
+            }
+            if (mul_in_a.empty() || mul_in_b.empty()) continue;
+
+            // Fuse: node becomes FMS (c - a * b)
+            node.opcode = LE_OP_FMS_F;
+            node.type = "FMS";
+            node.inputs.clear();
+            node.inputs["a"] = mul_in_a;
+            node.inputs["b"] = mul_in_b;
+            node.inputs["c"] = addend_name;
+
+            mul_node.is_dead = true;
+            mul_node.inputs.clear();
+
+            m_stats.fused_instructions++;
+            m_stats.eliminated_instructions++;
+            m_stats.eliminated_registers++;
+        }
+    }
+
+    update_consumer_lists();
+}
+
 void Optimizer::pass_direct_destination_coalescing()
 {
     update_consumer_lists();
@@ -653,7 +1226,7 @@ void Optimizer::pass_direct_destination_coalescing()
         std::string src_name = out_node.inputs.begin()->second;
 
         auto its = m_nodes.find(src_name);
-        if (its == m_nodes.end() || its->second.is_dead || its->second.is_stateful) continue;
+        if (its == m_nodes.end() || its->second.is_dead || its->second.is_stateful || its->second.is_feedback_state) continue;
         OptNode& producer = its->second;
 
         // Producer must be an instruction-emitting gate or math block, not a physical input or constant
@@ -668,7 +1241,8 @@ void Optimizer::pass_direct_destination_coalescing()
                                 (producer.opcode >= LE_OP_CMP_GT && producer.opcode <= LE_OP_CMP_NE);
             if (!is_bool_prod) continue;
         } else if (is_float_reg || is_aout) {
-            bool is_float_prod = (producer.opcode >= LE_OP_MOVE_F && producer.opcode <= LE_OP_MAX_F);
+            bool is_float_prod = (producer.opcode >= LE_OP_MOVE_F && producer.opcode <= LE_OP_MAX_F) ||
+                                 (producer.opcode == LE_OP_FMA_F) || (producer.opcode == LE_OP_FMS_F);
             if (!is_float_prod) continue;
         }
 
@@ -690,20 +1264,72 @@ void Optimizer::pass_direct_destination_coalescing()
 void Optimizer::compute_topological_order()
 {
     m_execution_order.clear();
+    std::set<std::string> visiting;
     std::set<std::string> visited;
+
+    auto is_reg = [&](const std::string& node_name) -> bool {
+        auto it = m_nodes.find(node_name);
+        if (it == m_nodes.end()) return false;
+        if (it->second.is_feedback_state) return true;
+        const std::string& t = it->second.type;
+        return (t == "BOOLREGISTER" || t == "LE_BOOLREGISTER" ||
+                t == "INTREGISTER" || t == "LE_INTREGISTER" ||
+                t == "FLOATREGISTER" || t == "LE_FLOATREGISTER" ||
+                t == "COMPLEXREGISTER" || t == "LE_COMPLEXREGISTER");
+    };
+
+    auto can_reach = [&](const std::string& start, const std::string& target) -> bool {
+        std::set<std::string> seen;
+        std::vector<std::string> stack = { start };
+        while (!stack.empty()) {
+            std::string curr = stack.back();
+            stack.pop_back();
+            if (curr == target) return true;
+            if (seen.count(curr)) continue;
+            seen.insert(curr);
+            auto itn = m_nodes.find(curr);
+            if (itn != m_nodes.end()) {
+                for (const auto& inp : itn->second.inputs) {
+                    if (!inp.second.empty() && !seen.count(inp.second)) {
+                        stack.push_back(inp.second);
+                    }
+                }
+            }
+        }
+        return false;
+    };
 
     std::function<void(const std::string&)> visit = [&](const std::string& name) {
         if (visited.find(name) != visited.end()) return;
-        visited.insert(name);
+        if (visiting.find(name) != visiting.end()) {
+            // Cycle back-edge detected: break cycle
+            return;
+        }
+        visiting.insert(name);
 
         auto it = m_nodes.find(name);
         if (it != m_nodes.end()) {
             for (const auto& port_src : it->second.inputs) {
-                if (m_nodes.find(port_src.second) != m_nodes.end()) {
-                    visit(port_src.second);
+                const std::string& src_name = port_src.second;
+                if (src_name.empty()) continue;
+
+                // In synchronous digital logic, when a register is part of a feedback loop
+                // (i.e. the register's input path depends on this node), the node is reading
+                // the register's previous state from memory. Traversing into the register in
+                // that cycle would invert the feedback loop and schedule the register's write
+                // BEFORE the combinatorial logic that computes its input!
+                // For acyclic pipelines (no feedback path back to this node), dependencies
+                // are preserved normally.
+                if (is_reg(src_name) && can_reach(src_name, name)) {
+                    continue;
+                }
+                if (m_nodes.find(src_name) != m_nodes.end()) {
+                    visit(src_name);
                 }
             }
         }
+        visiting.erase(name);
+        visited.insert(name);
         m_execution_order.push_back(name);
     };
 

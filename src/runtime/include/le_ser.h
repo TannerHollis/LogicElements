@@ -69,33 +69,79 @@ typedef struct {
 } le_ser_t;
 
 /**
- * @brief Initializes the SER instance with channel definitions and buffer.
+ * @brief Initializes the Sequence of Events Recorder (SER) instance.
+ *
+ * Configures the monitored digital channels, attaches the caller-provided event
+ * ring buffer, and links the logical NVRAM partition. If @p nv_offset is non-zero,
+ * attempts to restore existing event records and sequence numbers from NVRAM.
+ *
+ * @param ser Pointer to the SER structure to initialize.
+ * @param channels Contiguous array of digital channel descriptors to monitor.
+ * @param channel_count Number of channels in @p channels (clamped to `LE_SER_MAX_CHANNELS`).
+ * @param event_buffer Pointer to pre-allocated RAM storage for the event ring buffer.
+ * @param capacity Maximum number of @ref le_ser_event_t records @p event_buffer can hold.
+ * @param nv_offset Logical NVRAM byte offset for persistence (defaults to `LE_NVRAM_OFFSET_SER` if 0).
  */
 void le_ser_init(le_ser_t* ser, const le_ser_channel_t* channels, uint16_t channel_count,
                  le_ser_event_t* event_buffer, uint16_t capacity, uint32_t nv_offset);
 
 /**
- * @brief Restores SER state and buffered events from NVRAM.
+ * @brief Restores SER state and buffered events from non-volatile RAM.
+ *
+ * Reads the persistent header at `ser->nv_offset`, verifies `LE_SER_MAGIC` and
+ * matching buffer capacity, and populates the in-memory ring buffer with historical
+ * event records.
+ *
+ * @param ser Pointer to the initialized SER instance.
+ * @return Returns `true` if valid SER records were restored; otherwise, `false`.
  */
 bool le_ser_restore_nvram(le_ser_t* ser);
 
 /**
- * @brief Flushes dirty SER events to NVRAM.
+ * @brief Flushes pending SER events and header metadata to non-volatile RAM.
+ *
+ * Serializes the header metadata (sequence counters, head/tail indices, overflow count)
+ * and all active events into persistent NVRAM storage, clearing the dirty flag on success.
+ *
+ * @param ser Pointer to the SER instance to flush.
+ * @return Returns `true` if NVRAM write succeeded; otherwise, `false`.
  */
 bool le_ser_flush_nvram(le_ser_t* ser);
 
 /**
- * @brief Executes edge detection scan across monitored channels at end of logic scan.
+ * @brief Executes an edge detection scan across all monitored channels.
+ *
+ * Scans the current boolean values of monitored channels in @p img, detects
+ * rising or falling transitions relative to previous scan state, and pushes
+ * transition events into the ring buffer with microsecond timestamps and monotonic IDs.
+ *
+ * @param ser Pointer to the SER instance.
+ * @param img Pointer to the active process image containing live channel states.
+ * @param now_us Monotonic microsecond timestamp of the current scan.
  */
 void le_ser_scan(le_ser_t* ser, const le_process_image_t* img, uint64_t now_us);
 
 /**
  * @brief Resets the SER event ring buffer.
+ *
+ * Clears all buffered events, resets head/tail indices and overflow counters, and
+ * flushes the cleared state to NVRAM if persistence is enabled.
+ *
+ * @param ser Pointer to the SER instance to clear.
  */
 void le_ser_clear(le_ser_t* ser);
 
 /**
- * @brief Reads up to max_count events from the ring buffer.
+ * @brief Reads a range of chronological events from the ring buffer.
+ *
+ * Copies up to @p max_count events starting at offset @p start_idx from the current
+ * ring tail (oldest event) into the caller's @p out_events buffer without modifying the ring.
+ *
+ * @param ser Pointer to the SER instance to read from.
+ * @param start_idx Zero-based logical event offset from the oldest valid event.
+ * @param out_events Destination array to receive copied @ref le_ser_event_t records.
+ * @param max_count Maximum number of events to copy into @p out_events.
+ * @return Total number of events successfully copied.
  */
 uint16_t le_ser_read_events(const le_ser_t* ser, uint16_t start_idx, le_ser_event_t* out_events, uint16_t max_count);
 

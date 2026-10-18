@@ -84,7 +84,7 @@ void le_event_rec_init(le_event_rec_t* rec, const le_event_rec_cfg_t* cfg,
     rec->trigger_address = cfg->trigger_address;
     rec->trigger_edge = cfg->trigger_edge ? cfg->trigger_edge : (uint8_t)LE_SER_EDGE_RISING;
     rec->active_levels = cfg->active_levels;
-    rec->nv_offset = nv_offset ? nv_offset : LE_NVRAM_OFFSET_EVENT_REC;
+    rec->nv_offset = nv_offset ? nv_offset : le_nvram_get_event_rec_offset();
 
     size_t pool_used = 0;
     for (uint8_t i = 0; i < cfg->active_levels && i < LE_EVENT_REC_MAX_LEVELS; i++) {

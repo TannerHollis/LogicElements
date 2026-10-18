@@ -81,18 +81,18 @@ typedef struct {
 } le_pin_map_t;
 
 static const le_pin_map_t INPUT_MAP[] = {
-    { 0, 0 }, /* %I[0] -> Port 0, Pin 0 */
-    { 0, 1 }, /* %I[1] -> Port 0, Pin 1 */
-    { 0, 2 }, /* %I[2] -> Port 0, Pin 2 */
-    { 0, 3 }, /* %I[3] -> Port 0, Pin 3 */
+    { 0, 0 }, /* %DIN[0] -> Port 0, Pin 0 */
+    { 0, 1 }, /* %DIN[1] -> Port 0, Pin 1 */
+    { 0, 2 }, /* %DIN[2] -> Port 0, Pin 2 */
+    { 0, 3 }, /* %DIN[3] -> Port 0, Pin 3 */
 };
 #define NUM_INPUTS (sizeof(INPUT_MAP) / sizeof(INPUT_MAP[0]))
 
 static const le_pin_map_t OUTPUT_MAP[] = {
-    { 1, 0 }, /* %Q[0] -> Port 1, Pin 0 */
-    { 1, 1 }, /* %Q[1] -> Port 1, Pin 1 */
-    { 1, 2 }, /* %Q[2] -> Port 1, Pin 2 */
-    { 1, 3 }, /* %Q[3] -> Port 1, Pin 3 */
+    { 1, 0 }, /* %DOUT[0] -> Port 1, Pin 0 */
+    { 1, 1 }, /* %DOUT[1] -> Port 1, Pin 1 */
+    { 1, 2 }, /* %DOUT[2] -> Port 1, Pin 2 */
+    { 1, 3 }, /* %DOUT[3] -> Port 1, Pin 3 */
 };
 #define NUM_OUTPUTS (sizeof(OUTPUT_MAP) / sizeof(OUTPUT_MAP[0]))
 
@@ -228,6 +228,16 @@ static uint64_t port_get_time_us(void)
     return (uint64_t)port_get_time_ms() * 1000ULL;
 }
 
+static bool port_set_timer_rate(uint32_t rate_hz, uint32_t period_us)
+{
+    (void)rate_hz; (void)period_us;
+    /* TODO (Optional): If using hardware timer interrupts / RTOS pacing,
+     * reconfigure hardware timer ARR / reload register or SysTick rate here:
+     * e.g. bsp_timer_set_frequency(rate_hz);
+     */
+    return true;
+}
+
 static size_t port_uart_available(void)
 {
     return 0; /* TODO: return number of buffered UART RX bytes */
@@ -246,41 +256,70 @@ static size_t port_uart_write(const uint8_t* buf, size_t len)
     return len;
 }
 
-static bool port_storage_read(uint32_t offset, uint8_t* buf, size_t len)
+static bool port_storage_read(const le_storage_sector_t* sector, uint32_t offset_in_sector, uint8_t* buf, size_t len)
 {
-    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+    if (!buf || !sector) return false;
 
 #if (LE_PORT_STORAGE_BACKEND == 0)
     /* Backend 0: In-Memory RAM Mirror (Bring-up / Simulation) */
-    memcpy(buf, &s_port_flash[offset], len);
+    uint32_t rel = sector->phys_addr + offset_in_sector;
+    if (rel + len > sizeof(s_port_flash)) return false;
+    memcpy(buf, &s_port_flash[rel], len);
     return true;
 
 #elif (LE_PORT_STORAGE_BACKEND == 1)
     /* Backend 1: On-Chip or External NOR Flash (Memory-Mapped Read) */
-    const uint8_t* flash_ptr = (const uint8_t*)(LE_PORT_FLASH_BASE + offset);
+    const uint8_t* flash_ptr = (const uint8_t*)(sector->phys_addr + offset_in_sector);
     memcpy(buf, flash_ptr, len);
     return true;
 #endif
 }
 
-static bool port_storage_write(uint32_t offset, const uint8_t* buf, size_t len)
+static bool port_storage_erase_sector(const le_storage_sector_t* sector)
 {
-    if (!buf || (offset + len > LE_PORT_STORAGE_TOTAL_BYTES)) return false;
+    if (!sector) return false;
+    if (sector->erase_size == 0) return true;
 
 #if (LE_PORT_STORAGE_BACKEND == 0)
-    /* Backend 0: In-Memory RAM Mirror (Bring-up / Simulation) */
-    memcpy(&s_port_flash[offset], buf, len);
+    uint32_t rel = sector->phys_addr;
+    if (rel + sector->size_bytes > sizeof(s_port_flash)) return false;
+    memset(&s_port_flash[rel], 0xFF, sector->size_bytes);
     return true;
 
 #elif (LE_PORT_STORAGE_BACKEND == 1)
-    /* Backend 1: On-Chip or External NOR Flash (Erase + Program) */
-    uint32_t flash_addr = LE_PORT_FLASH_BASE + offset;
-    if ((offset % LE_PORT_FLASH_SECTOR_SIZE) == 0) {
-        /* bsp_flash_erase_sector(flash_addr); */
-    }
-    /* return bsp_flash_program(flash_addr, buf, len); */
-    (void)flash_addr; (void)buf; (void)len;
+    /* TODO: bsp_flash_erase_sector(sector->phys_addr); */
     return true;
+#endif
+}
+
+static bool port_storage_write_page(const le_storage_sector_t* sector, uint32_t offset_in_sector, const uint8_t* buf, size_t len)
+{
+    if (!buf || !sector) return false;
+
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    /* Backend 0: In-Memory RAM Mirror (Bring-up / Simulation) */
+    uint32_t rel = sector->phys_addr + offset_in_sector;
+    if (rel + len > sizeof(s_port_flash)) return false;
+    memcpy(&s_port_flash[rel], buf, len);
+    return true;
+
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    /* Backend 1: On-Chip or External NOR Flash (Page Program) */
+    /* return bsp_flash_program(sector->phys_addr + offset_in_sector, buf, len); */
+    (void)offset_in_sector; (void)buf; (void)len;
+    return true;
+#endif
+}
+
+static const uint8_t* port_storage_get_xip_ptr(const le_storage_sector_t* sector, uint32_t offset_in_sector)
+{
+    if (!sector) return NULL;
+#if (LE_PORT_STORAGE_BACKEND == 0)
+    uint32_t rel = sector->phys_addr + offset_in_sector;
+    if (rel < sizeof(s_port_flash)) return &s_port_flash[rel];
+    return NULL;
+#elif (LE_PORT_STORAGE_BACKEND == 1)
+    return (const uint8_t*)(sector->phys_addr + offset_in_sector);
 #endif
 }
 
@@ -321,7 +360,7 @@ static const le_flash_wl_driver_t s_template_wl_driver = {
 };
 #endif
 
-bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
+static bool port_nvram_read(uint32_t offset, uint8_t* buf, size_t len)
 {
     if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
 
@@ -352,7 +391,7 @@ bool le_port_nvram_read(uint32_t offset, void* buf, size_t len)
 #endif
 }
 
-bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
+static bool port_nvram_write(uint32_t offset, const uint8_t* buf, size_t len)
 {
     if (!buf || (offset + len > LE_NVRAM_TOTAL_BYTES)) return false;
 
@@ -388,31 +427,40 @@ bool le_port_nvram_write(uint32_t offset, const void* buf, size_t len)
 #endif
 }
 
-bool le_port_nvram_erase(uint32_t offset, size_t len)
+static bool port_nvram_write_page(uint32_t phys_addr, const uint8_t* buf, size_t len)
 {
-    if (offset + len > LE_NVRAM_TOTAL_BYTES) return false;
+    if (!buf) return false;
 
 #if (LE_PORT_NVRAM_BACKEND == 0)
-    /* Backend 0: In-Memory RAM Mirror */
-    memset(&s_port_nvram[offset], 0, len);
+    if (phys_addr + len > sizeof(s_port_nvram)) return false;
+    memcpy(&s_port_nvram[phys_addr], buf, len);
     return true;
 
 #elif (LE_PORT_NVRAM_BACKEND == 1)
-    /* Backend 1: External SPI NVRAM / FRAM */
-    uint8_t zeros[64] = {0};
-    uint32_t rem = (uint32_t)len;
-    uint32_t cur = offset;
-    while (rem > 0) {
-        uint32_t chunk = (rem > sizeof(zeros)) ? (uint32_t)sizeof(zeros) : rem;
-        if (!le_port_nvram_write(cur, zeros, chunk)) return false;
-        cur += chunk;
-        rem -= chunk;
-    }
+    /* Byte NVRAM / FRAM supports page or byte writes directly */
+    return port_nvram_write(phys_addr, buf, len);
+
+#elif (LE_PORT_NVRAM_BACKEND == 2)
+    return template_wl_program(phys_addr, buf, len);
+#endif
+}
+
+static bool port_nvram_erase_sector(uint32_t sector_idx, uint32_t phys_addr)
+{
+#if (LE_PORT_NVRAM_BACKEND == 0)
+    (void)sector_idx;
+    uint32_t sec_size = LE_NVRAM_BLOCK_SIZE;
+    if (phys_addr + sec_size > sizeof(s_port_nvram)) return false;
+    memset(&s_port_nvram[phys_addr], 0xFF, sec_size);
+    return true;
+
+#elif (LE_PORT_NVRAM_BACKEND == 1)
+    /* Byte NVRAM / FRAM requires no sector erase */
+    (void)sector_idx; (void)phys_addr;
     return true;
 
 #elif (LE_PORT_NVRAM_BACKEND == 2)
-    /* Backend 2: On-Chip Flash with runtime wear leveling */
-    return le_nvram_erase(offset, len);
+    return template_wl_erase(sector_idx, phys_addr);
 #endif
 }
 
@@ -443,17 +491,17 @@ static bool port_spi_transfer(uint8_t cs_pin, const uint8_t* tx_data, uint8_t* r
 }
 #endif
 
+#include "le_custom_node.h"
+
 static le_status_t port_ext_call(uint8_t func_id, const uint16_t* args,
                                  int in_count, int out_count, le_process_image_t* img)
 {
-    (void)func_id; (void)args; (void)in_count; (void)out_count; (void)img;
-    /* TODO: dispatch board-specific custom nodes (func_id >= LE_FUNC_CUSTOM_BASE) */
-    return LE_OK;
+    return le_custom_nodes_dispatch(func_id, args, in_count, out_count, img);
 }
 
 static const char* port_get_custom_nodes_json(void)
 {
-    return NULL; /* TODO: return JSON array declaring board custom nodes */
+    return le_custom_nodes_get_json();
 }
 
 /* ========================================================================== */
@@ -474,17 +522,21 @@ const le_hal_t s_my_mcu_hal = {
 
     .get_time_ms = port_get_time_ms,
     .get_time_us = port_get_time_us,
+    .set_timer_rate = port_set_timer_rate,
 
     .uart_available = port_uart_available,
     .uart_read = port_uart_read,
     .uart_write = port_uart_write,
 
     .storage_read = port_storage_read,
-    .storage_write = port_storage_write,
+    .storage_erase_sector = port_storage_erase_sector,
+    .storage_write_page = port_storage_write_page,
+    .storage_get_xip_ptr = port_storage_get_xip_ptr,
 
-    .nvram_read = (bool (*)(uint32_t, uint8_t*, size_t))le_port_nvram_read,
-    .nvram_write = (bool (*)(uint32_t, const uint8_t*, size_t))le_port_nvram_write,
-    .nvram_erase = (bool (*)(uint32_t, size_t))le_port_nvram_erase,
+    .nvram_read = port_nvram_read,
+    .nvram_write = port_nvram_write,
+    .nvram_write_page = port_nvram_write_page,
+    .nvram_erase_sector = port_nvram_erase_sector,
 
 #if LE_ENABLE_SERIAL_BUS
     .i2c_write = port_i2c_write,

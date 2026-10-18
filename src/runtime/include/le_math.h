@@ -12,6 +12,8 @@
 #define LE_MATH_H
 
 #include <math.h>
+#include <string.h>
+#include <stdint.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -117,6 +119,155 @@ LE_ALWAYS_INLINE float le_fast_atan2(float y, float x)
     if (y < 0.0f) a = -a;
     return a;
 #endif
+}
+
+/**
+ * @brief Fast single-precision square root.
+ */
+LE_ALWAYS_INLINE float le_fast_sqrt(float x)
+{
+    if (x <= 0.0f) return 0.0f;
+#if defined(LE_HAS_ARM_MATH)
+    float r;
+    arm_sqrt_f32(x, &r);
+    return r;
+#else
+    return sqrtf(x);
+#endif
+}
+
+/**
+ * @brief Fast sine evaluation using CMSIS-DSP or platform sincos.
+ */
+LE_ALWAYS_INLINE float le_fast_sin(float x)
+{
+    float s, c;
+    le_sincos(x, &s, &c);
+    return s;
+}
+
+/**
+ * @brief Fast cosine evaluation using CMSIS-DSP or platform sincos.
+ */
+LE_ALWAYS_INLINE float le_fast_cos(float x)
+{
+    float s, c;
+    le_sincos(x, &s, &c);
+    return c;
+}
+
+/**
+ * @brief Fast tangent evaluation: sin(x) / cos(x).
+ */
+LE_ALWAYS_INLINE float le_fast_tan(float x)
+{
+    float s, c;
+    le_sincos(x, &s, &c);
+    if (fabsf(c) < 1e-7f) {
+        return (s >= 0.0f) ? 1e7f : -1e7f;
+    }
+    return s / c;
+}
+
+/**
+ * @brief Fast arc-tangent: atan(x) = atan2(x, 1.0).
+ */
+LE_ALWAYS_INLINE float le_fast_atan(float x)
+{
+    return le_fast_atan2(x, 1.0f);
+}
+
+/**
+ * @brief Fast arc-sine: asin(x) = atan2(x, sqrt(1 - x^2)).
+ */
+LE_ALWAYS_INLINE float le_fast_asin(float x)
+{
+    if (x >= 1.0f) return 1.57079632679f;
+    if (x <= -1.0f) return -1.57079632679f;
+    float denom = le_fast_sqrt(1.0f - x * x);
+    return le_fast_atan2(x, denom);
+}
+
+/**
+ * @brief Fast arc-cosine: acos(x) = pi/2 - asin(x).
+ */
+LE_ALWAYS_INLINE float le_fast_acos(float x)
+{
+    if (x >= 1.0f) return 0.0f;
+    if (x <= -1.0f) return 3.14159265359f;
+    return 1.57079632679f - le_fast_asin(x);
+}
+
+/**
+ * @brief Fast natural exponential function: exp(x).
+ *
+ * Branchless range-reduced 5th-order Horner polynomial with IEEE-754 exponent scaling.
+ * Bounded O(1) execution (~10-12 cycles).
+ */
+LE_ALWAYS_INLINE float le_fast_exp(float x)
+{
+    if (x > 88.0f) return 3.402823466e+38f;
+    if (x < -88.0f) return 0.0f;
+    float z = x * 1.4426950408889634f; /* log2(e) */
+    int k = (int)(z >= 0.0f ? (z + 0.5f) : (z - 0.5f));
+    float f = x - (float)k * 0.6931471805599453f; /* ln(2) */
+    float poly = 1.0f + f * (1.0f + f * (0.5f + f * (0.166666667f + f * (0.041666667f + f * 0.008333333f))));
+    uint32_t exp_bits = (uint32_t)((k + 127) << 23);
+    float scale;
+    memcpy(&scale, &exp_bits, sizeof(float));
+    return poly * scale;
+}
+
+/**
+ * @brief Fast natural logarithm: ln(x).
+ *
+ * Range-reduced mantissa polynomial with IEEE-754 exponent extraction.
+ * Bounded O(1) execution (~12-15 cycles).
+ */
+LE_ALWAYS_INLINE float le_fast_log(float x)
+{
+    if (x <= 0.0f) return -3.402823466e+38f;
+    uint32_t bits;
+    memcpy(&bits, &x, sizeof(uint32_t));
+    int k = (int)((bits >> 23) & 0xFF) - 127;
+    bits = (bits & 0x007FFFFF) | 0x3F800000; /* mantissa in [1.0, 2.0) */
+    float m;
+    memcpy(&m, &bits, sizeof(float));
+    if (m > 1.41421356237f) {
+        m *= 0.5f;
+        k++;
+    }
+    float y = (m - 1.0f) / (m + 1.0f);
+    float y2 = y * y;
+    float poly = y * (2.0f + y2 * (0.66666667f + y2 * (0.4f + y2 * 0.28571429f)));
+    return (float)k * 0.6931471805599453f + poly;
+}
+
+/**
+ * @brief Fast base-10 logarithm: log10(x).
+ */
+LE_ALWAYS_INLINE float le_fast_log10(float x)
+{
+    return le_fast_log(x) * 0.4342944819032518f;
+}
+
+/**
+ * @brief Fast power function: pow(x, y).
+ */
+LE_ALWAYS_INLINE float le_fast_pow(float x, float y)
+{
+    if (y == 0.0f) return 1.0f;
+    if (x == 0.0f) return (y > 0.0f) ? 0.0f : 3.402823466e+38f;
+    if (x < 0.0f) {
+        float y_floor = floorf(y);
+        if (y == y_floor) {
+            int y_int = (int)y;
+            float sign = (y_int % 2 != 0) ? -1.0f : 1.0f;
+            return sign * le_fast_exp(y * le_fast_log(-x));
+        }
+        return 0.0f;
+    }
+    return le_fast_exp(y * le_fast_log(x));
 }
 
 #ifdef __cplusplus

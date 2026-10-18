@@ -115,6 +115,22 @@ public:
         return obj_val[key];
     }
 
+    void set(const std::string& key, const JsonValue& val) {
+        if (type != JsonType::Object) {
+            type = JsonType::Object;
+            obj_val.clear();
+        }
+        obj_val[key] = val;
+    }
+
+    void push_back(const JsonValue& val) {
+        if (type != JsonType::Array) {
+            type = JsonType::Array;
+            arr_val.clear();
+        }
+        arr_val.push_back(val);
+    }
+
     size_t size() const {
         if (type == JsonType::Array) return arr_val.size();
         if (type == JsonType::Object) return obj_val.size();

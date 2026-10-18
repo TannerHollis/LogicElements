@@ -57,6 +57,11 @@ uint32_t le_rt_workspace_bytes(void);
 uint16_t le_rt_kind_size(uint8_t kind);
 
 /**
+ * @brief Returns the human-readable string name of @p kind (e.g. "TIMER", "OVERCURRENT").
+ */
+const char* le_rt_kind_name(uint8_t kind);
+
+/**
  * @brief Records the byte offset of the @p kind group within the workspace.
  * Set by the loader (and by tests) after the state image is placed.
  */
@@ -72,6 +77,11 @@ void le_rt_set_kind_base(uint8_t kind, int32_t base);
  * @param count Declared instance count for the kind group (0 = none).
  */
 void le_rt_set_kind_count(uint8_t kind, uint16_t count);
+
+/**
+ * @brief Returns how many instances of @p kind were declared in the loaded program.
+ */
+uint16_t le_rt_kind_count(uint8_t kind);
 
 /**
  * @brief Returns the workspace byte offset of the @p kind group, or -1 if no

@@ -43,9 +43,16 @@ The example models an industrial motor drive system featuring three specialized 
 py examples/custom_nodes/run_example.py
 ```
 
-### Option 2: Using the `le_compile` CLI executable
+### Option 2: Using the host CLI
 ```bash
-# Compile and generate a disassembly listing:
+# Using the unified host CLI (recommended):
+le compile examples/custom_nodes/motor_control_circuit.json \
+    -b examples/custom_nodes/custom_board.leconfig \
+    -o motor_control.lebin \
+    -d disasm.txt \
+    --stats
+
+# Or using the standalone compiler executable:
 ./build/Release/le_compile examples/custom_nodes/motor_control_circuit.json \
     -b examples/custom_nodes/custom_board.leconfig \
     -o motor_control.lebin \
@@ -56,7 +63,7 @@ py examples/custom_nodes/run_example.py
 ### Option 3: Exporting a standalone embedded C header
 ```bash
 # Generates a C static array embeddable in ROM:
-./build/Release/le_compile examples/custom_nodes/motor_control_circuit.json \
+le compile examples/custom_nodes/motor_control_circuit.json \
     -b examples/custom_nodes/custom_board.leconfig \
     -c motor_control_program.h
 ```
@@ -67,7 +74,11 @@ py examples/custom_nodes/run_example.py
 
 To integrate these custom nodes into target firmware:
 
-1. Copy `custom_nodes.h` and `custom_hal.c` to your board's project directory.
+### Method A: Declarative Table in `src/le_board_config.c` (Recommended)
+Add the nodes to `g_board_custom_nodes[]` in `src/le_board_config.c`. The runtime automatically handles `ext_call` dispatch and `nodes` JSON serialization without any manual switch statements.
+
+### Method B: Direct HAL Callbacks
+1. Copy `custom_nodes.h` and `custom_hal.c` into your microcontroller project.
 2. In your startup code, register the callbacks into your `le_hal_t` instance:
    ```c
    custom_board_register_hal_callbacks(&my_board_hal);

@@ -5,12 +5,6 @@
     "protocol_version": 1
   },
   "limits": {
-    "digital_inputs": 6,
-    "digital_outputs": 6,
-    "coils": 32,
-    "floats": 16,
-    "complex_registers": 8,
-    "analog_inputs": 6,
     "workspace_bytes": 512,
     "config_slots": 2,
     "slot_size_bytes": 512,
@@ -21,28 +15,39 @@
     "complex": true,
     "analog": true,
     "dsp": true,
-    "serial_bus": true
-},
+    "serial_bus": true,
+    "i2c_devices": 1,
+    "spi_devices": 1
+  },
   "pin_map": {
-    "inputs": {
-      "%I0": {"alias": "BTN_START", "pin": "D2", "desc": "Start Button"},
-      "%I1": {"alias": "BTN_STOP", "pin": "D3", "desc": "Stop Button"},
-      "%I2": {"alias": "LIMIT_SW", "pin": "D4", "desc": "Limit Switch"}
+    "digital": {
+      "inputs": {
+        "%I0": {"alias": "BTN_START", "desc": "Start Button"},
+        "%I1": {"alias": "BTN_STOP", "desc": "Stop Button"},
+        "%I2": {"alias": "LIMIT_SW", "desc": "Limit Switch"},
+        "%I3": {"alias": "IN3", "desc": "Digital Input 3"},
+        "%I4": {"alias": "IN4", "desc": "Digital Input 4"},
+        "%I5": {"alias": "IN5", "desc": "Digital Input 5"}
+      },
+      "outputs": {
+        "%Q0": {"alias": "LED_BUILTIN", "desc": "Onboard LED"},
+        "%Q1": {"alias": "PUMP_RELAY", "desc": "Sump Pump Relay"},
+        "%Q2": {"alias": "VALVE_SOLENOID", "desc": "Inlet Solenoid Valve"},
+        "%Q3": {"alias": "OUT3", "desc": "Digital Output 3"},
+        "%Q4": {"alias": "OUT4", "desc": "Digital Output 4"},
+        "%Q5": {"alias": "OUT5", "desc": "Digital Output 5"}
+      }
     },
-    "outputs": {
-      "%Q0": {"alias": "LED_BUILTIN", "pin": "D13", "desc": "Onboard LED"},
-      "%Q1": {"alias": "PUMP_RELAY", "pin": "D8", "desc": "Sump Pump Relay"},
-      "%Q2": {"alias": "VALVE_SOLENOID", "pin": "D9", "desc": "Inlet Solenoid Valve"}
-    },
-    "i2c": {
-      "sda": "A4",
-      "scl": "A5"
-    },
-    "spi": {
-      "sck": "D13",
-      "miso": "D12",
-      "mosi": "D11",
-      "cs": ["D10"]
+    "analog": {
+      "inputs": {
+        "%AIN0": {"alias": "AIN0", "desc": "Analog Input 0 (0-5V)"},
+        "%AIN1": {"alias": "AIN1", "desc": "Analog Input 1 (0-5V)"},
+        "%AIN2": {"alias": "AIN2", "desc": "Analog Input 2 (0-5V)"},
+        "%AIN3": {"alias": "AIN3", "desc": "Analog Input 3 (0-5V)"},
+        "%AIN4": {"alias": "AIN4", "desc": "Analog Input 4 (0-5V)"},
+        "%AIN5": {"alias": "AIN5", "desc": "Analog Input 5 (0-5V)"}
+      },
+      "outputs": {}
     }
   },
   "custom_nodes": [

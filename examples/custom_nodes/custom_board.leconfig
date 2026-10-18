@@ -5,18 +5,68 @@
     "protocol_version": 1
   },
   "limits": {
-    "digital_inputs": 16,
-    "digital_outputs": 16,
-    "coils": 128,
-    "floats": 64,
     "workspace_bytes": 2048,
     "config_slots": 3,
     "slot_size_bytes": 2048
   },
   "features": {
     "protection": false,
-    "serial_bus": true
-},
+    "serial_bus": true,
+    "i2c_devices": 2,
+    "spi_devices": 2
+  },
+  "pin_map": {
+    "digital": {
+      "inputs": {
+        "%I0": { "alias": "START_PB", "desc": "Start Pushbutton (NO)" },
+        "%I1": { "alias": "STOP_PB", "desc": "Stop Pushbutton (NC)" },
+        "%I2": { "alias": "ENC_RESET", "desc": "Encoder Zero Position Sensor" },
+        "%I3": { "alias": "IN3", "desc": "Digital Input 3" },
+        "%I4": { "alias": "IN4", "desc": "Digital Input 4" },
+        "%I5": { "alias": "IN5", "desc": "Digital Input 5" },
+        "%I6": { "alias": "IN6", "desc": "Digital Input 6" },
+        "%I7": { "alias": "IN7", "desc": "Digital Input 7" },
+        "%I8": { "alias": "IN8", "desc": "Digital Input 8" },
+        "%I9": { "alias": "IN9", "desc": "Digital Input 9" },
+        "%I10": { "alias": "IN10", "desc": "Digital Input 10" },
+        "%I11": { "alias": "IN11", "desc": "Digital Input 11" },
+        "%I12": { "alias": "IN12", "desc": "Digital Input 12" },
+        "%I13": { "alias": "IN13", "desc": "Digital Input 13" },
+        "%I14": { "alias": "IN14", "desc": "Digital Input 14" },
+        "%I15": { "alias": "IN15", "desc": "Digital Input 15" }
+      },
+      "outputs": {
+        "%Q0": { "alias": "MOTOR_RUN", "desc": "Main Motor Contactor" },
+        "%Q1": { "alias": "SPEED_OK", "desc": "Speed Ready Indicator LED" },
+        "%Q2": { "alias": "OUT2", "desc": "Digital Output 2" },
+        "%Q3": { "alias": "OUT3", "desc": "Digital Output 3" },
+        "%Q4": { "alias": "OUT4", "desc": "Digital Output 4" },
+        "%Q5": { "alias": "OUT5", "desc": "Digital Output 5" },
+        "%Q6": { "alias": "OUT6", "desc": "Digital Output 6" },
+        "%Q7": { "alias": "OUT7", "desc": "Digital Output 7" },
+        "%Q8": { "alias": "OUT8", "desc": "Digital Output 8" },
+        "%Q9": { "alias": "OUT9", "desc": "Digital Output 9" },
+        "%Q10": { "alias": "OUT10", "desc": "Digital Output 10" },
+        "%Q11": { "alias": "OUT11", "desc": "Digital Output 11" },
+        "%Q12": { "alias": "OUT12", "desc": "Digital Output 12" },
+        "%Q13": { "alias": "OUT13", "desc": "Digital Output 13" },
+        "%Q14": { "alias": "OUT14", "desc": "Digital Output 14" },
+        "%Q15": { "alias": "OUT15", "desc": "Digital Output 15" }
+      }
+    },
+    "analog": {
+      "inputs": {
+        "%AIN0": { "alias": "AIN0", "desc": "Analog Input 0 (0-10V)" },
+        "%AIN1": { "alias": "AIN1", "desc": "Analog Input 1 (0-10V)" },
+        "%AIN2": { "alias": "AIN2", "desc": "Analog Input 2 (0-10V)" },
+        "%AIN3": { "alias": "AIN3", "desc": "Analog Input 3 (0-10V)" }
+      },
+      "outputs": {
+        "%AOUT0": { "alias": "AOUT0", "desc": "Analog Output 0 (0-10V)" },
+        "%AOUT1": { "alias": "AOUT1", "desc": "Analog Output 1 (0-10V)" }
+      }
+    }
+  },
   "custom_nodes": [
     {
       "type_id": "BOARD_PWM",
@@ -61,17 +111,5 @@
         { "name": "filtered", "type": "float" }
       ]
     }
-  ],
-  "pin_map": {
-    "inputs": {
-      "%I0": { "pin": "PA0", "alias": "START_PB", "desc": "Start Pushbutton (NO)" },
-      "%I1": { "pin": "PA1", "alias": "STOP_PB", "desc": "Stop Pushbutton (NC)" },
-      "%I2": { "pin": "PA2", "alias": "ENC_RESET", "desc": "Encoder Zero Position Sensor" }
-    },
-    "outputs": {
-      "%Q0": { "pin": "PB0", "alias": "MOTOR_RUN", "desc": "Main Motor Contactor" },
-      "%Q1": { "pin": "PB1", "alias": "SPEED_OK", "desc": "Speed Ready Indicator LED" }
-    }
-  }
+  ]
 }
-

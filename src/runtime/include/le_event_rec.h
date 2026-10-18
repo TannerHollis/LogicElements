@@ -80,38 +80,83 @@ typedef struct {
 } le_event_rec_t;
 
 /**
- * @brief Initializes the Event Recorder instance.
+ * @brief Initializes the Multi-Level Event Recorder (Oscillography) instance.
+ *
+ * Partitions the provided RAM pool among active recording levels according to their
+ * configured capacities and sample row widths. Configures the trigger source address
+ * and edge mode, sets up the NVRAM persistence offset, and restores existing captures
+ * if persistent data is present in NVRAM.
+ *
+ * @param rec Pointer to the Event Recorder instance to initialize.
+ * @param cfg Configuration structure specifying trigger criteria and per-level settings.
+ * @param ram_pool Pointer to caller-allocated contiguous RAM storage for sample circular buffers.
+ * @param pool_size Total byte capacity of @p ram_pool.
+ * @param nv_offset Logical NVRAM byte offset for persistence (defaults to `LE_NVRAM_OFFSET_EVENT_REC` if 0).
  */
 void le_event_rec_init(le_event_rec_t* rec, const le_event_rec_cfg_t* cfg,
                        uint8_t* ram_pool, size_t pool_size, uint32_t nv_offset);
 
 /**
- * @brief Restores Event Recorder state and recorded samples from NVRAM.
+ * @brief Restores Event Recorder state and recorded samples from non-volatile RAM.
+ *
+ * Reads the persistent header at `rec->nv_offset`, verifies `LE_EVENT_REC_MAGIC`
+ * and active level definitions, and restores sample circular buffer contents from NVRAM.
+ *
+ * @param rec Pointer to the initialized Event Recorder instance.
+ * @return Returns `true` if valid capture records were restored; otherwise, `false`.
  */
 bool le_event_rec_restore_nvram(le_event_rec_t* rec);
 
 /**
- * @brief Flushes completed Event Recorder capture to NVRAM.
+ * @brief Flushes a completed Event Recorder capture to non-volatile RAM.
+ *
+ * Serializes the header metadata and all recorded sample circular buffers across
+ * active levels into persistent NVRAM storage, clearing the dirty flag on success.
+ *
+ * @param rec Pointer to the Event Recorder instance to flush.
+ * @return Returns `true` if NVRAM write succeeded; otherwise, `false`.
  */
 bool le_event_rec_flush_nvram(le_event_rec_t* rec);
 
 /**
- * @brief Executes one scan step of the Event Recorder.
+ * @brief Executes one periodic scan step of the Event Recorder.
+ *
+ * Evaluates trigger conditions against the process image @p img. If triggered,
+ * transitions levels into post-trigger countdown; otherwise, buffers pre-trigger
+ * historical samples at each level's configured decimation rate (`rate_div`).
+ *
+ * @param rec Pointer to the Event Recorder instance.
+ * @param img Pointer to the active process image containing live channel values.
+ * @param scan_seq Monotonic execution scan counter.
+ * @param now_us Monotonic microsecond timestamp of the current scan.
  */
 void le_event_rec_scan(le_event_rec_t* rec, const le_process_image_t* img, uint32_t scan_seq, uint64_t now_us);
 
 /**
  * @brief Checks if any level is currently actively capturing post-trigger samples.
+ *
+ * @param rec Pointer to the Event Recorder instance.
+ * @return Returns `true` if at least one level is capturing post-trigger samples; otherwise, `false`.
  */
 bool le_event_rec_is_capturing(const le_event_rec_t* rec);
 
 /**
- * @brief Re-arms the Event Recorder for another capture.
+ * @brief Re-arms the Event Recorder for another fault capture.
+ *
+ * Resets trigger flags and sample counters on all configured levels, preparing
+ * the engine for subsequent pre-trigger buffering and edge detection.
+ *
+ * @param rec Pointer to the Event Recorder instance to re-arm.
  */
 void le_event_rec_arm(le_event_rec_t* rec);
 
 /**
- * @brief Returns the total byte size required to buffer a given level.
+ * @brief Calculates the total byte size required to buffer a given recording level.
+ *
+ * Computes `capacity * (8 + sum(channel_sizes))` based on each channel's process-image region width.
+ *
+ * @param lvl Pointer to the level configuration structure.
+ * @return Total required buffer size in bytes, or 0 if disabled or invalid.
  */
 uint32_t le_event_rec_calc_level_bytes(const le_event_level_cfg_t* lvl);
 

@@ -45,6 +45,7 @@ struct OptNode {
     bool is_dead = false;                      /**< True if this node was determined to be unreachable. */
     bool is_root = false;                      /**< True if this node is an anchor (e.g. DOUT, stateful block). */
     bool is_stateful = false;                  /**< True if this node contains internal state across cycles. */
+    bool is_feedback_state = false;            /**< True if this node holds unit delay state to resolve a feedback cycle. */
     bool direct_dest_eliminated = false;       /**< True if the consumer MOVE instruction was coalesced. */
     std::string direct_dest_node;              /**< Target destination pin or register name. */
 
@@ -62,6 +63,8 @@ struct OptimizationStats {
     int eliminated_dead_nodes = 0;             /**< Total number of unreferenced dead nodes pruned. */
     int eliminated_moves = 0;                  /**< Total number of redundant MOVE instructions eliminated. */
     int eliminated_subexprs = 0;               /**< Total number of duplicate common subexpressions merged. */
+    int simplified_boolean_rules = 0;          /**< Total number of boolean algebraic rules applied. */
+    int fused_instructions = 0;                /**< Total number of instructions fused into FMA/FMS. */
 };
 
 /**
@@ -83,11 +86,13 @@ public:
      * @param nets List of parsed net JSON objects.
      * @param alias_to_addr Mapping of pin aliases to physical address strings.
      * @param custom_nodes Mapping of custom node type identifiers to node definitions.
+     * @param feedback_state_nodes Set of gate/math nodes designated as stateful feedback cycle drivers.
      */
     void build_ir(const std::vector<JsonValue>& elements,
                   const std::vector<JsonValue>& nets,
                   const std::map<std::string, std::string>& alias_to_addr,
-                  const std::map<std::string, CustomNodeInfo>& custom_nodes);
+                  const std::map<std::string, CustomNodeInfo>& custom_nodes,
+                  const std::set<std::string>& feedback_state_nodes = {});
 
     /**
      * @brief Executes all configured optimization passes until a fixed point or iteration limit is reached.
@@ -120,9 +125,11 @@ public:
 
 private:
     void pass_constant_folding();
+    void pass_boolean_simplification();
     void pass_dead_code_elimination();
     void pass_common_subexpression_elimination();
     void pass_inversion_folding();
+    void pass_instruction_fusion();
     void pass_direct_destination_coalescing();
     void update_consumer_lists();
     void compute_topological_order();

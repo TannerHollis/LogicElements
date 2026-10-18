@@ -1,6 +1,8 @@
 #include "le_disasm_core.h"
 #include "le_compiler_core.h"
 #include "le_types.h"
+#include "le_rt.h"
+#include "le_loader.h"
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -37,7 +39,7 @@ std::string format_address(uint16_t addr, int user_bool_count, int user_float_co
         if (user_int_count >= 0 && i_idx >= user_int_count) {
             return "T_I[" + std::to_string(i_idx - user_int_count) + "]";
         }
-        return "%I[" + std::to_string(i_idx) + "]";
+        return "%N[" + std::to_string(i_idx) + "]";
     }
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
         int f_idx = addr & 0x1FFF;
@@ -67,6 +69,18 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         case LE_OP_NAND: return "NAND";
         case LE_OP_NOR: return "NOR";
         case LE_OP_MUX: return "MUX";
+        case LE_OP_WORD_AND: return "WORD_AND";
+        case LE_OP_WORD_OR: return "WORD_OR";
+        case LE_OP_WORD_XOR: return "WORD_XOR";
+        case LE_OP_WORD_NOT: return "WORD_NOT";
+
+        case LE_OP_MOVE_I: return "MOVE_I";
+        case LE_OP_ADD_I: return "ADD_I";
+        case LE_OP_SUB_I: return "SUB_I";
+        case LE_OP_MUL_I: return "MUL_I";
+        case LE_OP_DIV_I: return "DIV_I";
+        case LE_OP_NEG_I: return "NEG_I";
+        case LE_OP_LOAD_I: return "LOAD_I";
 
         case LE_OP_RTRIG: return "RTRIG";
         case LE_OP_FTRIG: return "FTRIG";
@@ -79,6 +93,9 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         case LE_OP_CTU: return "CTU";
         case LE_OP_CTD: return "CTD";
         case LE_OP_CTUD: return "CTUD";
+        case LE_OP_COUNTER_CV: return "COUNTER_CV";
+        case LE_OP_COUNTER_QD: return "COUNTER_QD";
+        case LE_OP_TIMER_ET: return "TIMER_ET";
 
         case LE_OP_MOVE_F: return "MOVE_F";
         case LE_OP_ADD_F: return "ADD_F";
@@ -98,6 +115,21 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         case LE_OP_CDIV_F: return "CDIV_F";
         case LE_OP_MOVE_C: return "MOVE_C";
 #endif
+        case LE_OP_FMA_F: return "FMA_F";
+        case LE_OP_FMS_F: return "FMS_F";
+        case LE_OP_LOAD_F: return "LOAD_F";
+        case LE_OP_SQRT_F: return "SQRT_F";
+        case LE_OP_SIN_F: return "SIN_F";
+        case LE_OP_COS_F: return "COS_F";
+        case LE_OP_TAN_F: return "TAN_F";
+        case LE_OP_ASIN_F: return "ASIN_F";
+        case LE_OP_ACOS_F: return "ACOS_F";
+        case LE_OP_ATAN_F: return "ATAN_F";
+        case LE_OP_ATAN2_F: return "ATAN2_F";
+        case LE_OP_EXP_F: return "EXP_F";
+        case LE_OP_LOG_F: return "LOG_F";
+        case LE_OP_LOG10_F: return "LOG10_F";
+        case LE_OP_POW_F: return "POW_F";
 
         case LE_OP_CMP_GT: return "CMP_GT";
         case LE_OP_CMP_LT: return "CMP_LT";
@@ -135,6 +167,9 @@ std::string format_opcode(uint8_t op, uint8_t mod)
         case LE_OP_BLOCK:
             switch (mod) {
                 case LE_FUNC_MUX_SELECT: return "MUX";
+                case LE_FUNC_MUX_SELECT_F: return "MUX_F";
+                case LE_FUNC_MUX_SELECT_I: return "MUX_I";
+                case LE_FUNC_MUX_SELECT_C: return "MUX_C";
                 case LE_FUNC_RECT2POLAR: return "RECT2POLAR";
                 case LE_FUNC_POLAR2RECT: return "POLAR2RECT";
                 case LE_FUNC_PHASOR_SHIFT: return "PHASOR_SHIFT";
@@ -161,39 +196,83 @@ std::string format_opcode(uint8_t op, uint8_t mod)
     }
 }
 
+std::string format_modifier(uint8_t op, uint8_t mod)
+{
+    switch (op) {
+        case LE_OP_TON:
+        case LE_OP_TOF:
+        case LE_OP_TP:
+        case LE_OP_CTU:
+        case LE_OP_CTD:
+        case LE_OP_CTUD:
+        case LE_OP_COUNTER_CV:
+        case LE_OP_COUNTER_QD:
+        case LE_OP_TIMER_ET:
+#if LE_ENABLE_PROTECTION
+        case LE_OP_PID:
+#endif
+#if LE_ENABLE_DSP
+        case LE_OP_LPF_1P:
+        case LE_OP_BIQUAD_IIR:
+        case LE_OP_MOVING_AVG:
+        case LE_OP_RATE_LIMITER:
+        case LE_OP_DEADBAND:
+        case LE_OP_WASHOUT:
+        case LE_OP_PEAK_DETECTOR:
+        case LE_OP_RMS:
+        case LE_OP_MEDIAN:
+        case LE_OP_DERIVATIVE:
+        case LE_OP_ZERO_CROSSING:
+        case LE_OP_LUT_1D:
+        case LE_OP_TOTALIZER:
+        case LE_OP_MIN_MAX_HOLD:
+#endif
+            return "#" + std::to_string(mod);
+
+        case LE_OP_SCALE_F:
+            return "#" + std::to_string(mod);
+
+        case LE_OP_EXT_CALL: {
+            std::ostringstream ss;
+            ss << "fn:0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(mod);
+            return ss.str();
+        }
+
+        case LE_OP_BLOCK: {
+            std::ostringstream ss;
+            ss << "fn:0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(mod);
+            return ss.str();
+        }
+
+        default: {
+            if (mod == 0) {
+                return "0x00";
+            }
+            std::string s;
+            if (mod & LE_MOD_INVERT_A) s += "~A";
+            if (mod & LE_MOD_INVERT_B) {
+                if (!s.empty()) s += ",";
+                s += "~B";
+            }
+            if (mod & LE_MOD_INVERT_OUT) {
+                if (!s.empty()) s += ",";
+                s += "~OUT";
+            }
+            uint8_t extra = mod & ~(LE_MOD_INVERT_A | LE_MOD_INVERT_B | LE_MOD_INVERT_OUT);
+            if (extra != 0) {
+                if (!s.empty()) s += "+";
+                std::ostringstream ss;
+                ss << "0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(extra);
+                s += ss.str();
+            }
+            return s.empty() ? "0x00" : s;
+        }
+    }
+}
+
 std::string block_kind_name(uint8_t kind)
 {
-    switch (kind) {
-        case LE_BLK_TIMER: return "TIMER";
-        case LE_BLK_COUNTER: return "COUNTER";
-        case LE_BLK_PID: return "PID";
-        case LE_BLK_OVERCURRENT: return "OVERCURRENT";
-        case LE_BLK_SCALER: return "SCALE_F";
-        case LE_BLK_PHASOR: return "PHASOR_1P";
-        case LE_BLK_PHASOR3: return "PHASOR_3P";
-        case LE_BLK_FREQ_EST: return "FREQ_EST";
-        case LE_BLK_SYMCOMP: return "SYM_COMP";
-        case LE_BLK_21: return "DIST_21";
-        case LE_BLK_DIFF_87: return "DIFF_87";
-        case LE_BLK_PHASE_COMP: return "PHASE_COMP";
-        case LE_BLK_I2C: return "I2C";
-        case LE_BLK_SPI: return "SPI";
-        case LE_BLK_LPF: return "LPF_1P";
-        case LE_BLK_BIQUAD: return "BIQUAD";
-        case LE_BLK_MOVING_AVG: return "MOVING_AVG";
-        case LE_BLK_RATE_LIMITER: return "RATE_LIMITER";
-        case LE_BLK_DEADBAND: return "DEADBAND";
-        case LE_BLK_WASHOUT: return "WASHOUT";
-        case LE_BLK_PEAK: return "PEAK_DETECTOR";
-        case LE_BLK_RMS: return "RMS";
-        case LE_BLK_MEDIAN: return "MEDIAN";
-        case LE_BLK_DERIVATIVE: return "DERIVATIVE";
-        case LE_BLK_ZERO_CROSSING: return "ZERO_CROSSING";
-        case LE_BLK_LUT_1D: return "LUT_1D";
-        case LE_BLK_TOTALIZER: return "TOTALIZER";
-        case LE_BLK_MIN_MAX_HOLD: return "MIN_MAX_HOLD";
-        default: return "UNKNOWN";
-    }
+    return le_rt_kind_name(kind);
 }
 
 static std::string fmt_cx(le_complex_t c)
@@ -217,6 +296,7 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
             const le_timer_state_t* s = (const le_timer_state_t*)p;
             row("start_time_ms", std::to_string(s->start_time_ms));
             row("preset_ms", std::to_string(s->preset_ms));
+            row("elapsed_ms", std::to_string(s->elapsed_ms));
             row("prev_in", s->prev_in ? "true" : "false");
             row("q", s->q ? "true" : "false");
             break;
@@ -404,6 +484,53 @@ static void emit_state_props(std::ostringstream& out, uint8_t kind, const uint8_
 
 /* Appends the preconfigured state image (the RAM block) as a hex dump plus a
  * per-element decoding of every state struct's properties. */
+static void emit_state_section_direct(std::ostringstream& out, const le_state_desc_t* st_desc, uint16_t state_desc_count, const uint8_t* img, uint32_t state_img_len)
+{
+    if (state_desc_count == 0 && state_img_len == 0) return;
+    if (!img) return;
+
+    out << "\nState RAM (preconfigured state image, " << state_img_len << " bytes):\n";
+    out << "------------------------------------------------------------\n";
+    for (size_t off = 0; off < state_img_len; off += 16) {
+        out << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << off << ":  ";
+        for (int k = 0; k < 16; k++) {
+            if (off + (size_t)k < state_img_len) {
+                out << std::setw(2) << std::setfill('0') << (int)img[off + k] << " ";
+            } else {
+                out << "   ";
+            }
+        }
+        out << " | ";
+        for (int k = 0; k < 16 && off + (size_t)k < state_img_len; k++) {
+            uint8_t c = img[off + k];
+            out << (char)((c >= 32 && c < 127) ? c : '.');
+        }
+        out << "\n";
+    }
+    out << std::dec;
+
+    if (state_desc_count > 0 && st_desc) {
+        out << "\nState properties per element:\n";
+        out << "------------------------------------------------------------\n";
+        size_t base = 0;
+        for (uint16_t s = 0; s < state_desc_count; s++) {
+            const le_state_desc_t* sd = &st_desc[s];
+            if (sd->kind == LE_BLK_NONE || sd->count == 0) continue;
+            for (uint16_t i = 0; i < sd->count; i++) {
+                size_t off = base + (size_t)i * sd->size;
+                if (off + sd->size > state_img_len) break;
+                out << block_kind_name(sd->kind) << "[" << i << "]  (LE_BLK_" << (int)sd->kind
+                    << ", off=" << off << ", size=" << sd->size << ")\n";
+                emit_state_props(out, sd->kind, img + off);
+            }
+            base += (size_t)sd->count * sd->size;
+        }
+    }
+    out << "\n";
+}
+
+/* Appends the preconfigured state image (the RAM block) as a hex dump plus a
+ * per-element decoding of every state struct's properties. */
 static void emit_state_section(std::ostringstream& out, const uint8_t* bin_data, size_t bin_len, const le_header_t& h)
 {
     if (h.state_desc_count == 0 && h.state_img_len == 0) return;
@@ -422,47 +549,9 @@ static void emit_state_section(std::ostringstream& out, const uint8_t* bin_data,
             off += dsize; bt_size = off - inst_end;
         }
     }
-    const uint8_t* st_desc = bin_data + inst_end + bt_size;
-    const uint8_t* img = st_desc + (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
-
-    out << "\nState RAM (preconfigured state image, " << h.state_img_len << " bytes):\n";
-    out << "------------------------------------------------------------\n";
-    for (size_t off = 0; off < h.state_img_len; off += 16) {
-        out << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << off << ":  ";
-        for (int k = 0; k < 16; k++) {
-            if (off + (size_t)k < h.state_img_len) {
-                out << std::setw(2) << std::setfill('0') << (int)img[off + k] << " ";
-            } else {
-                out << "   ";
-            }
-        }
-        out << " | ";
-        for (int k = 0; k < 16 && off + (size_t)k < h.state_img_len; k++) {
-            uint8_t c = img[off + k];
-            out << (char)((c >= 32 && c < 127) ? c : '.');
-        }
-        out << "\n";
-    }
-    out << std::dec;
-
-    if (h.state_desc_count > 0) {
-        out << "\nState properties per element:\n";
-        out << "------------------------------------------------------------\n";
-        size_t base = 0;
-        for (uint16_t s = 0; s < h.state_desc_count; s++) {
-            const le_state_desc_t* sd = (const le_state_desc_t*)(st_desc + (size_t)s * LE_STATE_DESC_BYTES);
-            if (sd->kind == LE_BLK_NONE || sd->count == 0) continue;
-            for (uint16_t i = 0; i < sd->count; i++) {
-                size_t off = base + (size_t)i * sd->size;
-                if (off + sd->size > h.state_img_len) break;
-                out << block_kind_name(sd->kind) << "[" << i << "]  (LE_BLK_" << (int)sd->kind
-                    << ", off=" << off << ", size=" << sd->size << ")\n";
-                emit_state_props(out, sd->kind, img + off);
-            }
-            base += (size_t)sd->count * sd->size;
-        }
-    }
-    out << "\n";
+    const le_state_desc_t* st_desc = (const le_state_desc_t*)(bin_data + inst_end + bt_size);
+    const uint8_t* img = (const uint8_t*)st_desc + (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
+    emit_state_section_direct(out, st_desc, h.state_desc_count, img, h.state_img_len);
 }
 
 /* Prints the custom board nodes declared in a board profile (their function
@@ -524,30 +613,124 @@ static void emit_custom_node_section(std::ostringstream& out, const std::string&
 
 std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user_bool_count, int user_float_count, int user_int_count, const std::string& board_profile_json)
 {
-    if (!bin_data || bin_len < sizeof(le_header_t)) {
+    if (!bin_data || bin_len < 4) {
         return "Error: Data size smaller than the .lebin header";
     }
 
-    le_header_t h;
-    std::memcpy(&h, bin_data, sizeof(le_header_t));
+    uint32_t magic = 0;
+    std::memcpy(&magic, bin_data, sizeof(uint32_t));
 
-    if (h.magic != LE_BIN_MAGIC) {
+    le_header_t h;
+    const le_instruction_t* p_inst = nullptr;
+    size_t inst_count = 0;
+    const le_alias_t* p_alis = nullptr;
+    size_t alis_count = 0;
+    const le_timing_desc_t* p_timing = nullptr;
+    const le_state_desc_t* p_stat = nullptr;
+    uint16_t stat_count = 0;
+    const uint8_t* p_simg = nullptr;
+    uint32_t simg_len = 0;
+    std::vector<const le_block_desc_t*> block_descriptors;
+    bool is_chunked = false;
+    uint32_t container_version = 0;
+    uint16_t container_flags = 0;
+    uint16_t container_chunks = 0;
+    const le_rate_desc_t* p_rate = nullptr;
+    const uint8_t* p_sign = nullptr;
+    uint32_t sign_len = 0;
+
+    if (magic == LE_BIN_MAGIC_V2) {
+        le_chunked_view_t view;
+        le_status_t st = le_loader_parse_chunks(bin_data, bin_len, &view);
+        if (st != LE_OK) {
+            std::ostringstream ss;
+            ss << "Error: Failed to parse chunked container (.lebin v13), status=" << st;
+            return ss.str();
+        }
+        is_chunked = true;
+        container_version = view.container->version;
+        container_flags = view.container->flags;
+        container_chunks = view.container->chunk_count;
+        h = *view.head;
+        p_inst = view.inst;
+        inst_count = view.inst_count;
+        p_alis = view.alis;
+        alis_count = view.alis_count;
+        p_timing = view.time;
+        p_stat = view.stat;
+        stat_count = (uint16_t)view.stat_count;
+        p_simg = view.simg;
+        simg_len = view.simg_len;
+        p_rate = view.rate;
+        p_sign = view.sign;
+        sign_len = view.sign_len;
+        if (view.blck && view.blck_bytes > 0) {
+            size_t boff = 0;
+            const uint8_t* bptr = (const uint8_t*)view.blck;
+            while (boff + LE_BLOCK_DESC_HEADER_BYTES <= view.blck_bytes) {
+                const le_block_desc_t* d = (const le_block_desc_t*)(bptr + boff);
+                block_descriptors.push_back(d);
+                boff += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                        ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+            }
+        }
+    } else if (magic == LE_BIN_MAGIC) {
+        if (bin_len < sizeof(le_header_t)) {
+            return "Error: Data size smaller than the .lebin header";
+        }
+        std::memcpy(&h, bin_data, sizeof(le_header_t));
+        inst_count = h.instruction_count;
+        p_inst = (const le_instruction_t*)(bin_data + sizeof(le_header_t));
+        size_t boff = sizeof(le_header_t) + inst_count * sizeof(le_instruction_t);
+        for (uint16_t b = 0; b < h.block_count; b++) {
+            if (boff + (size_t)LE_BLOCK_DESC_HEADER_BYTES > bin_len) break;
+            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + boff);
+            block_descriptors.push_back(d);
+            size_t dsize = (size_t)LE_BLOCK_DESC_HEADER_BYTES +
+                           ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
+            if (boff + dsize > bin_len) break;
+            boff += dsize;
+        }
+        p_stat = (const le_state_desc_t*)(bin_data + boff);
+        stat_count = h.state_desc_count;
+        boff += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
+        p_simg = bin_data + boff;
+        simg_len = h.state_img_len;
+        boff += (size_t)h.state_img_len;
+        if (h.alias_count > 0 && boff + (size_t)h.alias_count * LE_ALIAS_BYTES <= bin_len) {
+            p_alis = (const le_alias_t*)(bin_data + boff);
+            alis_count = h.alias_count;
+            boff += (size_t)h.alias_count * LE_ALIAS_BYTES;
+        }
+        if (h.timing_count != 0 && boff + LE_TIMING_DESC_BYTES <= bin_len) {
+            p_timing = (const le_timing_desc_t*)(bin_data + boff);
+        }
+    } else {
         std::ostringstream ss;
         ss << "Error: Invalid binary magic: 0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
-           << h.magic << " (expected 'LEB1')";
+           << magic << " (expected 'LEB1' or 'LEB2')";
         return ss.str();
     }
 
     std::ostringstream out;
     out << "============================================================\n";
-    out << " LOGICELEMENTS BINARY DISASSEMBLY (.lebin)\n";
+    if (is_chunked) {
+        out << " LOGICELEMENTS CONTAINER DISASSEMBLY (.lebin v" << container_version << " Chunked)\n";
+    } else {
+        out << " LOGICELEMENTS BINARY DISASSEMBLY (.lebin)\n";
+    }
     out << "============================================================\n";
-    out << "Magic:               0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << h.magic << " ('LEB1')\n";
+    out << "Magic:               0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
+        << (is_chunked ? LE_BIN_MAGIC_V2 : h.magic) << (is_chunked ? " ('LEB2')\n" : " ('LEB1')\n");
     out << std::dec;
-    out << "Version:             " << h.version << "\n";
-    out << "Flags:               0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << h.flags
-        << " (Autostart: " << ((h.flags & LE_FLAG_AUTOSTART) ? "True" : "False") << ")\n";
+    out << "Version:             " << (is_chunked ? container_version : h.version) << "\n";
+    out << "Flags:               0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
+        << (is_chunked ? container_flags : h.flags)
+        << " (Autostart: " << (((is_chunked ? container_flags : h.flags) & LE_FLAG_AUTOSTART) ? "True" : "False") << ")\n";
     out << std::dec;
+    if (is_chunked) {
+        out << "Chunk Count:         " << container_chunks << "\n";
+    }
     out << "Instruction Count:   " << h.instruction_count << "\n";
 
     std::string bool_summary = "BOOL:" + std::to_string(h.bool_reg_count);
@@ -576,75 +759,66 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
         << "  StateGroups:" << h.state_desc_count
         << "  StateImage:" << h.state_img_len << " bytes"
         << "  Aliases:" << h.alias_count << "\n";
-/* Timing descriptor (follows the alias table): compiler worst-case cost. */
-    if (h.timing_count != 0) {
-        size_t td_off = sizeof(le_header_t) + (size_t)h.instruction_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < h.block_count; b++) {
-            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + td_off);
-            td_off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                      ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-        }
-        td_off += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
-        td_off += (size_t)h.state_img_len;
-        td_off += (size_t)h.alias_count * LE_ALIAS_BYTES;
-        if (td_off + LE_TIMING_DESC_BYTES <= bin_len) {
-            const le_timing_desc_t* t = (const le_timing_desc_t*)(bin_data + td_off);
-            out << "Timing Model:        " << t->abstract_cycles << " abstract cycles x " << t->safety_margin_pct
-                << "% safety  " << (t->design_scan_rate_hz > 0 ? ("scan_rate_hz " + std::to_string(t->design_scan_rate_hz)) : "rate unspecified") << "\n";
-        }
+
+    if (p_timing) {
+        out << "Timing Model:        " << p_timing->abstract_cycles << " abstract cycles x " << p_timing->safety_margin_pct
+            << "% safety  " << (p_timing->design_scan_rate_hz > 0 ? ("scan_rate_hz " + std::to_string(p_timing->design_scan_rate_hz)) : "rate unspecified") << "\n";
     }
 
-    out << "Header CRC32:        0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << h.crc32 << "\n";
-
-    size_t payload_size = bin_len - sizeof(le_header_t);
-    const uint8_t* payload_ptr = bin_data + sizeof(le_header_t);
-    uint32_t calc_crc = CompilerCore::compute_crc32(payload_ptr, payload_size);
-    out << "Payload Integrity:   " << (calc_crc == h.crc32 ? "MATCH (OK)" : "CRC MISMATCH (CORRUPTED)") << "\n";
-    out << "------------------------------------------------------------\n";
-    out << "INDEX   OPCODE         IN_A         IN_B         OUT         \n";
-    out << "------------------------------------------------------------\n";
-
-    size_t inst_count = h.instruction_count;
-    std::vector<size_t> block_offsets;
-    {
-        size_t boff = sizeof(le_header_t) + inst_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < h.block_count; b++) {
-            if (boff + (size_t)LE_BLOCK_DESC_HEADER_BYTES > bin_len) break;
-            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + boff);
-            size_t dsize = (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                           ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-            if (boff + dsize > bin_len) break;
-            block_offsets.push_back(boff);
-            boff += dsize;
-        }
+    if (p_rate) {
+        size_t slow_count = (inst_count > (size_t)(p_rate->rate_fast_count + p_rate->rate_med_count)) ?
+                            (inst_count - (size_t)(p_rate->rate_fast_count + p_rate->rate_med_count)) : 0;
+        out << "Execution Rates:     Fast: " << p_rate->rate_fast_count << " insts (1x)  Medium: "
+            << p_rate->rate_med_count << " insts (" << p_rate->rate_med_div << "x div)  Slow: "
+            << slow_count << " insts (" << p_rate->rate_slow_div << "x div)\n";
     }
+
+    if (p_sign && sign_len >= 64) {
+        out << "Cryptographic Auth:  Ed25519 Signature Present (64 bytes)\n";
+    }
+
+    if (!is_chunked) {
+        out << "Header CRC32:        0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << h.crc32 << "\n";
+        size_t payload_size = bin_len - sizeof(le_header_t);
+        const uint8_t* payload_ptr = bin_data + sizeof(le_header_t);
+        uint32_t calc_crc = CompilerCore::compute_crc32(payload_ptr, payload_size);
+        out << "Payload Integrity:   " << (calc_crc == h.crc32 ? "MATCH (OK)" : "CRC MISMATCH (CORRUPTED)") << "\n";
+    } else {
+        out << "Payload Integrity:   MATCH (OK, Chunked Container v" << container_version << ")\n";
+    }
+
+    out << "-----------------------------------------------------------------------\n";
+    out << "INDEX   OPCODE         MOD       IN_A         IN_B         OUT         \n";
+    out << "-----------------------------------------------------------------------\n";
+
     for (size_t i = 0; i < inst_count; i++) {
-        size_t offset = sizeof(le_header_t) + (i * sizeof(le_instruction_t));
-        if (offset + sizeof(le_instruction_t) > bin_len) {
-            out << "[" << std::setw(4) << std::setfill('0') << i << "] Unexpected end of binary payload\n";
-            break;
-        }
-
-        le_instruction_t inst;
-        std::memcpy(&inst, bin_data + offset, sizeof(le_instruction_t));
+        le_instruction_t inst = p_inst[i];
 
         std::string block_out;
         std::string op_str = format_opcode(inst.opcode, inst.modifier);
+        std::string mod_str = format_modifier(inst.opcode, inst.modifier);
         std::string in_a_str = format_address(inst.in_a, user_bool_count, user_float_count, user_int_count);
         std::string in_b_str;
         if (inst.opcode == LE_OP_SCALE_F) {
             in_b_str = "SCL[" + std::to_string(inst.modifier) + "]";
-        } else if (inst.opcode == LE_OP_EXT_CALL) {
+        } else if (inst.opcode == LE_OP_LOAD_F) {
+            uint32_t raw = ((uint32_t)inst.in_b << 16) | (uint32_t)inst.in_a;
+            float val;
+            std::memcpy(&val, &raw, sizeof(float));
             std::ostringstream ss;
-            ss << "fn:0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(inst.modifier);
-            in_b_str = ss.str();
-        } else {
-            if (inst.opcode == LE_OP_BLOCK) {
-            /* Block call: in_a is the block-table index, modifier is the
-             * function id. Operand addresses live in the descriptor. */
+            ss << val;
+            in_a_str = ss.str();
+            in_b_str = "-";
+        } else if (inst.opcode == LE_OP_LOAD_I) {
+            int32_t val = (int32_t)(((uint32_t)inst.in_b << 16) | (uint32_t)inst.in_a);
+            in_a_str = std::to_string(val);
+            in_b_str = "-";
+        } else if (inst.opcode == LE_OP_EXT_CALL) {
+            in_b_str = format_address(inst.in_b, user_bool_count, user_float_count, user_int_count);
+        } else if (inst.opcode == LE_OP_BLOCK) {
             in_a_str = "BLK[" + std::to_string(inst.in_a) + "]";
-            if (inst.in_a < block_offsets.size()) {
-                const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + block_offsets[inst.in_a]);
+            if (inst.in_a < block_descriptors.size()) {
+                const le_block_desc_t* d = block_descriptors[inst.in_a];
                 const uint16_t* argsA = (const uint16_t*)(d + 1);
                 std::ostringstream a2;
                 a2 << (int)d->in_count << "->" << (int)d->out_count << " [";
@@ -654,42 +828,35 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
                 a2 << "]";
                 block_out = a2.str();
             }
-            std::ostringstream ss;
-            ss << "fn:0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(inst.modifier);
-            in_b_str = ss.str();
+            in_b_str = "-";
         } else {
             in_b_str = format_address(inst.in_b, user_bool_count, user_float_count, user_int_count);
         }
-        }
         std::string out_str = format_address(inst.out, user_bool_count, user_float_count, user_int_count);
-            if (inst.opcode == LE_OP_BLOCK) out_str = block_out;
+        if (inst.opcode == LE_OP_BLOCK) out_str = block_out;
 
         out << "[" << std::dec << std::right << std::setw(4) << std::setfill('0') << i << "]  "
             << std::left << std::setw(14) << std::setfill(' ') << op_str << " "
+            << std::setw(9) << mod_str << " "
             << std::setw(12) << in_a_str << " "
             << std::setw(12) << in_b_str << " -> "
             << std::setw(12) << out_str << "\n";
     }
 
     out << "============================================================\n";
-    emit_state_section(out, bin_data, bin_len, h);
-    /* User-declared register aliases (appended after the state image). */
-    if (h.alias_count > 0) {
-        size_t bo = sizeof(le_header_t) + (size_t)inst_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < h.block_count; b++) {
-            if (bo + (size_t)LE_BLOCK_DESC_HEADER_BYTES > bin_len) break;
-            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + bo);
-            bo += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                  ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-        }
-        bo += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES + (size_t)h.state_img_len;
-        out << "Register Aliases (" << std::dec << h.alias_count << "):\n";
-        const le_alias_t* ta = (const le_alias_t*)(bin_data + bo);
-        for (uint16_t i = 0; i < h.alias_count; i++) {
-            std::string nm(ta[i].name, LE_ALIAS_NAME_MAX);
+    emit_state_section_direct(out, p_stat, stat_count, p_simg, simg_len);
+
+    if (alis_count > 0 && p_alis) {
+        out << "Register Aliases (" << std::dec << alis_count << "):\n";
+        for (uint16_t i = 0; i < alis_count; i++) {
+            std::string nm(p_alis[i].name, LE_ALIAS_NAME_MAX);
             while (!nm.empty() && (nm.back() == '\0' || nm.back() == ' ')) nm.pop_back();
-            out << "  %" << std::left << std::setw(8) << nm << " -> "
-                << format_address(ta[i].addr, user_bool_count, user_float_count, user_int_count) << "\n";
+            std::string display_nm = nm;
+            if (display_nm.rfind("%", 0) != 0) {
+                display_nm = "%" + display_nm;
+            }
+            out << "  " << std::left << std::setw(9) << display_nm << " -> "
+                << format_address(p_alis[i].addr, user_bool_count, user_float_count, user_int_count) << "\n";
         }
     }
     if (!board_profile_json.empty()) {

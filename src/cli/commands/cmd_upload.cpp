@@ -50,6 +50,7 @@ int cmd_upload(int argc, char* argv[])
     uint32_t baud_rate = 115200;
     uint16_t chunk_size = 64;
     uint8_t target_slot = 0;
+    bool slot_explicit = false;
     bool auto_run = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -65,6 +66,7 @@ int cmd_upload(int argc, char* argv[])
             chunk_size = (uint16_t)std::stoul(argv[++i]);
         } else if ((arg == "-s" || arg == "--slot") && i + 1 < argc) {
             target_slot = (uint8_t)std::stoul(argv[++i]);
+            slot_explicit = true;
         } else if (arg == "-r" || arg == "--run") {
             auto_run = true;
         } else if (arg[0] != '-' && lebin_path.empty()) {
@@ -111,6 +113,20 @@ int cmd_upload(int argc, char* argv[])
 
     std::cout << "Connecting and handshaking with microcontroller...\n";
     char err_buf[256] = {0};
+
+    /* Query device capabilities to detect active slot and avoid active-slot upload rejection */
+    le_caps_payload_t caps;
+    if (le_host_get_caps(client, &caps, 1000) == 0) {
+        if (!slot_explicit) {
+            target_slot = (caps.config_slots > 1) ? (uint8_t)((caps.active_slot + 1) % caps.config_slots) : 0;
+        } else if (target_slot == caps.active_slot && caps.config_slots > 1) {
+            uint8_t temp_slot = (uint8_t)((target_slot + 1) % caps.config_slots);
+            std::cout << "Switching active slot to " << (int)temp_slot << " before overwriting slot " << (int)target_slot << "...\n";
+            le_host_activate_slot(client, temp_slot, 1000);
+        }
+    }
+
+    std::cout << "Target slot: " << (int)target_slot << "\n";
 
     int rc = le_host_upload_program(
         client,
