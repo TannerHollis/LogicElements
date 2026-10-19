@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(LogicElements VERSION 2.0.0 LANGUAGES C CXX)
+project(LogicElements VERSION 13.0.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -49,6 +49,12 @@ endif()
 # ==============================================================================
 # Canonical Compiler Library (C++17 Core with C ABI)
 # ==============================================================================
+if(MSVC)
+    target_compile_options(LogicElements PRIVATE
+        $<$<CONFIG:Release>:/Os /Gy /Gw /GL>
+    )
+endif()
+
 set(LE_COMPILER_SOURCES
     src/compiler/src/le_code_block.cpp
     src/compiler/src/le_optimizer.cpp
@@ -69,6 +75,22 @@ target_include_directories(le_compiler PRIVATE
 target_compile_definitions(le_compiler PRIVATE LE_COMPILER_EXPORTS)
 target_link_libraries(le_compiler PRIVATE LogicElements)
 
+if(MSVC)
+    target_compile_options(le_compiler PRIVATE
+        $<$<CONFIG:Release>:/Os /Gy /Gw /GL>
+    )
+    target_link_options(le_compiler PRIVATE
+        $<$<CONFIG:Release>:/LTCG /OPT:REF /OPT:ICF>
+    )
+else()
+    target_compile_options(le_compiler PRIVATE
+        $<$<CONFIG:Release>:-Os -ffunction-sections -fdata-sections -flto>
+    )
+    target_link_options(le_compiler PRIVATE
+        $<$<CONFIG:Release>:-Wl,--gc-sections -flto>
+    )
+endif()
+
 # Static library for direct embedding without runtime DLL dependencies
 add_library(le_compiler_static STATIC ${LE_COMPILER_SOURCES})
 target_include_directories(le_compiler_static PUBLIC
@@ -83,7 +105,7 @@ target_link_libraries(le_compiler_static PUBLIC LogicElements)
 
 # Standalone Compiler CLI Executable
 add_executable(le_compile src/compiler/tools/le_compile_main.cpp)
-target_link_libraries(le_compile PRIVATE le_compiler_static LogicElements)
+target_link_libraries(le_compile PRIVATE le_compiler)
 target_include_directories(le_compile PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
 )
@@ -131,7 +153,7 @@ target_include_directories(le PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hal
 )
-target_link_libraries(le PRIVATE le_compiler_static le_host_comms LogicElements)
+target_link_libraries(le PRIVATE le_compiler le_host_comms LogicElements)
 if(UNIX AND NOT APPLE)
     target_link_libraries(le PRIVATE m)
 endif()
@@ -160,7 +182,7 @@ add_test(NAME HostCommsTests COMMAND test_host_comms)
 
 # Compiler C++ unit tests
 add_executable(test_compiler tests/test_compiler.cpp)
-target_link_libraries(test_compiler PRIVATE le_compiler_static LogicElements)
+target_link_libraries(test_compiler PRIVATE le_compiler LogicElements)
 target_include_directories(test_compiler PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include
@@ -173,7 +195,7 @@ add_test(NAME CompilerTests COMMAND test_compiler)
 # Per-element assembly verification: compiles one circuit fixture per element
 # type and inspects the emitted disassembly for the expected opcode(s).
 add_executable(test_element_assembly tests/test_element_assembly.c)
-target_link_libraries(test_element_assembly PRIVATE le_compiler_static LogicElements)
+target_link_libraries(test_element_assembly PRIVATE le_compiler LogicElements)
 target_include_directories(test_element_assembly PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/compiler/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/include

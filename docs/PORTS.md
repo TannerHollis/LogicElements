@@ -190,7 +190,7 @@ The master configuration is organized into 8 distinct architectural domains:
 - **`LE_MAX_ANALOG_OUT`**: Maximum physical DAC/PWM channels (`%AOUT`, default `16`).
 
 #### 6. Subsystem Feature Switches & Automatic Cascades
-Disable subsystems not needed on constrained MCUs to strip unused opcodes and save flash/RAM:
+Disable subsystems not needed on constrained MCUs to strip unused opcodes and save Flash/RAM (see the **[Runtime VM Size and Feature Breakdown](ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown)** for exact Flash and static RAM costs per feature):
 ```c
 #define LE_ENABLE_PROTECTION    1  // P&C relays (OVERCURRENT, DIST_21, DIFF_87)
 #define LE_ENABLE_COMPLEX       1  // Complex arithmetic, phasors & %C registers

@@ -619,7 +619,18 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     int derived_ain = 0;
     int derived_aout = 0;
 
+    uint16_t effective_target_version = static_cast<uint16_t>(options.target_version > 0 ? options.target_version : LE_CONTAINER_VERSION);
+
     if (has_board) {
+        if (board_doc.contains("device") && board_doc.get("device").is_object()) {
+            const auto& dev = board_doc.get("device");
+            if (dev.contains("container_version")) {
+                int b_cv = dev.get("container_version").as_int(0);
+                if (b_cv > 0 && options.target_version == 13) {
+                    effective_target_version = static_cast<uint16_t>(b_cv);
+                }
+            }
+        }
         if (board_doc.contains("pin_map") && board_doc.get("pin_map").is_object()) {
             board_pm_has_pinmap = true;
             const auto& pm = board_doc.get("pin_map").as_object();
@@ -3309,7 +3320,7 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     le_header_t header;
     std::memset(&header, 0, sizeof(header));
     header.magic = LE_BIN_MAGIC;
-    header.version = LE_BIN_VERSION;
+    header.version = effective_target_version;
     header.flags = LE_FLAG_AUTOSTART;
     header.instruction_count = static_cast<uint16_t>(instructions.size());
     header.digital_in_count = static_cast<uint16_t>(eff_din_count);
@@ -3574,6 +3585,12 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         le_status_t cst = le_loader_convert_to_chunked_nv(full_bin.data(), total_bin_size, prate, pnvmd,
                                                           chunked_bin.data(), max_chunked, &chunked_size);
         if (cst == LE_OK) {
+            le_container_header_t* cont = reinterpret_cast<le_container_header_t*>(chunked_bin.data());
+            if (cont->version != effective_target_version) {
+                cont->version = effective_target_version;
+                cont->header_crc32 = 0;
+                cont->header_crc32 = le_crc32(reinterpret_cast<const uint8_t*>(cont), sizeof(le_container_header_t));
+            }
             full_bin.resize(chunked_size);
             std::memcpy(full_bin.data(), chunked_bin.data(), chunked_size);
             total_bin_size = chunked_size;
@@ -3584,9 +3601,20 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     out_result->abstract_cycles = (int)abstract_cycles;
     out_result->estimated_exec_us = 0.0;
 
-    // Step 6: Validate against Board Profile Limits
+    // Step 6: Validate against Board Profile Limits & Version Constraints
     bool board_valid = true;
     std::vector<std::string> validation_errors;
+
+    if (effective_target_version < 13) {
+        if (options.enable_multi_rate) {
+            board_valid = false;
+            validation_errors.push_back("Version Compatibility Error: Multi-rate execution domains (-m / --multi-rate) are not supported when targeting container version " + std::to_string(effective_target_version) + " (introduced in v13).");
+        }
+        if (has_nvmd) {
+            board_valid = false;
+            validation_errors.push_back("Version Compatibility Error: Dynamic NVRAM manifest is not supported when targeting container version " + std::to_string(effective_target_version) + " (introduced in v13).");
+        }
+    }
 
     if (coalesced_ranges.size() > LE_NVRAM_MAX_RANGES) {
         board_valid = false;

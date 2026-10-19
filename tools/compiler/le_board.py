@@ -19,16 +19,28 @@ CMD_CAPS_DATA = 0x82
 CMD_GET_CUSTOM_NODES = 0x03
 CMD_CUSTOM_NODES_DATA = 0x83
 
-def crc16_ccitt(data: bytes) -> int:
+# Hardware feature flags (matching le_comms.h)
+LE_CAP_PROTECTION = (1 << 0)
+LE_CAP_SERIAL_BUS = (1 << 1)
+LE_CAP_TIMERS     = (1 << 2)
+LE_CAP_COUNTERS   = (1 << 3)
+LE_CAP_COMPLEX    = (1 << 4)
+LE_CAP_ANALOG     = (1 << 5)
+LE_CAP_DSP        = (1 << 6)
+LE_CAP_FPU        = (1 << 7)
+
+def crc16_ccitt(data: bytes, initial: int = 0xFFFF) -> int:
     """Calculates the 16-bit CCITT CRC checksum for a byte sequence.
+    Matches C runtime crc16_update and host comms le_host_crc16 (initial seed 0xFFFF).
 
     Args:
         data: Input byte sequence to hash.
+        initial: Initial CRC register value (default: 0xFFFF).
 
     Returns:
         The computed 16-bit CRC checksum.
     """
-    crc = 0
+    crc = initial
     for b in data:
         crc ^= (b << 8)
         for _ in range(8):
@@ -137,7 +149,7 @@ def query_live_board_serial(port: str, baud: int = 115200, timeout: float = 2.0)
         raise TimeoutError(f"No valid response from device on {port}")
 
 def parse_binary_caps_payload(data: bytes) -> Dict[str, Any]:
-    """Unpacks a binary le_caps_payload_t structure into a board profile.
+    """Unpacks a binary le_caps_payload_t structure (57 bytes) into a board profile.
 
     Args:
         data: Raw byte sequence containing the capabilities struct.
@@ -145,12 +157,15 @@ def parse_binary_caps_payload(data: bytes) -> Dict[str, Any]:
     Returns:
         Structured dictionary representing board configuration.
     """
-    # struct format: <BBB32sHHHHHHBHH  (5 region H + workspace H + B + 2 H)
-    fmt = "<BBB32sHHHHHHBHH"
-    fields = struct.unpack(fmt, data[:struct.calcsize(fmt)])
-    
+    # struct format: <BBB32sHHHHHIBIBH (57 bytes wire layout matching le_comms.h)
+    fmt = "<BBB32sHHHHHIBIBH"
+    expected_size = struct.calcsize(fmt)
+    if len(data) < expected_size:
+        raise ValueError(f"Payload size {len(data)} is too small for le_caps_payload_t ({expected_size} bytes)")
+
+    fields = struct.unpack(fmt, data[:expected_size])
     plat_name = fields[3].split(b"\x00")[0].decode("ascii", errors="ignore")
-    flags = fields[12]
+    flags = fields[13]
 
     profile = {
         "device": {
@@ -163,14 +178,22 @@ def parse_binary_caps_payload(data: bytes) -> Dict[str, Any]:
             "digital_outputs": fields[5],
             "analog_inputs": fields[6],
             "bool_registers": fields[7],
+            "coils": fields[7],
             "floats": fields[8],
             "workspace_bytes": fields[9],
             "config_slots": fields[10],
-            "slot_size_bytes": fields[11] if len(fields) > 11 else 2048
+            "slot_size_bytes": fields[11],
+            "active_slot": fields[12]
         },
         "features": {
-            "protection": bool(flags & (1 << 0)),
-            "serial_bus": bool(flags & (1 << 1)),
+            "protection": bool(flags & LE_CAP_PROTECTION),
+            "serial_bus": bool(flags & LE_CAP_SERIAL_BUS),
+            "timers": bool(flags & LE_CAP_TIMERS),
+            "counters": bool(flags & LE_CAP_COUNTERS),
+            "complex": bool(flags & LE_CAP_COMPLEX),
+            "analog": bool(flags & LE_CAP_ANALOG),
+            "dsp": bool(flags & LE_CAP_DSP),
+            "fpu": bool(flags & LE_CAP_FPU)
         },
         "pin_map": {
             "inputs": {},
@@ -198,16 +221,24 @@ def print_profile_info(profile: Dict[str, Any]):
     print(f"Protocol Version:    {dev.get('protocol_version', 1)}")
     print("-" * 60)
     print("HARDWARE LIMITS & MEMORY:")
-    print(f"  Digital Inputs (%I):   {lim.get('digital_inputs', 0)}")
-    print(f"  Digital Outputs (%Q):  {lim.get('digital_outputs', 0)}")
-    print(f"  Internal Coils (%M):   {lim.get('coils', 0)}")
-    print(f"  Float Registers (%R):  {lim.get('floats', 0)}")
+    print(f"  Digital Inputs (%I):     {lim.get('digital_inputs', 0)}")
+    print(f"  Digital Outputs (%Q):    {lim.get('digital_outputs', 0)}")
+    print(f"  Analog Inputs (%AIN):    {lim.get('analog_inputs', 0)}")
+    print(f"  Internal Coils (%B/%M):  {lim.get('bool_registers', lim.get('coils', 0))}")
+    print(f"  Float Registers (%F/%R): {lim.get('floats', 0)}")
     print(f"  State Workspace (bytes): {lim.get('workspace_bytes', 0)}")
-    print(f"  Config Slots:          {lim.get('config_slots', 0)} slots ({lim.get('slot_size_bytes', 0)} bytes each)")
+    print(f"  Config Slots:            {lim.get('config_slots', 0)} slots ({lim.get('slot_size_bytes', 0)} bytes each)")
+    print(f"  Active Slot:             {lim.get('active_slot', 0)}")
     print("-" * 60)
     print("SUPPORTED SUB-SYSTEMS:")
-    print(f"  Protection & Control:  {'ENABLED' if feat.get('protection') else 'DISABLED'}")
-    print(f"  Serial Bus Elements:   {'ENABLED' if feat.get('serial_bus') else 'DISABLED'}")
+    print(f"  Protection & Control:    {'ENABLED' if feat.get('protection') else 'DISABLED'}")
+    print(f"  Serial Bus Elements:     {'ENABLED' if feat.get('serial_bus') else 'DISABLED'}")
+    print(f"  Timers & Delays:         {'ENABLED' if feat.get('timers') else 'DISABLED'}")
+    print(f"  Counters:                {'ENABLED' if feat.get('counters') else 'DISABLED'}")
+    print(f"  Complex Math (%C):       {'ENABLED' if feat.get('complex') else 'DISABLED'}")
+    print(f"  Analog I/O (%AIN):       {'ENABLED' if feat.get('analog') else 'DISABLED'}")
+    print(f"  DSP & Filtering:         {'ENABLED' if feat.get('dsp') else 'DISABLED'}")
+    print(f"  Hardware FPU:            {'ENABLED' if feat.get('fpu') else 'DISABLED'}")
     print("-" * 60)
     inputs = pin.get("inputs", {})
     if inputs:
@@ -226,7 +257,7 @@ def print_profile_info(profile: Dict[str, Any]):
         for cn in custom_nodes:
             tid = cn.get("type_id", cn.get("name", "Unnamed"))
             dname = cn.get("display_name", tid)
-            fn_id = cn.get("function_id", 0)
+            fn_id = cn.get("function_id", cn.get("func_id", 0))
             print(f"  [{fn_id}] {dname:<24} ({tid})")
     print("=" * 60)
 
@@ -240,20 +271,29 @@ def generate_template(filepath: str):
         "device": {
             "name": "My_Custom_MCU",
             "firmware_version": "1.0",
-            "protocol_version": 1
+            "protocol_version": 3
         },
         "limits": {
             "digital_inputs": 16,
             "digital_outputs": 16,
+            "analog_inputs": 4,
+            "bool_registers": 128,
             "coils": 128,
             "floats": 64,
             "workspace_bytes": 2048,
             "config_slots": 3,
-            "slot_size_bytes": 2048
+            "slot_size_bytes": 2048,
+            "active_slot": 0
         },
         "features": {
             "protection": True,
             "serial_bus": True,
+            "timers": True,
+            "counters": True,
+            "complex": True,
+            "analog": True,
+            "dsp": True,
+            "fpu": True
         },
         "pin_map": {
             "inputs": {

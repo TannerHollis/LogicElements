@@ -64,8 +64,11 @@ The compilation engine is implemented in standard C++17 (`src/compiler/src/le_co
                             ▼
 ┌────────────────────────────────────────────────────────┐
 │            5. Code Generation & Formatting             │
-│  - Pack 32-byte binary header with CRC32 checksum      │
+│  - Pack 20-byte LEB2 container header (LE_BIN_MAGIC)   │
+│  - Emit self-describing chunks (HEAD, INST, TIME, etc.)│
 │  - Emit 8-byte binary instructions (.lebin)            │
+│  - Optional multi-rate domain partitioning (RATE)      │
+│  - Optional Ed25519 cryptographic signing (SIGN)       │
 │  - Generate human-readable disassembly text            │
 │  - Generate flash-embeddable C static array header     │
 └────────────────────────────────────────────────────────┘
@@ -90,10 +93,15 @@ To initialize compiler options programmatically:
 #include "le_compiler_options.h"
 
 // Default full optimization (-O2):
-le_compiler_options_t options = le_compiler_options_init(LE_OPT_LEVEL_2);
+le_compiler_options_t options = le_compiler_options_init(LE_OPT_FULL);
 
 // Debug mode (-O0):
-le_compiler_options_t dbg_options = le_compiler_options_init(LE_OPT_LEVEL_0);
+le_compiler_options_t dbg_options = le_compiler_options_init(LE_OPT_NONE);
+
+// Multi-rate execution domains:
+options.enable_multi_rate = 1;
+options.rate_med_div = 48;   // Medium domain executes at 1/48 rate
+options.rate_slow_div = 480; // Slow domain executes at 1/480 rate
 ```
 
 ---
@@ -483,13 +491,18 @@ le_compile <circuit.json> [options]
 | :--- | :--- |
 | `-o, --output <file>` | Destination path for the `.lebin` binary payload. |
 | `-b, --board <file>` | Target `.leconfig` board profile for limit validation and pin aliases. |
-| `-c, --cheader <file>` | Destination path for an embeddable C static header file. |
+| `-c, --header <file>` | Destination path for an embeddable C static header file. |
 | `-d, --disasm <file>` | Destination path for a human-readable assembly disassembly listing. |
-| `-j, --json <file>` | Export normalized/optimized circuit JSON. |
 | `-O0` | Disable all optimizations (1:1 schematic debug mode). |
 | `-O1` | Enable basic optimizations (DDC, DCE). |
 | `-O2` | Enable full optimizations (Default). |
 | `-Os` | Enable aggressive size optimizations. |
+| `-m, --multi-rate` | Partition bytecode into fast, medium, and slow execution domains. |
+| `-t, --target <version>` | Target container format version (Default: `13`). |
+| `--med-div <N>` | Medium rate scan prescaler divisor (Default: 48). |
+| `--slow-div <N>` | Slow rate scan prescaler divisor (Default: 480). |
+| `--sign <key_file>` | Cryptographically sign output container with a 64-byte Ed25519 secret key. |
+| `--keygen <name>` | Generate an Ed25519 keypair and write `<name>.pk` and `<name>.sk`. |
 | `--no-dce` | Disable Dead Code Elimination pass. |
 | `--no-fold` | Disable Constant Folding pass. |
 | `--no-cse` | Disable Common Subexpression Elimination pass. |
@@ -653,6 +666,50 @@ The compiler performs this estimate at `-b` time and **rejects** the circuit whe
 achievable rate** so the designer can simply lower `scan_rate_hz`. The loader
 independently applies the same gate (returning `LE_ERR_TIMING_BUDGET`), and hosts
 query the margin with `le_loader_timing()`.
+
+### Multi-rate execution descriptor (`RATE` Chunk Payload, 8 Bytes)
+
+When multi-rate domain partitioning is enabled (`-m` / `--multi-rate` or `options.enable_multi_rate = 1`), the compiler emits a `'RATE'` chunk. The bytecode instructions in the `'INST'` chunk are grouped into three contiguous domains:
+
+1. **Fast Domain**: High-speed critical logic (e.g. overcurrent, differential, instantaneous trip) executed on every single VM tick (`1x`).
+2. **Medium Domain**: Normal control logic executed every `rate_med_div` ticks (e.g. 100 Hz at 4.8 kHz base clock).
+3. **Slow Domain**: Background telemetry, thermal estimators, and diagnostic monitoring executed every `rate_slow_div` ticks (e.g. 10 Hz at 4.8 kHz base clock).
+
+| Offset | Field | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | `rate_fast_count` | `uint16_t` | Number of instructions in the Fast domain (executed every scan tick). |
+| `0x02` | `rate_med_count` | `uint16_t` | Number of instructions in the Medium domain. |
+| `0x04` | `rate_med_div` | `uint16_t` | Prescaler divisor for Medium domain (e.g. `48`). |
+| `0x06` | `rate_slow_div` | `uint16_t` | Prescaler divisor for Slow domain (e.g. `480`). |
+
+The remaining instructions in the payload ($N - \text{fast\_count} - \text{med\_count}$) belong to the Slow domain.
+
+### Non-volatile memory requirements descriptor (`NVMD` Chunk Payload)
+
+When a circuit declares retentive registers or non-volatile event recording requirements (such as Sequence of Events Recorder or Transient Disturbance Recorder), the compiler embeds an `'NVMD'` chunk. Microcontroller runtimes and board HALs consult this chunk to allocate dedicated NVRAM or FRAM sectors.
+
+| Offset | Field | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | `retentive_bytes` | `uint32_t` | Total memory required to persist retentive process-image registers across power cycles. |
+| `0x04` | `ser_records` | `uint32_t` | Maximum Sequence of Events (SER) state transition records requested by the circuit. |
+| `0x08` | `ser_bytes` | `uint32_t` | Exact NVRAM footprint in bytes for the SER log. |
+| `0x0C` | `event_records` | `uint32_t` | Maximum High-Speed Event Recorder (oscillography) sample records requested. |
+| `0x10` | `event_bytes` | `uint32_t` | Exact NVRAM footprint in bytes for the Event Recorder buffer. |
+| `0x14` | `retentive_range_count` | `uint16_t` | Number of contiguous retentive address ranges (up to 8). |
+| `0x16` | `reserved` | `uint16_t` | Reserved alignment padding (`0`). |
+| `0x18` | `ranges[8]` | `le_nvram_range_t[8]` | Up to 8 records each containing `start_addr` (16-bit) and `count` (16-bit). |
+
+### Cryptographic authentication descriptor (`SIGN` Chunk Payload, 64 Bytes)
+
+To prevent tampering, unauthorized firmware modifications, and unsafe configuration injection, LogicElements containers can be cryptographically signed using Ed25519 (`--sign <key_path>`).
+
+- **Detached Signature**: The `'SIGN'` chunk contains a 64-byte Ed25519 digital signature computed across all preceding bytes in the container (the 20-byte container header and all preceding chunks).
+- **Chunk Tag**: `'SIGN'` (`0x4E474953`).
+- **Runtime Verification**: The microcontroller bootloader or runtime loader validates the signature using the board's embedded 32-byte Ed25519 public key before loading or staging bytecode into memory. If verification fails, the payload is rejected with `LE_ERR_SIGNATURE_INVALID`.
+
+### Structured code blocks (`CODE_BLOCK` synthesis pass)
+
+The compiler includes an integrated lowering pass (`CodeBlockExpander`) that processes high-level algorithmic statements written inside `"CODE_BLOCK"` elements. Before intermediate representation construction, this pass expands C-like statements (assignments, `if/else`, ternary logic, and clamping) into deterministic, cycle-bounded primitive hardware elements (`MUX`, `CLAMP`, logic gates, and registers) and synthesized nets. This eliminates non-deterministic branches or unbounded loops, guaranteeing strict time predictability.
 
 ### Fixed-rate scan contract
 
@@ -881,7 +938,7 @@ When constructing circuits programmatically or authoring custom tools, declare D
 
 ### Board capability and workspace validation
 
-The compiler validates circuit element usage against target `.leconfig` board profiles:
+The compiler validates circuit element usage against target `.leconfig` board profiles (for Flash and static RAM footprint costs of each subsystem, see the **[Runtime VM Size and Feature Breakdown](ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown)**):
 - **`features.dsp`**: Boolean flag. If `false`, any circuit containing DSP elements will fail compilation with:
   ```
   Board Validation Error: Circuit uses DSP opcode 0x90, but target board 'TargetBoard' has DSP feature disabled.
@@ -895,5 +952,6 @@ The compiler validates circuit element usage against target `.leconfig` board pr
 
 ## Related guides
 
+- [Architecture Guide](ARCHITECTURE.md): VM scan loop, process image, variable-arity blocks, and [Runtime VM Size & Feature Breakdown](ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown).
 - [Platform Integration Guide](PLATFORM_GUIDE.md): Microcontroller porting, flash storage partitions, and UART upload protocols.
 - [Custom Nodes Guide](CUSTOM_NODES_GUIDE.md): Designing, declaring, and implementing custom hardware nodes (`LE_OP_BLOCK` with a custom function id).

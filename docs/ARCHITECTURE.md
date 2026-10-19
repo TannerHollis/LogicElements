@@ -21,6 +21,8 @@ LogicElements is a two-sided system.
 **Microcontroller side**
 - A **zero-heap ANSI C runtime** (`src/runtime`) that loads the `.lebin` and
   sweeps a scan loop over the process image, driving hardware through a HAL.
+  Scalable from **~6.5 KB Flash** (minimal micro-PLC) to **~42 KB Flash** (full substation
+  protection relay with Ed25519 signing and DSP; see [Runtime VM Size and Feature Breakdown](#runtime-vm-size-and-feature-breakdown)).
 - Stateful elements (timers, counters, PID, DSP filters, protection) get their
   state **baked into a preconfigured state image** that the loader copies
   into a static zero-heap workspace at load time — never `malloc` after boot.
@@ -87,6 +89,51 @@ A fixed memory table of registers and per-region status bits:
 Accessors (`le_process_image_get_bool/float`, `set_bool/float`, and the
 kind resolvers) are the single funnel through which handlers and
 consumers read/write registers and workspace-backed state.
+
+---
+
+## Runtime VM size and feature breakdown
+
+The LogicElements ANSI C99 runtime is designed for granular, modular scalability. Every subsystem can be independently enabled or stripped at compile time using preprocessor defines in `src/runtime/include/le_config.h` (or through `-D` flags in CMake / Makefiles). This allows the runtime to fit comfortably on deeply constrained 8-bit microcontrollers (such as the ATmega328P with 32 KB Flash and 2 KB RAM) while scaling seamlessly up to 32-bit Cortex-M4F/M7 protective relays.
+
+### Subsystem feature sizing and modular cost
+
+The following table provides the typical Flash (ROM) and static RAM footprint for each modular component when compiled for ARM Cortex-M architecture with standard size optimization (`-Os` / `-O2`):
+
+| Subsystem / Feature | Compile-Time Gate (`le_config.h`) | Flash Footprint | RAM Footprint | Key Functionality & Included Elements |
+| :--- | :--- | :--- | :--- | :--- |
+| **Core VM & Interpreter** | *(Mandatory core)* | ~3.8 KB | ~128 B | VM scan loop, instruction fetch, digital I/O (`%IN`, `%OUT`), boolean registers (`%B`), logic gates (`AND`, `OR`, `XOR`, `NAND`, `NOR`, `NOT`, `MUX`), latches (`RS`, `SR`, `LATCH`), edge detectors (`RTRIG`, `FTRIG`), constants. |
+| **Timers & Counters** | *(Standard core)* | ~1.2 KB | 0 B *(workspace)* | IEC 61131-3 timers (`TON`, `TOF`, `TP`) and counters (`CTU`, `CTD`, `CTUD`). State is allocated directly in the preconfigured state image. |
+| **Basic Math & Arithmetic** | `LE_ENABLE_FLOAT` | ~1.8 KB | 0 B | 32-bit floating-point and integer arithmetic (`ADD`, `SUB`, `MUL`, `DIV`, `ABS`, `NEG`, `MIN`, `MAX`, `CLAMP`, comparators `CMP_*`). |
+| **Analog I/O & Scaling** | `LE_ENABLE_ANALOG` | ~0.9 KB | 0 B | Physical analog input channels (`%AIN`), analog outputs (`%AOUT`), calibration scaling, and clamping. |
+| **Word/Bitwise Logic** | `LE_ENABLE_WORD_OPCODES` | ~0.8 KB | 0 B | 32-bit bitwise logic (`WORD_AND`, `WORD_OR`, `WORD_XOR`, `WORD_NOT`, `SHL`, `SHR`). |
+| **Transcendental Math** | `LE_ENABLE_TRANSCENDENTAL_MATH` | ~2.1 KB | 0 B | Extended math functions (`SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`, `LN`, `LOG10`, `EXP`, `POW`). Leverages hardware FPU or C libm. |
+| **Complex Numbers & Phasors** | `LE_ENABLE_COMPLEX` | ~2.4 KB | 0 B | Complex registers (`%C`), rectangular $\leftrightarrow$ polar conversions (`RECT2POLAR`, `POLAR2RECT`, `RECT2COMPLEX`, `POLAR2COMPLEX`), complex arithmetic (`CADD`, `CSUB`, `CMUL`, `CDIV`). |
+| **DSP & Real-Time Filtering** | `LE_ENABLE_DSP` | ~4.5 KB | 0 B *(workspace)* | Lowpass filters (`LPF`), biquad IIR filters (`BIQUAD`), moving average (`MOVING_AVG`), rate limiter (`RATE_LIMITER`), deadband (`DEADBAND`), washout filter (`WASHOUT`), peak detector (`PEAK_DETECTOR`), true RMS (`RMS`), median filter (`MEDIAN`), derivative (`DERIVATIVE`), zero-crossing detector (`ZERO_CROSSING`), 1D lookup table (`LUT_1D`), totalizer (`TOTALIZER`), min/max hold (`MIN_MAX_HOLD`), PID controller (`PID`). |
+| **Protective Relay Elements** | `LE_ENABLE_PROTECTION` | ~6.2 KB | 0 B *(workspace)* | ANSI 51 Time-Overcurrent (`OVERCURRENT_51`), ANSI 87 Differential (`DIFF_87`), ANSI 21 Distance Impedance (`DIST_21`), ANSI 87T Phase Angle Transformer Compensation (`PHASE_COMP`), Phasor DFT Extraction (`PHASOR_1P`, `PHASOR_3P`), Symmetrical Components (`SYM_COMP`), Frequency Tracking (`FREQ_EST`, ANSI 81). |
+| **Program Storage Manager** | *(Standard loader)* | ~1.6 KB | 0 B *(XIP)* / $(N+1)\times S$ *(RAM)* | Multi-slot flash/EEPROM manager, atomic staging with hidden phantom slot, sector pre-erase, page programming, and CRC32 verification. |
+| **Operational NVRAM & Journal** | `LE_NVRAM_BACKEND` | ~2.2 KB | ~80 B | Retentive register persistence, Sequence of Events (SER) log, Transient Disturbance Recorder (oscillography), circular sector wear-leveling journal. |
+| **Serial Comms Protocol** | *(Optional comms)* | ~2.8 KB | ~320 B | Framed packet transport (`le_comms.c`), CCITT CRC-16 validation, live program streaming, process-image telemetry streaming, force/override I/O. |
+| **Interactive Terminal CLI** | *(Optional CLI)* | ~3.1 KB | ~128 B | ASCII debug shell (`help`, `status`, `caps`, `image`, `force`, `release`, `pulse`, `slot`, `start`, `stop`, `reset`, `timing`). Stripped in production. |
+| **Ed25519 Cryptographic Auth** | `LE_ENABLE_CRYPTO` | ~4.2 KB | ~256 B *(stack)* | Constant-time Ed25519 digital signature verification (`le_crypto.c`). Blocks execution of unsigned or tampered `.lebin` containers. |
+| **Multi-Rate Execution Engine** | `LE_ENABLE_MULTI_RATE` | ~0.4 KB | ~16 B | Hardware timer prescaler partitioning instructions into Fast (1x tick), Medium (div), and Slow (div) execution domains. |
+| **Symbolic Aliases & Pulse** | `LE_ENABLE_ALIASES` | ~0.7 KB | ~32 B | Dynamic named alias lookup and millisecond/second timed register pulse engine. |
+
+> [!NOTE]
+> **Zero Runtime Heap**: All stateful block structures marked *(workspace)* consume **0 bytes** of heap (`malloc`). They reside strictly within the bounded static RAM workspace (`LE_RAM_WORKSPACE_BYTES`) configured by the board HAL.
+
+---
+
+### Deployment profile tiers
+
+To simplify microcontroller selection and board porting, LogicElements organizes features into three standard deployment tiers:
+
+| Tier | Target Platforms | Flash Size | RAM Usage | Included Features | Typical Application |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Minimal Micro-PLC** | ATmega328P (8-bit AVR), Cortex-M0+ (STM32C0, SAMD10) | **~6.5 – 8.5 KB** | **~350 – 500 B** + workspace | Core VM, Digital I/O, Timers, Counters, Basic Math, XIP Flash Loader. | Small smart relays, discrete interlocks, lighting/pump controllers, ultra-low-cost MCUs. |
+| **Tier 2: Standard Industrial Controller** | STM32F0/F1/G0, RP2040, SAMD21, ESP32, NXP LPC | **~18 – 24 KB** | **~1.2 – 1.8 KB** + workspace | Tier 1 + Analog I/O, PID, DSP Filters, Word Opcodes, Multi-Slot Storage, NVRAM Wear Leveling, Serial Comms Protocol, Aliases. | Industrial automation PLCs, PID motor controllers, process instrumentation, HVAC automation. |
+| **Tier 3: Advanced Protection & Automation Relay** | STM32F4/F7/H7, Cortex-M4F/M7, TI C2000, NXP i.MX RT | **~38 – 44 KB** | **~2.5 – 3.8 KB** + workspace | Tier 2 + Protection Relays (51, 87, 21, 81), Complex Phasors, Transcendental Math, Ed25519 Crypto Signing, Oscillography, ASCII CLI, Multi-Rate Domains. | Substation protection relays, feeder management, utility recloser controls, microgrid power automation. |
+
 ---
 
 ## Variable-arity block mechanism
@@ -223,19 +270,19 @@ The loaded `.lebin` circuit designates required retentive registers, SER depth, 
 
 ## Compiler (`src/compiler`)
 
-### Pipeline (`le_compiler_core.cpp`)
+### Pipeline (`le_compiler_core.cpp`, `le_code_block.cpp`, `le_optimizer.cpp`)
 
 ```
 circuit.json + board.json
-  1. Parse & validate elements/nets, map %DIN/%DOUT/%AIN/%AOUT/%B/%I/%F/%C pins & aliases
-  2. Build net graph & tags
-  3. Optimizer (fixed-point passes: constant folding, inversion folding,
-     CSE, direct-destination coalescing, dead-code elimination)
-  4. Instruction generation (emits an instruction per element,
-     LE_OP_BLOCK + descriptors for variable-arity, state-directives +
-     a preconfigured state image for stateful elements)
-  5. Pack payload (instructions + block table + state table + state image),
-     header, CRC32
+  1. Parse & validate elements/nets, map %IN/%OUT/%AIN/%AOUT/%B/%I/%F/%C pins & aliases
+  2. Structured code block expansion (CodeBlockExpander: lowers CODE_BLOCK into MUX/clamp/logic)
+  3. Build Intermediate Representation (IR graph & tags)
+  4. Multi-pass optimizer (fixed-point passes: constant folding, boolean simplification,
+     inversion folding, CSE, instruction fusion, direct-destination coalescing, dead-code elimination)
+  5. Topological scheduling & liveness register allocation
+  6. Multi-rate domain partitioning (Fast, Medium, Slow)
+  7. Pack extensible chunked container (.lebin v13 LEB2 with HEAD, INST, BLCK, STAT, SIMG, ALIS, TIME, RATE, NVMD)
+  8. Optional cryptographic Ed25519 signing (appends SIGN chunk)
 ```
 
 Optimization levels (`-O0`..`-Os`) are set through `le_compiler_options_t`;
@@ -245,8 +292,13 @@ tests lock in.
 ### Public API (`src/compiler/include/le_compiler.h`)
 
 - `le_compile_json_ex(circuit, board, options, result)`
+- `le_compile_json(circuit, board, result)`
 - `le_disassemble_bin(bin, ...)` → disassembly text
 - `le_export_c_header(bin, name)` → embedded C byte-array header
+- `le_compiler_sign_container(in_container, ...)` → cryptographic Ed25519 container signing
+- `le_compiler_keygen(out_pk, out_sk, seed)` → Ed25519 keypair generation
+- `le_compiler_get_version()` → compiler version string
+- `le_compile_result_free(result)` / `le_compiler_free_buffer(ptr)` → memory management
 
 ---
 

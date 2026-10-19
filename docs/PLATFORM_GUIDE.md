@@ -748,6 +748,8 @@ int main(void)
 
 ## Memory footprint and resource configuration
 
+The LogicElements runtime is modularly scalable from **~6.5 KB Flash** (minimal micro-PLC) up to **~42 KB Flash** (full protective relay with DSP, Ed25519 signing, and interactive CLI). For a comprehensive per-subsystem cost breakdown and deployment tiers, see the **[Runtime VM Size and Feature Breakdown](ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown)** in the Architecture guide.
+
 Adopters can fine-tune memory limits, core topology, and feature switches to match any microcontroller by setting defines in `src/runtime/include/le_config.h` (or via compiler `-D` flags in CMake / Makefile or custom `-DLE_CONFIG_FILE="path/to/my_config.h"`):
 
 ```c

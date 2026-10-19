@@ -161,7 +161,7 @@ LE_COMPILER_API void le_compiler_free_buffer(void* ptr)
 
 LE_COMPILER_API const char* le_compiler_get_version(void)
 {
-    return "2.0.0";
+    return "LogicElements Compiler v13.0.0 (Container: v13 LEB2)";
 }
 
 } // extern "C"

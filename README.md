@@ -12,7 +12,7 @@ zero-heap state workspace, and UART/telemetry support.
 | | |
 | :--- | :--- |
 | **Language** | ANSI C99 runtime · C++17 compiler |
-| **Runtime core** | ~10 KB flash, zero-heap, execute-in-place (XIP) |
+| **Runtime core** | [~6.5 KB – 42 KB Flash (modularly scalable)](docs/ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown), zero-heap, execute-in-place (XIP) |
 | **Binary format** | `.lebin` v13 — `LEB2` chunked container, IEEE 802.3 CRC32 |
 | **License** | MIT |
 
@@ -46,6 +46,8 @@ All documentation lives in `docs/`.
 - **[Architecture](docs/ARCHITECTURE.md)** — end-to-end design: the runtime,
   the compiler pipeline, the `.lebin` binary format, the variable-arity block
   mechanism, the zero-heap state workspace, the HAL, and the tooling.
+- **[Runtime VM Size & Feature Breakdown](docs/ARCHITECTURE.md#runtime-vm-size-and-feature-breakdown)** — granular
+  Flash ROM and static RAM cost per subsystem feature and deployment tier.
 - **[Elements Reference](docs/ELEMENTS.md)** — every element: description,
   usage (ports & properties), and an example disassembly.
 

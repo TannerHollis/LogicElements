@@ -17,6 +17,19 @@ from typing import Dict, List, Any, Optional
 LE_BIN_MAGIC = 0x4C454232  # ASCII "LEB2"
 LE_BIN_VERSION = 13
 LE_FLAG_AUTOSTART = 0x0001
+LE_FLAG_WATCHDOG_EN = 0x0002
+
+# Chunk Tag Identifiers (FourCC)
+LE_CHUNK_TAG_HEAD = 0x44414548  # 'HEAD'
+LE_CHUNK_TAG_INST = 0x54534E49  # 'INST'
+LE_CHUNK_TAG_BLCK = 0x4B434C42  # 'BLCK'
+LE_CHUNK_TAG_STAT = 0x54415453  # 'STAT'
+LE_CHUNK_TAG_SIMG = 0x474D4953  # 'SIMG'
+LE_CHUNK_TAG_ALIS = 0x53494C41  # 'ALIS'
+LE_CHUNK_TAG_TIME = 0x454D4954  # 'TIME'
+LE_CHUNK_TAG_RATE = 0x45544152  # 'RATE'
+LE_CHUNK_TAG_NVMD = 0x444D564E  # 'NVMD'
+LE_CHUNK_TAG_SIGN = 0x4E474953  # 'SIGN'
 
 # Address Regions (top-nibble aligned)
 LE_REGION_DIN   = 0x0000
@@ -53,13 +66,31 @@ class _LeCompilerOptions(Structure):
         ("fuse_instructions", c_int),
         ("inline_user_nodes", c_int),
         ("max_pass_iterations", c_int),
+        ("emit_chunked_container", c_int),
+        ("enable_multi_rate", c_int),
+        ("rate_med_div", c_int),
+        ("rate_slow_div", c_int),
+        ("target_version", c_int),
     ]
 
     @classmethod
-    def from_level(cls, level: int):
+    def from_level(
+        cls,
+        level: int,
+        emit_chunked_container: int = 1,
+        enable_multi_rate: int = 0,
+        rate_med_div: int = 48,
+        rate_slow_div: int = 480,
+        target_version: int = 13,
+    ):
         opts = cls()
         opts.opt_level = level
         opts.max_pass_iterations = 5
+        opts.emit_chunked_container = emit_chunked_container
+        opts.enable_multi_rate = enable_multi_rate
+        opts.rate_med_div = rate_med_div
+        opts.rate_slow_div = rate_slow_div
+        opts.target_version = target_version
         if level == LE_OPT_NONE:
             opts.eliminate_dead_code = 0
             opts.fold_constants = 0
@@ -193,6 +224,17 @@ def get_compiler_lib():
     lib.le_export_c_header.argtypes = [POINTER(c_uint8), c_size_t, c_char_p, POINTER(c_char_p)]
     lib.le_export_c_header.restype = c_int
 
+    lib.le_compiler_sign_container.argtypes = [
+        POINTER(c_uint8), c_size_t, POINTER(c_uint8),
+        POINTER(c_uint8), c_size_t, POINTER(c_size_t)
+    ]
+    lib.le_compiler_sign_container.restype = c_int
+
+    lib.le_compiler_keygen.argtypes = [
+        POINTER(c_uint8), POINTER(c_uint8), POINTER(c_uint8)
+    ]
+    lib.le_compiler_keygen.restype = c_int
+
     lib.le_compiler_free_buffer.argtypes = [ctypes.c_void_p]
     lib.le_compiler_free_buffer.restype = None
 
@@ -202,34 +244,128 @@ def get_compiler_lib():
     _cached_lib = lib
     return lib
 
+def get_compiler_version() -> str:
+    """Returns the descriptive version string directly from the compiler library."""
+    lib = get_compiler_lib()
+    return lib.le_compiler_get_version().decode("utf-8")
+
+def sign_container(container_bytes: bytes, secret_key: bytes) -> bytes:
+    """Signs an LEB2 chunked container with a 64-byte Ed25519 secret key.
+
+    Appends a 'SIGN' chunk containing the detached signature.
+
+    Args:
+        container_bytes: Raw bytes of the unsigned LEB2 container.
+        secret_key: 64-byte Ed25519 private/secret key (expanded seed + public key).
+
+    Returns:
+        New bytes object containing the signed LEB2 container.
+    """
+    if len(secret_key) != 64:
+        raise ValueError(f"Secret key must be exactly 64 bytes (got {len(secret_key)})")
+    lib = get_compiler_lib()
+    in_arr = (c_uint8 * len(container_bytes)).from_buffer_copy(container_bytes)
+    sk_arr = (c_uint8 * 64).from_buffer_copy(secret_key)
+    max_out = len(container_bytes) + 128
+    out_arr = (c_uint8 * max_out)()
+    out_size = c_size_t(0)
+
+    rc = lib.le_compiler_sign_container(
+        in_arr, len(container_bytes), sk_arr,
+        out_arr, max_out, ctypes.byref(out_size)
+    )
+    if rc != 0:
+        raise RuntimeError(f"Signing failed with code {rc}")
+    return bytes(out_arr[:out_size.value])
+
+def generate_keypair(seed: Optional[bytes] = None) -> tuple[bytes, bytes]:
+    """Generates an Ed25519 public key (32 bytes) and secret key (64 bytes) from a 32-byte seed.
+
+    Args:
+        seed: Optional 32-byte random seed. If None, os.urandom(32) is used.
+
+    Returns:
+        Tuple of (public_key_bytes, secret_key_bytes).
+    """
+    if seed is None:
+        seed = os.urandom(32)
+    elif len(seed) != 32:
+        raise ValueError(f"Seed must be exactly 32 bytes (got {len(seed)})")
+
+    lib = get_compiler_lib()
+    pk_arr = (c_uint8 * 32)()
+    sk_arr = (c_uint8 * 64)()
+    seed_arr = (c_uint8 * 32).from_buffer_copy(seed)
+
+    rc = lib.le_compiler_keygen(pk_arr, sk_arr, seed_arr)
+    if rc != 0:
+        raise RuntimeError(f"Key generation failed with code {rc}")
+    return bytes(pk_arr), bytes(sk_arr)
+
 class LeCompiler:
     """Compiles visual logic element networks into executable .lebin binaries.
     Backed by the canonical LogicElements native C++ compiler library.
     """
 
-    def __init__(self, board_profile: Optional[Dict[str, Any]] = None, opt_level: int = LE_OPT_FULL):
+    def __init__(
+        self,
+        board_profile: Optional[Dict[str, Any]] = None,
+        opt_level: int = LE_OPT_FULL,
+        emit_chunked_container: bool = True,
+        enable_multi_rate: bool = False,
+        rate_med_div: int = 48,
+        rate_slow_div: int = 480,
+        target_version: int = 13,
+    ):
         self.board_profile = board_profile
         self.opt_level = opt_level
+        self.emit_chunked_container = 1 if emit_chunked_container else 0
+        self.enable_multi_rate = 1 if enable_multi_rate else 0
+        self.rate_med_div = rate_med_div
+        self.rate_slow_div = rate_slow_div
+        self.target_version = target_version
         self.din_map: Dict[str, int] = {}
         self.dout_map: Dict[str, int] = {}
         self.instructions: List[Any] = []
+        self.instruction_count = 0
+        self.din_count = 0
+        self.dout_count = 0
+        self.ain_count = 0
+        self.aout_count = 0
         self.coil_count = 0
-        self.timer_count = 0
+        self.bool_reg_count = 0
         self.float_count = 0
+        self.complex_count = 0
+        self.int_count = 0
+        self.timer_count = 0
+        self.counter_count = 0
+        self.alias_count = 0
+        self.crc32 = 0
+        self.user_bool_count = 0
+        self.temp_bool_count = 0
+        self.user_float_count = 0
+        self.temp_float_count = 0
+        self.user_complex_count = 0
+        self.temp_complex_count = 0
+        self.user_int_count = 0
+        self.temp_int_count = 0
         self.eliminated_instructions = 0
         self.eliminated_registers = 0
+        self.abstract_cycles = 0
+        self.estimated_exec_us = 0.0
         self.disassembly_text = ""
         self.c_header_code = ""
 
-    def compile(self, json_data: Any, opt_level: Optional[int] = None) -> bytes:
+    def compile(self, json_data: Any, opt_level: Optional[int] = None, target_version: Optional[int] = None) -> bytes:
         """Compiles a circuit configuration dictionary or JSON string into a .lebin binary.
 
         Args:
             json_data: Dictionary or JSON string containing elements and nets.
             opt_level: Optional optimization level override (LE_OPT_NONE, LE_OPT_BASIC, LE_OPT_FULL, LE_OPT_SIZE).
+            target_version: Optional container version override (default: self.target_version or 13).
 
         Returns:
-            A bytes object containing the complete v5 header and bytecode payload.
+            A bytes object containing the complete LEB2 chunked container bytecode payload.
         """
         if isinstance(json_data, dict):
             circuit_json_str = json.dumps(json_data)
@@ -239,7 +375,15 @@ class LeCompiler:
         board_json_str = json.dumps(self.board_profile) if self.board_profile else None
 
         effective_opt = self.opt_level if opt_level is None else opt_level
-        opts = _LeCompilerOptions.from_level(effective_opt)
+        effective_ver = self.target_version if target_version is None else target_version
+        opts = _LeCompilerOptions.from_level(
+            effective_opt,
+            emit_chunked_container=self.emit_chunked_container,
+            enable_multi_rate=self.enable_multi_rate,
+            rate_med_div=self.rate_med_div,
+            rate_slow_div=self.rate_slow_div,
+            target_version=effective_ver
+        )
 
         lib = get_compiler_lib()
         res = _LeCompileResult()
@@ -255,11 +399,32 @@ class LeCompiler:
                 raise ValueError(err_msg)
 
             self.instructions = [None] * res.instruction_count
+            self.instruction_count = res.instruction_count
+            self.din_count = res.din_count
+            self.dout_count = res.dout_count
+            self.ain_count = res.ain_count
+            self.aout_count = res.aout_count
             self.coil_count = res.bool_reg_count
+            self.bool_reg_count = res.bool_reg_count
             self.float_count = res.float_count
+            self.complex_count = res.complex_count
+            self.int_count = res.int_count
             self.timer_count = res.timer_count
+            self.counter_count = res.counter_count
+            self.alias_count = res.alias_count
+            self.crc32 = res.crc32
+            self.user_bool_count = res.user_bool_count
+            self.temp_bool_count = res.temp_bool_count
+            self.user_float_count = res.user_float_count
+            self.temp_float_count = res.temp_float_count
+            self.user_complex_count = res.user_complex_count
+            self.temp_complex_count = res.temp_complex_count
+            self.user_int_count = res.user_int_count
+            self.temp_int_count = res.temp_int_count
             self.eliminated_instructions = res.eliminated_instructions
             self.eliminated_registers = res.eliminated_registers
+            self.abstract_cycles = res.abstract_cycles
+            self.estimated_exec_us = res.estimated_exec_us
             self.disassembly_text = res.disassembly_text.decode("utf-8") if res.disassembly_text else ""
             self.c_header_code = res.c_header_code.decode("utf-8") if res.c_header_code else ""
 
@@ -290,7 +455,7 @@ class LeCompiler:
 def main():
     """Command-line interface entry point for compiling circuits."""
     parser = argparse.ArgumentParser(description="LogicElements Circuit Compiler")
-    parser.add_argument("input_json", help="Path to input circuit JSON file")
+    parser.add_argument("input_json", nargs="?", help="Path to input circuit JSON file")
     parser.add_argument("-o", "--output", help="Path to output .lebin binary file")
     parser.add_argument("-b", "--board", help="Path to target .leconfig profile to enforce board capabilities")
     parser.add_argument("--header", help="Path to output C header file (.h)")
@@ -298,8 +463,29 @@ def main():
     parser.add_argument("-O1", dest="opt_basic", action="store_true", help="Basic safe optimizations")
     parser.add_argument("-O2", dest="opt_full", action="store_true", help="Default full optimizations")
     parser.add_argument("-Os", dest="opt_size", action="store_true", help="Size-focused optimizations")
+    parser.add_argument("-m", "--multi-rate", action="store_true", help="Enable multi-rate execution partitioning")
+    parser.add_argument("--med-div", type=int, default=48, help="Medium rate divisor (default: 48)")
+    parser.add_argument("--slow-div", type=int, default=480, help="Slow rate divisor (default: 480)")
+    parser.add_argument("--sign", help="Path to 64-byte Ed25519 secret key file to sign output container")
+    parser.add_argument("--keygen", help="Generate Ed25519 keypair and write <keygen>.pk and <keygen>.sk")
     parser.add_argument("--stats", action="store_true", help="Print optimization statistics")
     args = parser.parse_args()
+
+    if args.keygen:
+        pk, sk = generate_keypair()
+        pk_path = f"{args.keygen}.pk"
+        sk_path = f"{args.keygen}.sk"
+        with open(pk_path, "wb") as f:
+            f.write(pk)
+        with open(sk_path, "wb") as f:
+            f.write(sk)
+        print(f"[OK] Generated Ed25519 keypair:\n  Public key: {pk_path} (32 bytes)\n  Secret key: {sk_path} (64 bytes)")
+        if not args.input_json:
+            return
+
+    if not args.input_json:
+        parser.print_help()
+        sys.exit(1)
 
     opt_level = LE_OPT_FULL
     if args.opt_none:
@@ -321,7 +507,13 @@ def main():
     with open(args.input_json, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    compiler = LeCompiler(board_profile=board_profile, opt_level=opt_level)
+    compiler = LeCompiler(
+        board_profile=board_profile,
+        opt_level=opt_level,
+        enable_multi_rate=args.multi_rate,
+        rate_med_div=args.med_div,
+        rate_slow_div=args.slow_div
+    )
     try:
         bin_data = compiler.compile(data)
     except ValueError as e:
@@ -333,6 +525,12 @@ def main():
 
     if args.stats or opt_level != LE_OPT_NONE:
         print(f"[INFO] Optimization: {compiler.eliminated_instructions} instructions eliminated, {compiler.eliminated_registers} registers eliminated.")
+
+    if args.sign:
+        with open(args.sign, "rb") as f:
+            sk_bytes = f.read()
+        bin_data = sign_container(bin_data, sk_bytes)
+        print(f"[OK] Signed container with Ed25519 key: {args.sign} (+SIGN chunk)")
 
     out_path = args.output
     if not out_path and not args.header:

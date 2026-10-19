@@ -38,6 +38,7 @@ typedef struct {
     int enable_multi_rate;        /**< Set to 1 to partition instructions into fast/medium/slow rate domains (Phase 4.2). */
     int rate_med_div;             /**< Medium rate scan prescaler divisor (defaults to 48). */
     int rate_slow_div;            /**< Slow rate scan prescaler divisor (defaults to 480). */
+    int target_version;           /**< Target container format version (defaults to 13). */
 } le_compiler_options_t;
 
 /**
@@ -55,6 +56,7 @@ static inline le_compiler_options_t le_compiler_options_init(le_opt_level_t leve
     options.enable_multi_rate = 0;
     options.rate_med_div = 48;
     options.rate_slow_div = 480;
+    options.target_version = 13;
     switch (level) {
         case LE_OPT_NONE:
             options.eliminate_dead_code = 0;

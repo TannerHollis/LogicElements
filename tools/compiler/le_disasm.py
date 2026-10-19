@@ -28,8 +28,8 @@ def disassemble(bin_data: bytes, user_bool_count: int = -1, user_float_count: in
     Returns:
         Formatted disassembly listing string.
     """
-    if len(bin_data) < 26:
-        print("Error: Binary file is too small to contain a valid header.", file=sys.stderr)
+    if len(bin_data) < 20:
+        print("Error: Binary file is too small to contain a valid container header.", file=sys.stderr)
         return ""
 
     lib = get_compiler_lib()
@@ -66,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser(description="LogicElements Disassembler")
     parser.add_argument("file", help="Path to .lebin file")
     parser.add_argument("--board", "-b", help="Path to board profile JSON (annotates custom nodes)")
+    parser.add_argument("--output", "-o", help="Path to output disassembly text file")
     args = parser.parse_args()
 
     with open(args.file, "rb") as f:
@@ -78,7 +79,11 @@ def main():
 
     try:
         text = disassemble(data, board_profile_json=board_json)
-        if text:
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"[OK] Disassembly written to {args.output}")
+        elif text:
             print(text, end="")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

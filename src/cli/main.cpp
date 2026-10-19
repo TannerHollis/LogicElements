@@ -11,7 +11,7 @@
 
 static void print_general_usage(const char* prog)
 {
-    std::cout << "LogicElements CLI Toolsuite v" << le_compiler_get_version() << "\n\n"
+    std::cout << le_compiler_get_version() << " — CLI Toolsuite\n\n"
               << "Usage: " << prog << " <command> [arguments]\n\n"
               << "Available Commands:\n"
               << "  compile    Compile a circuit JSON into .lebin bytecode\n"
@@ -62,7 +62,7 @@ int main(int argc, char* argv[])
         print_general_usage(argv[0]);
         return 0;
     } else if (cmd == "-v" || cmd == "--version" || cmd == "version") {
-        std::cout << "LogicElements v" << le_compiler_get_version() << "\n";
+        std::cout << le_compiler_get_version() << "\n";
         return 0;
     }
 
