@@ -23,7 +23,7 @@ typedef struct {
      * carved at load time into the packed register arena (front) and the state
      * workspace slice (back). A union forces 4-byte alignment so the float /
      * complex buckets and state structs are naturally aligned. */
-    union {
+    union LE_ALIGN4 {
         uint8_t                ram_workspace[LE_RAM_WORKSPACE_BYTES];
         uint32_t               _align4[(LE_RAM_WORKSPACE_BYTES + 3) / 4];
     };

@@ -202,10 +202,12 @@ for state and vice versa); still *zero heap* at runtime.
 
 ## Loader, storage & NVRAM (`le_loader.c`, `le_storage.c`, `le_nvram.c`)
 
-`le_loader_validate()` checks the `LEB1` magic, version, resource bounds, all
-table sizes, and the IEEE 802.3 **CRC32** over the whole payload.
+`le_loader_validate()` checks the container header `LEB2` magic (`0x4C454232`), container version 13,
+resource bounds, individual chunk boundaries and payload IEEE 802.3 **CRC32** checksums.
 `le_loader_load()` zero-copy-binds instructions, block descriptors, state
-slices, and config, then autostarts if flagged.
+slices, and config, then autostarts if flagged. For deeply resource-constrained 8-bit targets (AVR),
+`le_loader_load_micro()` provides a minimal ~35-line loader profile scanning only `HEAD` and `INST`
+without dynamic memory or crypto overhead.
 
 `le_storage` manages **multi-slot** flash/EEPROM partitions and slot
 activation with a hidden **phantom slot** for atomic, CRC32-verified uploads,

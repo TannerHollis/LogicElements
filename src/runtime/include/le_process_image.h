@@ -362,19 +362,37 @@ uint8_t* le_process_image_kind_state(const le_process_image_t* img, uint8_t kind
  * @brief Fast inline float getter for hot execution paths.
  * Directly resolves standard %F registers and constants; falls back to full resolver otherwise.
  */
+#if defined(__AVR__)
+#define le_pi_get_float_fast(img, addr)       le_process_image_get_float((img), (addr))
+#define le_pi_set_float_fast(img, addr, val)  le_process_image_set_float((img), (addr), (val))
+#define le_pi_get_int_fast(img, addr)         le_process_image_get_int((img), (addr))
+#define le_pi_set_int_fast(img, addr, val)    le_process_image_set_int((img), (addr), (val))
+#define le_pi_get_bool_fast(img, addr)        le_process_image_get_bool((img), (addr))
+#define le_pi_set_bool_fast(img, addr, val)   le_process_image_set_bool((img), (addr), (val))
+#else
 LE_ALWAYS_INLINE float le_pi_get_float_fast(const le_process_image_t* img, uint16_t addr)
 {
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
         uint16_t idx = addr & 0x1FFF;
         if (img->floats && idx < img->float_count) return img->floats[idx];
-    } else if ((addr & 0xF000) == LE_REGION_AOUT) {
+    } else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) return (float)img->ints[idx];
+    }
+#if LE_ENABLE_ANALOG
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->ain_vals && idx < img->ain_count) return img->ain_vals[idx];
+    }
+#endif
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
         uint16_t idx = addr & 0x0FFF;
         if (img->aout_vals && idx < img->aout_count) return img->aout_vals[idx];
     }
-    if (addr == LE_CONST_ZERO_F) return 0.0f;
-    if (addr == LE_CONST_ONE_F)  return 1.0f;
-    if (addr == LE_CONST_60_F)   return 60.0f;
-    return le_process_image_get_float(img, addr);
+    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0.0f;
+    if (addr == LE_CONST_ONE_F  || addr == LE_CONST_TRUE)  return 1.0f;
+    if (addr == LE_CONST_60_F)                             return 60.0f;
+    return 0.0f;
 }
 
 /**
@@ -391,14 +409,30 @@ LE_ALWAYS_INLINE void le_pi_set_float_fast(le_process_image_t* img, uint16_t add
             img->floats[idx] = val;
             return;
         }
-    } else if ((addr & 0xF000) == LE_REGION_AOUT) {
+    } else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) {
+            img->ints[idx] = (int32_t)val;
+            return;
+        }
+    }
+#if LE_ENABLE_ANALOG
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->ain_raw && img->ain_vals && idx < img->ain_count) {
+            img->ain_raw[idx] = (int32_t)val;
+            img->ain_vals[idx] = val;
+            return;
+        }
+    }
+#endif
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
         uint16_t idx = addr & 0x0FFF;
         if (img->aout_vals && idx < img->aout_count) {
             img->aout_vals[idx] = val;
             return;
         }
     }
-    le_process_image_set_float(img, addr, val);
 }
 
 /**
@@ -409,6 +443,9 @@ LE_ALWAYS_INLINE int32_t le_pi_get_int_fast(const le_process_image_t* img, uint1
     if ((addr & 0xE000) == LE_REGION_INT_REG) {
         uint16_t idx = addr & 0x1FFF;
         if (img->ints && idx < img->int_count) return img->ints[idx];
+    } else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) return (int32_t)img->floats[idx];
     }
 #if LE_ENABLE_ANALOG
     else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
@@ -416,7 +453,13 @@ LE_ALWAYS_INLINE int32_t le_pi_get_int_fast(const le_process_image_t* img, uint1
         if (img->ain_raw && idx < img->ain_count) return img->ain_raw[idx];
     }
 #endif
-    return le_process_image_get_int(img, addr);
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) return (int32_t)img->aout_vals[idx];
+    }
+    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0;
+    if (addr == LE_CONST_ONE_F  || addr == LE_CONST_TRUE)  return 1;
+    return 0;
 }
 
 /**
@@ -430,8 +473,30 @@ LE_ALWAYS_INLINE void le_pi_set_int_fast(le_process_image_t* img, uint16_t addr,
             img->ints[idx] = val;
             return;
         }
+    } else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) {
+            img->floats[idx] = (float)val;
+            return;
+        }
     }
-    le_process_image_set_int(img, addr, val);
+#if LE_ENABLE_ANALOG
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->ain_raw && img->ain_vals && idx < img->ain_count) {
+            img->ain_raw[idx] = val;
+            img->ain_vals[idx] = (float)val;
+            return;
+        }
+    }
+#endif
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) {
+            img->aout_vals[idx] = (float)val;
+            return;
+        }
+    }
 }
 
 /**
@@ -543,7 +608,7 @@ LE_ALWAYS_INLINE bool le_pi_get_bool_fast(const le_process_image_t* img, uint16_
     } else if (addr == LE_CONST_FALSE) {
         return false;
     }
-    return le_process_image_get_bool(img, addr);
+    return false;
 }
 
 /**
@@ -567,9 +632,16 @@ LE_ALWAYS_INLINE void le_pi_set_bool_fast(le_process_image_t* img, uint16_t addr
             else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
             return;
         }
+    } else if ((addr & 0xF000) == LE_REGION_DIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->din_count) {
+            if (val) img->regs[idx >> 3] |= (uint8_t)(1U << (idx & 7));
+            else     img->regs[idx >> 3] &= (uint8_t)~(1U << (idx & 7));
+            return;
+        }
     }
-    le_process_image_set_bool(img, addr, val);
 }
+#endif
 
 #if LE_ENABLE_COMPLEX
 /**

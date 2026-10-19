@@ -1520,13 +1520,13 @@ void test_arena_capacity()
 
     // "Does it fit?": validate rejects a program whose declared state image
     // exceeds the platform workspace (LE_ERR_CAPACITY), before CRC check.
-    uint8_t big[LE_RAM_WORKSPACE_BYTES + sizeof(le_header_t) + 16] = {0};
-    le_header_t* bh = (le_header_t*)big;
-    bh->magic = LE_BIN_MAGIC;
-    bh->version = LE_BIN_VERSION;
+    std::vector<uint8_t> big(res.binary_data, res.binary_data + res.binary_size);
+    le_chunk_header_t* chk = (le_chunk_header_t*)(big.data() + sizeof(le_container_header_t));
+    le_header_t* bh = (le_header_t*)(big.data() + sizeof(le_container_header_t) + sizeof(le_chunk_header_t));
     bh->state_img_len = LE_RAM_WORKSPACE_BYTES + 1u;
+    chk->crc32 = le_crc32((const uint8_t*)bh, sizeof(le_header_t));
     le_header_t out;
-    TEST_ASSERT(le_loader_validate(big, sizeof(big), &out) == LE_ERR_CAPACITY,
+    TEST_ASSERT(le_loader_validate(big.data(), big.size(), &out) == LE_ERR_CAPACITY,
                 "program whose state image exceeds the workspace is rejected");
 
     // Register arena: the packed register footprint must fit the RAM budget, and
@@ -2103,19 +2103,10 @@ void test_circuit_owns_scan_rate(void)
     /* Descriptor carries the declared rate; the loader applies the period. */
     le_timing_desc_t td;
     {
-        le_header_t h;
-        TEST_ASSERT(le_loader_validate(res.binary_data, res.binary_size, &h) == LE_OK, "rated binary validates");
-        size_t off = sizeof(le_header_t) + (size_t)h.instruction_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < h.block_count; b++) {
-            const le_block_desc_t* d = (const le_block_desc_t*)(res.binary_data + off);
-            off += (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                   ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-        }
-        off += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
-        off += (size_t)h.state_img_len;
-        off += (size_t)h.alias_count * LE_ALIAS_BYTES;
-        const le_timing_desc_t* t = (const le_timing_desc_t*)(res.binary_data + off);
-        td = *t;
+        le_chunked_view_t view;
+        TEST_ASSERT(le_loader_parse_chunks(res.binary_data, res.binary_size, &view) == LE_OK, "rated binary validates");
+        TEST_ASSERT(view.time != nullptr, "timing chunk present");
+        if (view.time) td = *view.time;
     }
     TEST_ASSERT(td.design_scan_rate_hz == 960, "circuit scan_rate_hz embedded in the descriptor");
 
@@ -2403,11 +2394,18 @@ void test_comms_upload_endtoend()
     };
     test_feed_packet(&comms, LE_CMD_PROG_BEGIN, 1, begin, 5);
 
-    std::vector<uint8_t> chunk(2u + res.binary_size);
-    chunk[0] = 0; chunk[1] = 0;
-    memcpy(chunk.data() + 2, res.binary_data, res.binary_size);
-    test_feed_packet(&comms, LE_CMD_PROG_CHUNK, 2, chunk.data(), (uint16_t)chunk.size());
-    test_feed_packet(&comms, LE_CMD_PROG_END, 3, NULL, 0);
+    size_t sent = 0;
+    uint8_t seq = 2;
+    while (sent < res.binary_size) {
+        size_t block = std::min<size_t>(res.binary_size - sent, 100);
+        std::vector<uint8_t> chunk(2u + block);
+        chunk[0] = (uint8_t)(sent & 0xFF);
+        chunk[1] = (uint8_t)((sent >> 8) & 0xFF);
+        memcpy(chunk.data() + 2, res.binary_data + sent, block);
+        test_feed_packet(&comms, LE_CMD_PROG_CHUNK, seq++, chunk.data(), (uint16_t)chunk.size());
+        sent += block;
+    }
+    test_feed_packet(&comms, LE_CMD_PROG_END, seq, NULL, 0);
 
     // Upload stores to the slot; activation is an explicit, separate step.
     TEST_ASSERT(le_storage_activate_slot(&storage, 1, &vm), "uploaded slot 1 activates");

@@ -13,7 +13,7 @@ zero-heap state workspace, and UART/telemetry support.
 | :--- | :--- |
 | **Language** | ANSI C99 runtime · C++17 compiler |
 | **Runtime core** | ~10 KB flash, zero-heap, execute-in-place (XIP) |
-| **Binary format** | `.lebin` v12 — `LEB1` magic, IEEE 802.3 CRC32 |
+| **Binary format** | `.lebin` v13 — `LEB2` chunked container, IEEE 802.3 CRC32 |
 | **License** | MIT |
 
 ## Quick start
@@ -69,7 +69,7 @@ All documentation lives in `docs/`.
 - **Elements** — [all elements and their disassembly](docs/ELEMENTS.md)
 - **Board profiles & UART protocol** — [communications & profiles](docs/COMMUNICATIONS_BOARD_PROFILES.md)
 - **Board profiles** — `ports/*.leconfig` schemas (see [ports](docs/PORTS.md))
-- **Binary format** — [`.lebin` v12](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
+- **Binary format** — [`.lebin` v13 (LEB2)](docs/COMPILER_GUIDE.md#binary-bytecode-specification-lebin)
 - **Generation & tooling** — `tools/compiler/le_compiler.py`,
   `le_board.py`, `le_disasm.py`; `tools/sim/main.c`
 

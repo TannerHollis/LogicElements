@@ -14,8 +14,8 @@ from ctypes import c_int, c_char_p, c_uint8, c_size_t, c_uint32, c_double, POINT
 from typing import Dict, List, Any, Optional
 
 # Binary constants for compatibility with existing scripts
-LE_BIN_MAGIC = 0x4C454231  # ASCII "LEB1"
-LE_BIN_VERSION = 12
+LE_BIN_MAGIC = 0x4C454232  # ASCII "LEB2"
+LE_BIN_VERSION = 13
 LE_FLAG_AUTOSTART = 0x0001
 
 # Address Regions (top-nibble aligned)

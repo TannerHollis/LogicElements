@@ -168,6 +168,13 @@ void le_comms_init(le_comms_t* comms, le_vm_t* vm, le_storage_t* storage);
  */
 void le_comms_process_byte(le_comms_t* comms, uint8_t byte);
 
+/**
+ * @brief Consumes available bytes from UART and processes packet frames.
+ *
+ * @param comms Pointer to communications instance.
+ */
+void le_comms_poll(le_comms_t* comms);
+
 #include "le_cli.h"
 
 /**

@@ -639,7 +639,7 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
     const uint8_t* p_sign = nullptr;
     uint32_t sign_len = 0;
 
-    if (magic == LE_BIN_MAGIC_V2) {
+    if (magic == LE_BIN_MAGIC) {
         le_chunked_view_t view;
         le_status_t st = le_loader_parse_chunks(bin_data, bin_len, &view);
         if (st != LE_OK) {
@@ -674,54 +674,21 @@ std::string disassemble_binary(const uint8_t* bin_data, size_t bin_len, int user
                         ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
             }
         }
-    } else if (magic == LE_BIN_MAGIC) {
-        if (bin_len < sizeof(le_header_t)) {
-            return "Error: Data size smaller than the .lebin header";
-        }
-        std::memcpy(&h, bin_data, sizeof(le_header_t));
-        inst_count = h.instruction_count;
-        p_inst = (const le_instruction_t*)(bin_data + sizeof(le_header_t));
-        size_t boff = sizeof(le_header_t) + inst_count * sizeof(le_instruction_t);
-        for (uint16_t b = 0; b < h.block_count; b++) {
-            if (boff + (size_t)LE_BLOCK_DESC_HEADER_BYTES > bin_len) break;
-            const le_block_desc_t* d = (const le_block_desc_t*)(bin_data + boff);
-            block_descriptors.push_back(d);
-            size_t dsize = (size_t)LE_BLOCK_DESC_HEADER_BYTES +
-                           ((size_t)d->in_count + (size_t)d->out_count) * sizeof(uint16_t);
-            if (boff + dsize > bin_len) break;
-            boff += dsize;
-        }
-        p_stat = (const le_state_desc_t*)(bin_data + boff);
-        stat_count = h.state_desc_count;
-        boff += (size_t)h.state_desc_count * LE_STATE_DESC_BYTES;
-        p_simg = bin_data + boff;
-        simg_len = h.state_img_len;
-        boff += (size_t)h.state_img_len;
-        if (h.alias_count > 0 && boff + (size_t)h.alias_count * LE_ALIAS_BYTES <= bin_len) {
-            p_alis = (const le_alias_t*)(bin_data + boff);
-            alis_count = h.alias_count;
-            boff += (size_t)h.alias_count * LE_ALIAS_BYTES;
-        }
-        if (h.timing_count != 0 && boff + LE_TIMING_DESC_BYTES <= bin_len) {
-            p_timing = (const le_timing_desc_t*)(bin_data + boff);
-        }
+    } else if (magic == LE_BIN_MAGIC_V1) {
+        return "Error: Legacy LEB1 flat binary format is obsolete. Please recompile circuit to LEB2 (.lebin v13).";
     } else {
         std::ostringstream ss;
         ss << "Error: Invalid binary magic: 0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
-           << magic << " (expected 'LEB1' or 'LEB2')";
+           << magic << " (expected 'LEB2')";
         return ss.str();
     }
 
     std::ostringstream out;
     out << "============================================================\n";
-    if (is_chunked) {
-        out << " LOGICELEMENTS CONTAINER DISASSEMBLY (.lebin v" << container_version << " Chunked)\n";
-    } else {
-        out << " LOGICELEMENTS BINARY DISASSEMBLY (.lebin)\n";
-    }
+    out << " LOGICELEMENTS CONTAINER DISASSEMBLY (.lebin v" << container_version << " Chunked)\n";
     out << "============================================================\n";
     out << "Magic:               0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
-        << (is_chunked ? LE_BIN_MAGIC_V2 : h.magic) << (is_chunked ? " ('LEB2')\n" : " ('LEB1')\n");
+        << LE_BIN_MAGIC << " ('LEB2')\n";
     out << std::dec;
     out << "Version:             " << (is_chunked ? container_version : h.version) << "\n";
     out << "Flags:               0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0')

@@ -165,7 +165,7 @@ le_status_t le_storage_verify_slot(const le_storage_t* storage, uint8_t slot, le
         uint8_t buf[256];
         if (storage->hal->storage_read(sec, 0, buf, sizeof(buf))) {
             uint32_t magic = *(const uint32_t*)buf;
-            if (magic == LE_BIN_MAGIC_V2) {
+            if (magic == LE_BIN_MAGIC) {
                 const le_container_header_t* cont = (const le_container_header_t*)buf;
                 if (cont->version == LE_CONTAINER_VERSION && cont->total_size <= LE_SLOT_SIZE_BYTES) {
                     size_t off = sizeof(le_container_header_t);
@@ -185,12 +185,6 @@ le_status_t le_storage_verify_slot(const le_storage_t* storage, uint8_t slot, le
                         out_header->version = LE_BIN_VERSION;
                         out_header->flags = cont->flags;
                     }
-                    return LE_OK;
-                }
-            } else if (magic == LE_BIN_MAGIC) {
-                const le_header_t* hdr = (const le_header_t*)buf;
-                if (hdr->version == LE_BIN_VERSION) {
-                    if (out_header) *out_header = *hdr;
                     return LE_OK;
                 }
             }
@@ -234,7 +228,9 @@ le_status_t le_storage_commit_upload(le_storage_t* storage, uint8_t target_slot,
 {
     if (!storage) return LE_ERR_NULL_PTR;
     if (target_slot >= LE_MAX_CONFIG_SLOTS) return LE_ERR_OUT_OF_BOUNDS;
+#if LE_MAX_CONFIG_SLOTS > 1
     if (target_slot == storage->active_slot) return LE_ERR_ACTIVE_SLOT;
+#endif
     if (expected_size > LE_SLOT_SIZE_BYTES) return LE_ERR_CAPACITY;
 
     const uint8_t phantom = LE_MAX_CONFIG_SLOTS;
@@ -251,20 +247,12 @@ le_status_t le_storage_commit_upload(le_storage_t* storage, uint8_t target_slot,
         uint32_t magic = *(const uint32_t*)buf;
         size_t program_total = expected_size;
 
-        if (magic == LE_BIN_MAGIC_V2) {
+        if (magic == LE_BIN_MAGIC) {
             const le_container_header_t* cont = (const le_container_header_t*)buf;
             if (cont->version != LE_CONTAINER_VERSION) {
                 return LE_ERR_INVALID_VERSION;
             }
             if (program_total == 0) program_total = cont->total_size;
-        } else if (magic == LE_BIN_MAGIC) {
-            const le_header_t* hdr = (const le_header_t*)buf;
-            if (hdr->version != LE_BIN_VERSION) {
-                return LE_ERR_INVALID_VERSION;
-            }
-            if (program_total == 0) {
-                program_total = sizeof(le_header_t) + ((size_t)hdr->instruction_count * sizeof(le_instruction_t));
-            }
         } else {
             return LE_ERR_INVALID_MAGIC;
         }
@@ -288,6 +276,11 @@ le_status_t le_storage_commit_upload(le_storage_t* storage, uint8_t target_slot,
             }
             copied += chunk;
         }
+#if LE_PHYSICAL_SLOT_COUNT == 1
+        if (target_slot == storage->active_slot && storage->hal->storage_read) {
+            storage->hal->storage_read(target_sec, 0, storage->ram_partitions[0], to_copy);
+        }
+#endif
         return LE_OK;
     }
     return LE_ERR_STORAGE;

@@ -3558,7 +3558,8 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
         has_nvmd = true;
     }
 
-    if (options.emit_chunked_container || options.enable_multi_rate || has_nvmd) {
+    /* Always emit v13 LEB2 chunked container format */
+    {
         size_t max_chunked = total_bin_size + 4096;
         std::vector<uint8_t> chunked_bin(max_chunked);
         size_t chunked_size = 0;

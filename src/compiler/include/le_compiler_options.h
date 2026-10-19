@@ -34,7 +34,7 @@ typedef struct {
     int fuse_instructions;        /**< Set to 1 to fuse MUL+ADD/SUB pairs into hardware FMA/FMS instructions; otherwise, 0. */
     int inline_user_nodes;        /**< Set to 1 to inline custom user macros; otherwise, 0. */
     int max_pass_iterations;      /**< Maximum fixed-point pass iterations (defaults to 5). */
-    int emit_chunked_container;   /**< Set to 1 to emit v13 LEB2 chunked container format; 0 for legacy flat v12 format. */
+    int emit_chunked_container;   /**< Set to 1 to emit v13 LEB2 chunked container format (default 1). */
     int enable_multi_rate;        /**< Set to 1 to partition instructions into fast/medium/slow rate domains (Phase 4.2). */
     int rate_med_div;             /**< Medium rate scan prescaler divisor (defaults to 48). */
     int rate_slow_div;            /**< Slow rate scan prescaler divisor (defaults to 480). */
@@ -51,7 +51,7 @@ static inline le_compiler_options_t le_compiler_options_init(le_opt_level_t leve
     options.opt_level = level;
     options.max_pass_iterations = 5;
     options.inline_user_nodes = (level == LE_OPT_FULL) ? 1 : 0;
-    options.emit_chunked_container = 0;
+    options.emit_chunked_container = 1;
     options.enable_multi_rate = 0;
     options.rate_med_div = 48;
     options.rate_slow_div = 480;

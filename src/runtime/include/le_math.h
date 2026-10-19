@@ -212,7 +212,7 @@ LE_ALWAYS_INLINE float le_fast_exp(float x)
     int k = (int)(z >= 0.0f ? (z + 0.5f) : (z - 0.5f));
     float f = x - (float)k * 0.6931471805599453f; /* ln(2) */
     float poly = 1.0f + f * (1.0f + f * (0.5f + f * (0.166666667f + f * (0.041666667f + f * 0.008333333f))));
-    uint32_t exp_bits = (uint32_t)((k + 127) << 23);
+    uint32_t exp_bits = (uint32_t)(k + 127) << 23;
     float scale;
     memcpy(&scale, &exp_bits, sizeof(float));
     return poly * scale;

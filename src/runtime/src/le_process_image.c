@@ -130,179 +130,158 @@ void le_pi_set_aout(le_process_image_t* img, uint16_t ch, float val)
 
 bool le_process_image_get_bool(const le_process_image_t* img, uint16_t addr)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return false;
-    if (addr == LE_CONST_FALSE) return false;
-    if (addr == LE_CONST_TRUE) return true;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-    const uint8_t* regs = img->regs;
-
-    if (region == LE_REGION_DIN) {
-        if (regs && idx < img->din_count) {
-            return (regs[idx >> 3] & (1U << (idx & 7))) != 0;
+    if (!img) return false;
+    if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->regs && idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
+            return (img->regs[bit >> 3] & (1U << (bit & 7))) != 0;
         }
-    } else if (region == LE_REGION_DOUT) {
-        if (regs && idx < img->dout_count) {
+    } else if ((addr & 0xF000) == LE_REGION_DIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->din_count) {
+            return (img->regs[idx >> 3] & (1U << (idx & 7))) != 0;
+        }
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->dout_count) {
             uint32_t bit = (uint32_t)img->din_count + idx;
-            return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
+            return (img->regs[bit >> 3] & (1U << (bit & 7))) != 0;
         }
-    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
-        uint16_t bool_idx = addr & 0x1FFF;
-        if (regs && bool_idx < img->bool_count) {
-            uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
-            return (regs[bit >> 3] & (1U << (bit & 7))) != 0;
-        }
+    } else if (addr == LE_CONST_TRUE) {
+        return true;
     }
-
     return false;
 }
 
 void le_process_image_set_bool(le_process_image_t* img, uint16_t addr, bool val)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-    uint8_t* regs = img->regs;
-
-    if (region == LE_REGION_DIN) {
-        if (regs && idx < img->din_count) {
-            if (val) {
-                regs[idx >> 3] |= (uint8_t)(1U << (idx & 7));
-            } else {
-                regs[idx >> 3] &= (uint8_t)~(1U << (idx & 7));
-            }
+    if (!img) return;
+    if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->regs && idx < img->bool_count) {
+            uint32_t bit = (uint32_t)img->din_count + img->dout_count + idx;
+            if (val) img->regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
         }
-    } else if (region == LE_REGION_DOUT) {
-        if (regs && idx < img->dout_count) {
+    } else if ((addr & 0xF000) == LE_REGION_DOUT) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->dout_count) {
             uint32_t bit = (uint32_t)img->din_count + idx;
-            if (val) {
-                regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
-            } else {
-                regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
-            }
+            if (val) img->regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
+            else     img->regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
         }
-    } else if ((addr & 0xE000) == LE_REGION_BOOL_REG) {
-        uint16_t bool_idx = addr & 0x1FFF;
-        if (regs && bool_idx < img->bool_count) {
-            uint32_t bit = (uint32_t)img->din_count + img->dout_count + bool_idx;
-            if (val) {
-                regs[bit >> 3] |= (uint8_t)(1U << (bit & 7));
-            } else {
-                regs[bit >> 3] &= (uint8_t)~(1U << (bit & 7));
-            }
+    } else if ((addr & 0xF000) == LE_REGION_DIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
+        if (img->regs && idx < img->din_count) {
+            if (val) img->regs[idx >> 3] |= (uint8_t)(1U << (idx & 7));
+            else     img->regs[idx >> 3] &= (uint8_t)~(1U << (idx & 7));
         }
     }
 }
 
 float le_process_image_get_float(const le_process_image_t* img, uint16_t addr)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return 0.0f;
-    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0.0f;
-    if (addr == LE_CONST_ONE_F || addr == LE_CONST_TRUE) return 1.0f;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-
+    if (!img) return 0.0f;
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
-        uint16_t f_idx = addr & 0x1FFF;
-        if (img->floats && f_idx < img->float_count) return img->floats[f_idx];
-    }
-    else if ((addr & 0xE000) == LE_REGION_INT_REG) {
-        uint16_t i_idx = addr & 0x1FFF;
-        if (img->ints && i_idx < img->int_count) return (float)img->ints[i_idx];
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) return img->floats[idx];
+    } else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) return (float)img->ints[idx];
     }
 #if LE_ENABLE_ANALOG
-    else if (region == LE_REGION_AIN) {
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->ain_vals && idx < img->ain_count) return img->ain_vals[idx];
     }
 #endif
-    else if (region == LE_REGION_AOUT) {
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
         if (img->aout_vals && idx < img->aout_count) return img->aout_vals[idx];
     }
-
+    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0.0f;
+    if (addr == LE_CONST_ONE_F  || addr == LE_CONST_TRUE)  return 1.0f;
+    if (addr == LE_CONST_60_F)                             return 60.0f;
     return 0.0f;
 }
 
 void le_process_image_set_float(le_process_image_t* img, uint16_t addr, float val)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-
+    if (!img) return;
+#if LE_FLUSH_NAN_TO_ZERO
+    if (isnan(val)) val = 0.0f;
+#endif
     if ((addr & 0xE000) == LE_REGION_FLOAT) {
-        uint16_t f_idx = addr & 0x1FFF;
-        if (img->floats && f_idx < img->float_count) img->floats[f_idx] = val;
-    }
-    else if ((addr & 0xE000) == LE_REGION_INT_REG) {
-        uint16_t i_idx = addr & 0x1FFF;
-        if (img->ints && i_idx < img->int_count) img->ints[i_idx] = (int32_t)val;
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) img->floats[idx] = val;
+    } else if ((addr & 0xE000) == LE_REGION_INT_REG) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) img->ints[idx] = (int32_t)val;
     }
 #if LE_ENABLE_ANALOG
-    else if (region == LE_REGION_AIN) {
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->ain_raw && img->ain_vals && idx < img->ain_count) {
             img->ain_raw[idx] = (int32_t)val;
             img->ain_vals[idx] = val;
         }
     }
 #endif
-    else if (region == LE_REGION_AOUT) {
-        if (img->aout_vals && idx < img->aout_count) {
-            img->aout_vals[idx] = val;
-        }
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) img->aout_vals[idx] = val;
     }
 }
 
 int32_t le_process_image_get_int(const le_process_image_t* img, uint16_t addr)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return 0;
-    if (addr == LE_CONST_FALSE || addr == LE_CONST_ZERO_F) return 0;
-    if (addr == LE_CONST_TRUE || addr == LE_CONST_ONE_F) return 1;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-
+    if (!img) return 0;
     if ((addr & 0xE000) == LE_REGION_INT_REG) {
-        uint16_t i_idx = addr & 0x1FFF;
-        if (img->ints && i_idx < img->int_count) return img->ints[i_idx];
-    }
-    else if ((addr & 0xE000) == LE_REGION_FLOAT) {
-        uint16_t f_idx = addr & 0x1FFF;
-        if (img->floats && f_idx < img->float_count) return (int32_t)img->floats[f_idx];
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) return img->ints[idx];
+    } else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) return (int32_t)img->floats[idx];
     }
 #if LE_ENABLE_ANALOG
-    else if (region == LE_REGION_AIN) {
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->ain_raw && idx < img->ain_count) return img->ain_raw[idx];
     }
 #endif
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) return (int32_t)img->aout_vals[idx];
+    }
+    if (addr == LE_CONST_ZERO_F || addr == LE_CONST_FALSE) return 0;
+    if (addr == LE_CONST_ONE_F  || addr == LE_CONST_TRUE)  return 1;
     return 0;
 }
 
 void le_process_image_set_int(le_process_image_t* img, uint16_t addr, int32_t val)
 {
-    if (!img || addr == LE_ADDR_UNUSED) return;
-
-    uint16_t region = addr & LE_ADDR_REGION_MASK;
-    uint16_t idx = addr & LE_ADDR_INDEX_MASK;
-
+    if (!img) return;
     if ((addr & 0xE000) == LE_REGION_INT_REG) {
-        uint16_t i_idx = addr & 0x1FFF;
-        if (img->ints && i_idx < img->int_count) img->ints[i_idx] = val;
-    }
-    else if ((addr & 0xE000) == LE_REGION_FLOAT) {
-        uint16_t f_idx = addr & 0x1FFF;
-        if (img->floats && f_idx < img->float_count) img->floats[f_idx] = (float)val;
+        uint16_t idx = addr & 0x1FFF;
+        if (img->ints && idx < img->int_count) img->ints[idx] = val;
+    } else if ((addr & 0xE000) == LE_REGION_FLOAT) {
+        uint16_t idx = addr & 0x1FFF;
+        if (img->floats && idx < img->float_count) img->floats[idx] = (float)val;
     }
 #if LE_ENABLE_ANALOG
-    else if (region == LE_REGION_AIN) {
+    else if ((addr & LE_ADDR_REGION_MASK) == LE_REGION_AIN) {
+        uint16_t idx = addr & LE_ADDR_INDEX_MASK;
         if (img->ain_raw && img->ain_vals && idx < img->ain_count) {
             img->ain_raw[idx] = val;
             img->ain_vals[idx] = (float)val;
         }
     }
 #endif
+    else if ((addr & 0xF000) == LE_REGION_AOUT) {
+        uint16_t idx = addr & 0x0FFF;
+        if (img->aout_vals && idx < img->aout_count) img->aout_vals[idx] = (float)val;
+    }
 }
 
 #if LE_ENABLE_COMPLEX

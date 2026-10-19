@@ -49,6 +49,20 @@ le_status_t le_loader_validate(const uint8_t* buffer, size_t size, le_header_t* 
 le_status_t le_loader_load(le_vm_t* vm, const uint8_t* buffer, size_t size);
 
 /**
+ * @brief Ultra-compact bytecode loader for resource-constrained targets (e.g. 8-bit AVR).
+ *
+ * Scans only for mandatory container headers, HEAD chunk, and INST chunk without
+ * allocating intermediate chunk view structs, complex block tables, or validating
+ * extended features. Designed for execute-in-place (XIP) from flash/PROGMEM.
+ *
+ * @param vm Pointer to the virtual machine instance.
+ * @param buffer Pointer to the binary image buffer (LEB2 format).
+ * @param size Total byte size of the binary buffer.
+ * @return Returns @ref LE_OK on success, or an error code from @ref le_status_t.
+ */
+le_status_t le_loader_load_micro(le_vm_t* vm, const uint8_t* buffer, size_t size);
+
+/**
  * @brief Performs a bump-free online program swap into a running virtual machine.
  *
  * Validates the candidate program in @p buffer without modifying @p vm.

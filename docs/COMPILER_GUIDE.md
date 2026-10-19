@@ -503,22 +503,39 @@ le_compile <circuit.json> [options]
 
 ## Binary bytecode specification (`.lebin`)
 
-A compiled LogicElements binary comprises a fixed **header** followed by $N$
-contiguous **8-byte instructions**, then the variable-arity block table, the
-**state-group (directive) table**, the **preconfigured state image**, and — when
-declared — a **register-alias table**. All of it is covered by a trailing IEEE
-802.3 CRC32 over the whole payload.
+LogicElements standardizes exclusively on the **LEB2 chunked container** format (`LE_BIN_MAGIC = 0x4C454232`, ASCII `"LEB2"`, version `13`). The binary begins with a 20-byte container header followed by self-describing, independent chunks (`HEAD`, `INST`, `BLCK`, `STAT`, `SIMG`, `ALIS`, `TIME`, `RATE`, `NVMD`, `SIGN`). Each chunk carries its own 16-byte header and IEEE 802.3 CRC32 checksum, providing zero-copy execution, backward-compatible extension, cryptographic signing, and multi-domain rate prescaling.
 
-### Binary Header (40 Bytes)
-
-The header is padded to a multiple of 4 bytes so the zero-copy instruction array
-that follows starts at a 4-byte-aligned offset (important for in-flash
-execution).
+### Container Header (20 Bytes)
 
 | Offset | Field | Type | Description |
 | :--- | :--- | :--- | :--- |
-| `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB1'` (`0x4C454231`, little-endian). |
-| `0x04` | `version` | `uint16_t` | Format version (Current: `11`). |
+| `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB2'` (`0x4C454232`, little-endian). |
+| `0x04` | `version` | `uint16_t` | Container format version (Current: `13`). |
+| `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
+| `0x08` | `total_size` | `uint32_t` | Total binary file size in bytes including container header. |
+| `0x0C` | `chunk_count` | `uint16_t` | Number of chunks stored in this container file. |
+| `0x0E` | `reserved` | `uint16_t` | Reserved / padding for 32-bit alignment (`0`). |
+| `0x10` | `header_crc32` | `uint32_t` | IEEE 802.3 CRC32 of container header (computed with CRC field zeroed). |
+
+### Chunk Descriptor Header (16 Bytes)
+
+Every chunk in the container begins with a standard 16-byte header:
+
+| Offset | Field | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | `tag` | `uint32_t` | FourCC chunk tag: `'HEAD'`, `'INST'`, `'BLCK'`, `'STAT'`, `'SIMG'`, `'ALIS'`, `'TIME'`, `'RATE'`, `'NVMD'`, `'SIGN'`. |
+| `0x04` | `length` | `uint32_t` | Payload length in bytes (excluding this 16-byte chunk header). |
+| `0x08` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 checksum of this chunk's payload bytes. |
+| `0x0C` | `flags` | `uint32_t` | Chunk attributes / flags (`0` for standard chunk). |
+
+### HEAD Chunk Payload: Circuit Header (`le_header_t`, 44 Bytes)
+
+The `'HEAD'` chunk contains circuit sizing and register allocation metadata:
+
+| Offset | Field | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `0x00` | `magic` | `uint32_t` | Magic identifier: `'LEB2'` (`0x4C454232`). |
+| `0x04` | `version` | `uint16_t` | Format version (`13`). |
 | `0x06` | `flags` | `uint16_t` | Execution flags (`0x0001` = Autostart VM). |
 | `0x08` | `instruction_count` | `uint16_t` | Total instructions in payload ($N$). |
 | `0x0A` | `digital_in_count` | `uint16_t` | Number of digital inputs allocated (%IN). |
@@ -531,13 +548,14 @@ execution).
 | `0x18` | `block_count` | `uint16_t` | Number of variable-arity block descriptors. |
 | `0x1A` | `state_desc_count` | `uint16_t` | Number of state-group (directive) records. |
 | `0x1C` | `state_img_len` | `uint32_t` | Bytes of the preconfigured state image. |
-| `0x20` | `alias_count` | `uint16_t` | Number of user-declared register aliases in the trailing alias table. |
-| `0x22` | `timing_count` | `uint16_t` | `1` when a 10-byte timing descriptor follows the alias table (always emitted; `0` = none). Pads the header to 40 bytes so instructions are 4-byte aligned. |
-| `0x24` | `crc32` | `uint32_t` | IEEE 802.3 CRC32 over the whole payload (instructions + block + state table + state image + alias table + timing descriptor). |
+| `0x20` | `alias_count` | `uint16_t` | Number of user-declared register aliases. |
+| `0x22` | `timing_count` | `uint16_t` | `1` when timing information is present. |
+| `0x24` | `reserved` | `uint16_t` | Reserved padding to 44 bytes. |
+| `0x26` | `crc32` | `uint32_t` | Backward-compatibility CRC32. |
 
 > State element instances are **not** enumerated per type in the header. The
 > compiler bakes each block's state (defaults + properties) as concrete bytes
-> into the state image; the `state-desc` table records `{ kind, count, size }`
+> into the `'SIMG'` chunk; the `'STAT'` chunk records `{ kind, count, size }`
 > per kind group so the loader can compute each group's byte offset, and
 > `state_img_len` is the bound for the platform's state workspace.
 

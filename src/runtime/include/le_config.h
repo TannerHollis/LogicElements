@@ -30,6 +30,17 @@
 extern "C" {
 #endif
 
+#ifndef LE_ALIGN4
+#if defined(__GNUC__) || defined(__clang__)
+#define LE_ALIGN4 __attribute__((aligned(4)))
+#elif defined(_MSC_VER)
+#define LE_ALIGN4 __declspec(align(4))
+#else
+#define LE_ALIGN4
+#endif
+#endif
+
+
 /* ========================================================================== */
 /* 1. Processor Core & Execution Topology                                     */
 /* ========================================================================== */
@@ -256,6 +267,26 @@ extern "C" {
 
 #ifndef LE_ENABLE_DSP
 #define LE_ENABLE_DSP                   1       /**< DSP filter opcodes (LPF, BIQUAD, RMS, MEDIAN, etc.) */
+#endif
+
+#ifndef LE_ENABLE_TRANSCENDENTAL_MATH
+#define LE_ENABLE_TRANSCENDENTAL_MATH   1       /**< Extended float math opcodes (sin, cos, tan, log, exp, pow) */
+#endif
+
+#ifndef LE_ENABLE_WORD_OPCODES
+#define LE_ENABLE_WORD_OPCODES          1       /**< Enable 32-bit bitwise word opcodes (WORD_AND, WORD_OR, etc.) */
+#endif
+
+#ifndef LE_ENABLE_TIMING_MODEL
+#define LE_ENABLE_TIMING_MODEL          1       /**< Enable program timing budget feasibility checks */
+#endif
+
+#ifndef LE_ENABLE_ALIASES
+#define LE_ENABLE_ALIASES               1       /**< Enable symbolic alias resolution table */
+#endif
+
+#ifndef LE_ENABLE_MULTI_RATE
+#define LE_ENABLE_MULTI_RATE            1       /**< Enable multi-rate execution prescalers */
 #endif
 
 #ifndef LE_ENABLE_SERIAL_BUS

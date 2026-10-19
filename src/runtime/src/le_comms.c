@@ -166,13 +166,15 @@ static void handle_packet(le_comms_t* comms)
                 send_packet(LE_CMD_NACK, seq, nack, 1);
                 break;
             }
-            uint32_t total = (uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+            uint32_t total = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
             uint8_t  tslot = p[4];
             uint8_t  err = 0x00;
             if (tslot >= LE_MAX_CONFIG_SLOTS) {
                 err = 0x07; /* invalid target slot */
+#if LE_MAX_CONFIG_SLOTS > 1
             } else if (tslot == le_storage_get_active_slot(comms->storage)) {
                 err = 0x06; /* cannot program the active slot */
+#endif
             } else if (total > LE_SLOT_SIZE_BYTES) {
                 err = 0x01; /* too large */
             }
@@ -239,6 +241,12 @@ static void handle_packet(le_comms_t* comms)
             }
             le_status_t status = le_storage_commit_upload(comms->storage, tslot, comms->expected_size);
             if (status == LE_OK) {
+#if LE_MAX_CONFIG_SLOTS == 1
+                if (comms->vm) {
+                    le_storage_activate_slot(comms->storage, tslot, comms->vm);
+                    le_vm_start(comms->vm);
+                }
+#endif
                 uint8_t ack[1] = {tslot};
                 send_packet(LE_CMD_ACK, seq, ack, 1);
             } else {
@@ -315,6 +323,7 @@ static void handle_packet(le_comms_t* comms)
 
         case LE_CMD_GET_TIMING: {
             /* Report the timing / achievability model (le_timing_t bytes). */
+#if LE_ENABLE_TIMING_MODEL
             if (comms->vm) {
                 le_timing_t t;
                 le_loader_timing(comms->vm, &t);
@@ -326,6 +335,10 @@ static void handle_packet(le_comms_t* comms)
                 uint8_t nack[1] = {0x01};
                 send_packet(LE_CMD_NACK, seq, nack, 1);
             }
+#else
+            uint8_t nack[1] = {0x01};
+            send_packet(LE_CMD_NACK, seq, nack, 1);
+#endif
             break;
         }
 

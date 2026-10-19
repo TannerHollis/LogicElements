@@ -20,11 +20,11 @@ extern "C" {
 /* Binary Format Constants                                                    */
 /* ========================================================================== */
 
-#define LE_BIN_MAGIC            0x4C454231  /* ASCII "LEB1" - flat v12 binary */
-#define LE_BIN_MAGIC_V1         0x4C454231  /* ASCII "LEB1" */
-#define LE_BIN_MAGIC_V2         0x4C454232  /* ASCII "LEB2" - chunked container format */
-#define LE_BIN_VERSION          12  // Current flat binary version
-#define LE_CONTAINER_VERSION    13  // Chunked container format version
+#define LE_BIN_MAGIC            0x4C454232  /* ASCII "LEB2" - chunked container format */
+#define LE_BIN_MAGIC_V1         0x4C454231  /* ASCII "LEB1" - legacy flat format (deprecated) */
+#define LE_BIN_MAGIC_V2         0x4C454232  /* ASCII "LEB2" */
+#define LE_BIN_VERSION          13          /* Binary format version */
+#define LE_CONTAINER_VERSION    13          /* Container format version */
 
 #define LE_FOURCC(a, b, c, d) \
     ((uint32_t)(uint8_t)(a) | ((uint32_t)(uint8_t)(b) << 8) | \
@@ -70,8 +70,8 @@ typedef struct {
  * @brief Packed binary file header for compiled LogicElements bytecode (.lebin).
  */
 typedef struct {
-    uint32_t magic;             /**< Magic identifier: 0x4C454231 (ASCII "LEB1"). */
-    uint16_t version;           /**< Binary format version number (currently 12). */
+    uint32_t magic;             /**< Magic identifier: 0x4C454232 (ASCII "LEB2"). */
+    uint16_t version;           /**< Binary format version number (currently 13). */
     uint16_t flags;             /**< Program execution flags (for example, LE_FLAG_AUTOSTART). */
     uint16_t instruction_count; /**< Total number of instructions in the bytecode payload. */
     uint16_t digital_in_count;  /**< Number of digital input channels (%IN) required. */

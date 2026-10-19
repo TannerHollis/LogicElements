@@ -223,6 +223,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             LE_STEP_OK;
         }
 
+#if LE_ENABLE_WORD_OPCODES
         LE_OP_LBL(LE_OP_WORD_AND) case LE_OP_WORD_AND: {
             uint32_t a = le_pi_get_word32_fast(img, inst->in_a);
             uint32_t b = le_pi_get_word32_fast(img, inst->in_b);
@@ -246,6 +247,13 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_word32_fast(img, inst->out, ~a);
             LE_STEP_OK;
         }
+#else
+        case LE_OP_WORD_AND:
+        case LE_OP_WORD_OR:
+        case LE_OP_WORD_XOR:
+        case LE_OP_WORD_NOT:
+            return LE_ERR_UNKNOWN_OPCODE;
+#endif
         case LE_OP_RESERVED_0D:
         case LE_OP_RESERVED_0E:
         case LE_OP_RESERVED_0F:
@@ -671,6 +679,7 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_float_fast(img, inst->out, val);
             LE_STEP_OK;
         }
+#if LE_ENABLE_TRANSCENDENTAL_MATH
         LE_OP_LBL(LE_OP_SQRT_F) case LE_OP_SQRT_F: {
             float a = le_pi_get_float_fast(img, inst->in_a);
             le_pi_set_float_fast(img, inst->out, le_fast_sqrt(a));
@@ -733,6 +742,21 @@ le_status_t le_exec_program(const le_instruction_t* instructions, uint16_t count
             le_pi_set_float_fast(img, inst->out, le_fast_pow(a, b));
             LE_STEP_OK;
         }
+#else
+        case LE_OP_SQRT_F:
+        case LE_OP_SIN_F:
+        case LE_OP_COS_F:
+        case LE_OP_TAN_F:
+        case LE_OP_ASIN_F:
+        case LE_OP_ACOS_F:
+        case LE_OP_ATAN_F:
+        case LE_OP_ATAN2_F:
+        case LE_OP_EXP_F:
+        case LE_OP_LOG_F:
+        case LE_OP_LOG10_F:
+        case LE_OP_POW_F:
+            return LE_ERR_UNKNOWN_OPCODE;
+#endif
         case LE_OP_RESERVED_5F:
             return LE_ERR_UNKNOWN_OPCODE;
         LE_OP_LBL(LE_OP_CMP_GT) case LE_OP_CMP_GT: {

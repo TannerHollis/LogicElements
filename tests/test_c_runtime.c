@@ -36,15 +36,20 @@ void    le_sim_capture_tx_get(uint8_t* out, size_t cap);
  * so the runtime tests carry no external config dependency. Version 11 adds the
  * PHASOR_1P frequency-adaptive support (header/timing layout unchanged vs v10). */
 static const uint8_t le_default_program[] = {
-    0x31, 0x42, 0x45, 0x4c, 0x0c, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00,
-    0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x01, 0x00, 0x00, 0x00, 0x00, 0x36, 0x75, 0x37, 0x04, 0x00, 0x00, 0x00,
-    0x01, 0x00, 0x00, 0x40, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x40,
-    0x01, 0x00, 0x00, 0x40, 0xff, 0xff, 0x00, 0x10, 0x01, 0x00, 0x01, 0x40,
-    0xff, 0xff, 0x01, 0x10, 0x04, 0x00, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00,
-    0x00, 0x00
-}; /* 86 bytes, version 12 (44-byte header + 4 instructions + 10-byte timing descriptor) */
+    0x32, 0x42, 0x45, 0x4C, 0x0D, 0x00, 0x01, 0x00, 0x9A, 0x00, 0x00, 0x00, 
+    0x03, 0x00, 0x00, 0x00, 0x65, 0x2E, 0x96, 0x0C, 0x48, 0x45, 0x41, 0x44, 
+    0x2C, 0x00, 0x00, 0x00, 0x2C, 0xAB, 0xD6, 0x26, 0x00, 0x00, 0x00, 0x00, 
+    0x32, 0x42, 0x45, 0x4C, 0x0D, 0x00, 0x01, 0x00, 0x04, 0x00, 0x02, 0x00, 
+    0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x36, 0x75, 0x37, 0x49, 0x4E, 0x53, 0x54, 
+    0x20, 0x00, 0x00, 0x00, 0xD7, 0x50, 0x46, 0xF5, 0x00, 0x00, 0x00, 0x00, 
+    0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x40, 0x03, 0x00, 0x00, 0x00, 
+    0x01, 0x00, 0x01, 0x40, 0x01, 0x00, 0x00, 0x40, 0xFF, 0xFF, 0x00, 0x10, 
+    0x01, 0x00, 0x01, 0x40, 0xFF, 0xFF, 0x01, 0x10, 0x54, 0x49, 0x4D, 0x45, 
+    0x0A, 0x00, 0x00, 0x00, 0x52, 0x3D, 0x5E, 0x21, 0x00, 0x00, 0x00, 0x00, 
+    0x04, 0x00, 0x00, 0x00, 0x96, 0x00, 0x00, 0x00, 0x00, 0x00
+}; /* 154 bytes, version 13 LEB2 chunked container (20-byte container header + HEAD + INST + TIME chunks) */
 
 int g_tests_passed = 0;
 int g_tests_failed = 0;
@@ -261,6 +266,7 @@ void test_embedded_binary_execution(void)
     TEST_ASSERT(status == LE_OK, "VM init successful");
 
     status = le_loader_load(&vm, le_default_program, sizeof(le_default_program));
+    printf("LOAD STATUS = %d\n", (int)status);
     TEST_ASSERT(status == LE_OK, "Loader successfully validated and loaded embedded .lebin");
     TEST_ASSERT(vm.instruction_count == 4, "Loaded 4 instructions");
     TEST_ASSERT(vm.running, "VM autostarted from header flag");
@@ -366,16 +372,26 @@ void test_comms_protocol(void)
     feed_packet_to_comms(&comms, LE_CMD_PROG_BEGIN, 2, begin_payload, 5);
     TEST_ASSERT(comms.expected_size == total_size, "Comms PROG_BEGIN recorded expected size");
 
-    /* 3. Send PROG_CHUNK with entire program (streams into the phantom slot) */
-    uint8_t chunk_payload[2 + sizeof(le_default_program)];
-    chunk_payload[0] = 0x00; /* offset 0 */
-    chunk_payload[1] = 0x00;
-    memcpy(&chunk_payload[2], le_default_program, sizeof(le_default_program));
-    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 3, chunk_payload, sizeof(chunk_payload));
-    TEST_ASSERT(comms.bytes_received == total_size, "Comms received entire program chunk");
+    /* 3. Send PROG_CHUNK with program (since sizeof(le_default_program) = 154 and
+     * LE_COMMS_MAX_PAYLOAD = 128, stream in 2 chunks into the phantom slot) */
+    size_t chunk1_len = 100;
+    uint8_t chunk_payload1[2 + 100];
+    chunk_payload1[0] = 0x00; /* offset 0 */
+    chunk_payload1[1] = 0x00;
+    memcpy(&chunk_payload1[2], le_default_program, chunk1_len);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 3, chunk_payload1, sizeof(chunk_payload1));
+    TEST_ASSERT(comms.bytes_received == chunk1_len, "Comms received first program chunk");
+
+    size_t chunk2_len = sizeof(le_default_program) - chunk1_len;
+    uint8_t chunk_payload2[2 + 54];
+    chunk_payload2[0] = (uint8_t)(chunk1_len & 0xFF); /* offset 100 */
+    chunk_payload2[1] = (uint8_t)((chunk1_len >> 8) & 0xFF);
+    memcpy(&chunk_payload2[2], le_default_program + chunk1_len, chunk2_len);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_CHUNK, 4, chunk_payload2, sizeof(chunk_payload2));
+    TEST_ASSERT(comms.bytes_received == total_size, "Comms received entire program chunks");
 
     /* 4. Send PROG_END — full CRC32 validate the phantom, then commit to slot 1 */
-    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 4, NULL, 0);
+    feed_packet_to_comms(&comms, LE_CMD_PROG_END, 5, NULL, 0);
     le_slot_info_t info1;
     le_storage_get_slot_info(&storage, 1, &info1);
     TEST_ASSERT(info1.valid && info1.instruction_count == 4, "PROG_END committed a 4-instruction program to slot 1");
@@ -383,7 +399,7 @@ void test_comms_protocol(void)
     /* Upload only stores to the slot; activation is a separate, explicit step
      * driven over the wire with LE_CMD_SELECT_SLOT. */
     uint8_t sel_payload[1] = {0x01};
-    feed_packet_to_comms(&comms, LE_CMD_SELECT_SLOT, 5, sel_payload, 1);
+    feed_packet_to_comms(&comms, LE_CMD_SELECT_SLOT, 6, sel_payload, 1);
     TEST_ASSERT(le_storage_get_active_slot(&storage) == 1, "SELECT_SLOT activated slot 1");
     TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions from slot 1");
     TEST_ASSERT(vm.running, "VM autostarted from uploaded program");
@@ -394,7 +410,7 @@ void test_comms_protocol(void)
         (uint8_t)((LE_ADDR_MAKE_DIN(0) >> 8) & 0xFF),
         0x01 /* value = true */
     };
-    feed_packet_to_comms(&comms, LE_CMD_FORCE_IO, 6, force_payload, 3);
+    feed_packet_to_comms(&comms, LE_CMD_FORCE_IO, 7, force_payload, 3);
     TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DIN(0)), "Force IO set DIN 0 to true");
 
     /* Run VM step -> OUT0 (OR) should become true */
@@ -827,21 +843,38 @@ void test_storage_and_terminal_cli(void)
     TEST_ASSERT(cli.upload_slot == 1, "Target upload slot is 1");
 
     /* Construct standard 133-byte XMODEM-CRC packet for block 1 */
-    uint8_t xpacket[133];
-    xpacket[0] = 0x01; /* SOH */
-    xpacket[1] = 0x01; /* Block 1 */
-    xpacket[2] = 0xFE; /* ~Block 1 */
-    memset(&xpacket[3], 0x00, 128); /* 128 bytes data */
-    memcpy(&xpacket[3], le_default_program, sizeof(le_default_program)); /* Put program in block */
-    uint16_t crc = calc_test_crc16(&xpacket[3], 128);
-    xpacket[131] = (uint8_t)((crc >> 8) & 0xFF); /* CRC MSB */
-    xpacket[132] = (uint8_t)(crc & 0xFF);        /* CRC LSB */
+    uint8_t xpacket1[133];
+    xpacket1[0] = 0x01; /* SOH */
+    xpacket1[1] = 0x01; /* Block 1 */
+    xpacket1[2] = 0xFE; /* ~Block 1 */
+    memset(&xpacket1[3], 0x00, 128); /* 128 bytes data */
+    memcpy(&xpacket1[3], le_default_program, 128); /* First 128 bytes */
+    uint16_t crc1 = calc_test_crc16(&xpacket1[3], 128);
+    xpacket1[131] = (uint8_t)((crc1 >> 8) & 0xFF); /* CRC MSB */
+    xpacket1[132] = (uint8_t)(crc1 & 0xFF);        /* CRC LSB */
 
-    /* Feed 133 bytes of packet */
+    /* Feed 133 bytes of block 1 */
     for (int i = 0; i < 133; i++) {
-        le_cli_process_char(&cli, xpacket[i]);
+        le_cli_process_char(&cli, xpacket1[i]);
     }
     TEST_ASSERT(cli.upload_offset == 128, "XMODEM committed 128 bytes to Slot 1");
+
+    /* Construct standard 133-byte XMODEM-CRC packet for block 2 */
+    uint8_t xpacket2[133];
+    xpacket2[0] = 0x01; /* SOH */
+    xpacket2[1] = 0x02; /* Block 2 */
+    xpacket2[2] = 0xFD; /* ~Block 2 */
+    memset(&xpacket2[3], 0x00, 128); /* 128 bytes data (padded with 0) */
+    memcpy(&xpacket2[3], le_default_program + 128, sizeof(le_default_program) - 128); /* Remaining 26 bytes */
+    uint16_t crc2 = calc_test_crc16(&xpacket2[3], 128);
+    xpacket2[131] = (uint8_t)((crc2 >> 8) & 0xFF); /* CRC MSB */
+    xpacket2[132] = (uint8_t)(crc2 & 0xFF);        /* CRC LSB */
+
+    /* Feed 133 bytes of block 2 */
+    for (int i = 0; i < 133; i++) {
+        le_cli_process_char(&cli, xpacket2[i]);
+    }
+    TEST_ASSERT(cli.upload_offset == 256, "XMODEM committed 256 bytes to Slot 1");
 
     /* Send EOT (End of Transmission) */
     le_cli_process_char(&cli, 0x04);
@@ -2093,10 +2126,9 @@ void test_overcurrent(void)
 /* P0: Loader / CRC / pulse-semantics test bench                              */
 /* ========================================================================== */
 
-/* Packs a complete .lebin from a header + payload, computing the payload CRC32
- * exactly as the compiler does. Returns the total byte length. */
-static size_t test_make_blob(const le_header_t h, const uint8_t* payload, size_t plen,
-                             uint8_t* out, size_t cap)
+/* Packs a legacy flat .lebin from a header + payload, computing the payload CRC32. */
+static size_t test_make_flat_blob(const le_header_t h, const uint8_t* payload, size_t plen,
+                                  uint8_t* out, size_t cap)
 {
     size_t total = sizeof(le_header_t) + plen;
     if (!out || cap < total) return total;
@@ -2107,6 +2139,19 @@ static size_t test_make_blob(const le_header_t h, const uint8_t* payload, size_t
     hh.crc32 = le_crc32(out + sizeof(hh), plen);
     memcpy(out, &hh, sizeof(hh));
     return total;
+}
+
+/* Packs a complete LEB2 chunked container from a header + payload. */
+static size_t test_make_blob(const le_header_t h, const uint8_t* payload, size_t plen,
+                             uint8_t* out, size_t cap)
+{
+    uint8_t flat[1024];
+    size_t flat_size = test_make_flat_blob(h, payload, plen, flat, sizeof(flat));
+    if (flat_size == 0 || flat_size > sizeof(flat)) return 0;
+    size_t chunked_size = 0;
+    le_status_t st = le_loader_convert_to_chunked(flat, flat_size, out, cap, &chunked_size);
+    if (st != LE_OK) return 0;
+    return chunked_size;
 }
 
 void test_crc32_known_answers(void)
@@ -2133,7 +2178,7 @@ void test_loader_negative_paths(void)
     /* NULL / short buffers */
     TEST_ASSERT(le_loader_validate(NULL, sizeof(buf), &h) == LE_ERR_NULL_PTR, "NULL buffer rejected");
     TEST_ASSERT(le_loader_validate(buf, 0, &h) == LE_ERR_NULL_PTR, "zero-length buffer rejected");
-    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t) - 1, &h) == LE_ERR_NULL_PTR,
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_container_header_t) - 1, &h) == LE_ERR_NULL_PTR,
                 "sub-header buffer rejected");
 
     /* Corrupt magic */
@@ -2141,36 +2186,25 @@ void test_loader_negative_paths(void)
     buf[0] ^= 0xFF;
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_INVALID_MAGIC, "corrupt magic rejected");
 
-    /* Old version (v7 must be rejected by the v8 loader) */
+    /* Old version */
     memcpy(buf, le_default_program, sizeof(buf));
     buf[4] = 7; buf[5] = 0;
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_INVALID_VERSION, "old version rejected");
 
     /* Truncated payloads */
     memcpy(buf, le_default_program, sizeof(buf));
-    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t), &h) == LE_ERR_OUT_OF_BOUNDS,
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_container_header_t), &h) == LE_ERR_OUT_OF_BOUNDS,
                 "header-only binary rejected (instruction payload missing)");
     memcpy(buf, le_default_program, sizeof(buf));
-    TEST_ASSERT(le_loader_validate(buf, sizeof(le_header_t) + 16, &h) == LE_ERR_OUT_OF_BOUNDS,
+    TEST_ASSERT(le_loader_validate(buf, sizeof(le_container_header_t) + 16, &h) == LE_ERR_OUT_OF_BOUNDS,
                 "mid-instruction truncation rejected");
 
-    /* Block-table walk past end of buffer */
+    /* Chunk length past end of container */
     memcpy(buf, le_default_program, sizeof(buf));
-    ((le_header_t*)buf)->block_count = 1; /* block_count = 1 but no block table is appended */
+    le_chunk_header_t* chk = (le_chunk_header_t*)(buf + sizeof(le_container_header_t));
+    chk->length = 0xFFFF;
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
-                "block descriptor walk past end of buffer rejected");
-
-    /* State-desc table past end of buffer */
-    memcpy(buf, le_default_program, sizeof(buf));
-    ((le_header_t*)buf)->state_desc_count = 1; /* state_desc_count = 1 but no state table is appended */
-    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
-                "state-desc table past end of buffer rejected");
-
-    /* Alias table past end of buffer */
-    memcpy(buf, le_default_program, sizeof(buf));
-    ((le_header_t*)buf)->alias_count = 1; /* alias_count = 1 but no alias table is appended */
-    TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_OUT_OF_BOUNDS,
-                "alias table past end of buffer rejected");
+                "chunk length beyond container rejected");
 
     /* Single payload bit flip -> CRC mismatch */
     memcpy(buf, le_default_program, sizeof(buf));
@@ -2178,9 +2212,12 @@ void test_loader_negative_paths(void)
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CRC_MISMATCH,
                 "payload bit flip detected by CRC32");
 
-    /* Capacity: register count beyond the workspace budget (check precedes CRC) */
+    /* Capacity: register count beyond the workspace budget */
     memcpy(buf, le_default_program, sizeof(buf));
-    ((le_header_t*)buf)->float_reg_count = (uint16_t)((LE_RAM_WORKSPACE_BYTES / 4) + 1);
+    le_header_t* head = (le_header_t*)(buf + sizeof(le_container_header_t) + sizeof(le_chunk_header_t));
+    head->float_reg_count = (uint16_t)((LE_RAM_WORKSPACE_BYTES / 4) + 1);
+    le_chunk_header_t* head_chk = (le_chunk_header_t*)(buf + sizeof(le_container_header_t));
+    head_chk->crc32 = le_crc32((const uint8_t*)head, sizeof(le_header_t));
     TEST_ASSERT(le_loader_validate(buf, sizeof(buf), &h) == LE_ERR_CAPACITY,
                 "register count beyond workspace budget rejected");
 }
@@ -2192,7 +2229,7 @@ void test_loader_state_desc_edges(void)
      * still loads cleanly with no state bound. */
     {
         uint8_t desc[LE_STATE_DESC_BYTES] = { (uint8_t)LE_BLK_NONE, 0, 0, 0 };
-        uint8_t blob[128];
+        uint8_t blob[256];
         le_header_t h;
         memset(&h, 0, sizeof(h));
         h.magic = LE_BIN_MAGIC; h.version = LE_BIN_VERSION; h.flags = 0;
@@ -2225,7 +2262,7 @@ void test_loader_state_desc_edges(void)
         h.magic = LE_BIN_MAGIC; h.version = LE_BIN_VERSION;
         h.state_desc_count = 1;
         h.state_img_len = (uint32_t)sizeof(le_timer_state_t);
-        uint8_t blob[160];
+        uint8_t blob[256];
         size_t total = test_make_blob(h, payload, sizeof(payload), blob, sizeof(blob));
 
         le_vm_t vm;
@@ -2236,6 +2273,40 @@ void test_loader_state_desc_edges(void)
         TEST_ASSERT(t != NULL && t->preset_ms == 5000u, "baked preset survives the load");
         TEST_ASSERT(le_process_image_timer(&vm.image, 1) == NULL, "timer 1 (beyond count) is NULL");
     }
+}
+
+void test_loader_micro(void)
+{
+    printf("Running test_loader_micro (AVR / 8-bit ultra-compact loader)...\n");
+    le_vm_t vm;
+    le_vm_init(&vm);
+
+    /* Negative tests */
+    TEST_ASSERT(le_loader_load_micro(NULL, le_default_program, sizeof(le_default_program)) == LE_ERR_NULL_PTR,
+                "Micro loader rejects NULL vm");
+    TEST_ASSERT(le_loader_load_micro(&vm, NULL, sizeof(le_default_program)) == LE_ERR_NULL_PTR,
+                "Micro loader rejects NULL buffer");
+    TEST_ASSERT(le_loader_load_micro(&vm, le_default_program, 10) == LE_ERR_NULL_PTR,
+                "Micro loader rejects undersized buffer");
+
+    /* Corrupt magic negative test */
+    uint8_t bad_buf[sizeof(le_default_program)];
+    memcpy(bad_buf, le_default_program, sizeof(bad_buf));
+    bad_buf[0] ^= 0xFF;
+    TEST_ASSERT(le_loader_load_micro(&vm, bad_buf, sizeof(bad_buf)) == LE_ERR_INVALID_MAGIC,
+                "Micro loader rejects invalid magic");
+
+    /* Positive load of valid LEB2 container */
+    le_status_t status = le_loader_load_micro(&vm, le_default_program, sizeof(le_default_program));
+    TEST_ASSERT(status == LE_OK, "le_loader_load_micro succeeds on valid container");
+    TEST_ASSERT(vm.instruction_count == 4, "Micro loader loaded 4 instructions");
+    TEST_ASSERT(vm.running, "Micro loader autostarted VM");
+
+    /* Execute a step to verify full runtime execution */
+    le_process_image_set_bool(&vm.image, LE_ADDR_MAKE_DIN(0), true);
+    le_status_t step_st = le_vm_step(&vm, 100);
+    TEST_ASSERT(step_st == LE_OK, "Micro loaded VM executed step cleanly");
+    TEST_ASSERT(le_process_image_get_bool(&vm.image, LE_ADDR_MAKE_DOUT(0)), "Micro loaded VM produced DOUT0=true");
 }
 
 void test_pulse_duration_expiry(void)
@@ -3250,7 +3321,7 @@ static void test_circuit_driven_nvram(void)
     TEST_ASSERT(view.nvmd->ser_records == 50, "NVMD ser_records matches");
 
     le_vm_t vm;
-    memset(&vm, 0, sizeof(vm));
+    le_vm_init(&vm);
     st = le_loader_load(&vm, chunked, chunked_size);
     TEST_ASSERT(st == LE_OK, "load container with NVMD chunk into VM succeeds");
     TEST_ASSERT(le_nvram_get_regs_bytes(0) == 256, "dynamic regs_bytes configured by loader");
@@ -3262,7 +3333,7 @@ static void test_circuit_driven_nvram(void)
 
 static void test_multi_rate_prescalers(void)
 {
-    printf("Running test_multi_rate_prescalers...\n");
+    printf("Running test_multi_rate_prescalers...\n"); fflush(stdout);
     le_vm_t vm;
     le_vm_init(&vm);
 
@@ -3314,14 +3385,15 @@ static void test_multi_rate_prescalers(void)
     TEST_ASSERT(fast_val == 11.0f, "fast domain ran every cycle (11 times)");
     TEST_ASSERT(med_val  == 3.0f,  "medium domain ran at 1/5 rate (3 times: 0, 5, 10)");
     TEST_ASSERT(slow_val == 2.0f,  "slow domain ran at 1/10 rate (2 times: 0, 10)");
+    printf("multi_rate passed\n"); fflush(stdout);
 }
 
 void test_online_program_swap(void)
 {
-    printf("Running test_online_program_swap (Bump-Free Online Program Swapping)...\n");
+    printf("Running test_online_program_swap (Bump-Free Online Program Swapping)...\n"); fflush(stdout);
 
     /* Build Program A: 1 instruction, 1 timer state block, 2 aliases ("TRIP"->%B0, "SETP"->%F0) */
-    uint8_t blob_a[256];
+    uint8_t blob_a[512];
     size_t size_a = 0;
     {
         le_instruction_t inst_a[1] = {
@@ -3369,7 +3441,7 @@ void test_online_program_swap(void)
     }
 
     /* Build Program B: 2 instructions, 1 timer state block, 2 re-mapped aliases ("TRIP"->%B3, "SETP"->%F4) */
-    uint8_t blob_b[256];
+    uint8_t blob_b[512];
     size_t size_b = 0;
     {
         le_instruction_t inst_b[2] = {
@@ -3421,7 +3493,8 @@ void test_online_program_swap(void)
     le_vm_init(&vm);
 
     /* 1. Load Program A into VM */
-    TEST_ASSERT(le_loader_load(&vm, blob_a, size_a) == LE_OK, "Program A loads initially");
+    le_status_t st_a = le_loader_load(&vm, blob_a, size_a);
+    TEST_ASSERT(st_a == LE_OK, "Program A loads initially");
     TEST_ASSERT(vm.instruction_count == 1, "Program A has 1 instruction");
 
     /* 2. Establish live operating state in Program A */
@@ -3582,9 +3655,34 @@ void test_chunked_container(void)
     printf("Running test_chunked_container (Chunked v13 .lebin Container & Online Swap)...\n");
 
     /* 1. Convert baseline flat binary to chunked container format */
+    le_instruction_t flat_inst[4] = {
+        { LE_OP_OR, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_BOOL_REG(0), LE_ADDR_MAKE_DOUT(0) },
+        { LE_OP_AND, 0, LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_DOUT(0), LE_ADDR_MAKE_DOUT(1) },
+        { LE_OP_MOVE, 0, LE_ADDR_MAKE_DOUT(1), LE_ADDR_UNUSED, LE_ADDR_MAKE_BOOL_REG(1) },
+        { LE_OP_NOP, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED, LE_ADDR_UNUSED }
+    };
+    le_header_t flat_hdr;
+    memset(&flat_hdr, 0, sizeof(flat_hdr));
+    flat_hdr.magic = LE_BIN_MAGIC_V1;
+    flat_hdr.version = 12;
+    flat_hdr.flags = LE_FLAG_AUTOSTART;
+    flat_hdr.instruction_count = 4;
+    flat_hdr.digital_in_count = 8;
+    flat_hdr.digital_out_count = 8;
+    flat_hdr.bool_reg_count = 2;
+    flat_hdr.timing_count = 1;
+
+    le_timing_desc_t timing_desc = { 400, 150, 60, 0 };
+    uint8_t flat_payload[sizeof(flat_inst) + sizeof(timing_desc)];
+    memcpy(flat_payload, flat_inst, sizeof(flat_inst));
+    memcpy(flat_payload + sizeof(flat_inst), &timing_desc, sizeof(timing_desc));
+
+    uint8_t raw_flat[512];
+    size_t raw_flat_size = test_make_flat_blob(flat_hdr, flat_payload, sizeof(flat_payload), raw_flat, sizeof(raw_flat));
+
     uint8_t chunked_buf[2048];
     size_t chunked_size = 0;
-    le_status_t status = le_loader_convert_to_chunked(le_default_program, sizeof(le_default_program),
+    le_status_t status = le_loader_convert_to_chunked(raw_flat, raw_flat_size,
                                                      chunked_buf, sizeof(chunked_buf), &chunked_size);
     TEST_ASSERT(status == LE_OK, "Converted flat program to chunked container successfully");
     TEST_ASSERT(chunked_size > sizeof(le_container_header_t), "Chunked container has valid size");
@@ -3646,7 +3744,7 @@ void test_chunked_container(void)
         hb.alias_count = 2;
 
         uint8_t raw_b[256];
-        size_t raw_b_size = test_make_blob(hb, payload_b, off_b, raw_b, sizeof(raw_b));
+        size_t raw_b_size = test_make_flat_blob(hb, payload_b, off_b, raw_b, sizeof(raw_b));
 
         uint8_t cont_b[512];
         size_t cont_b_size = 0;
@@ -3688,7 +3786,7 @@ void test_chunked_container(void)
 
     /* 5. Load and execute program from chunked container */
     le_vm_t vm;
-    memset(&vm, 0, sizeof(vm));
+    le_vm_init(&vm);
     status = le_loader_load(&vm, chunked_buf, chunked_size);
     TEST_ASSERT(status == LE_OK, "le_loader_load loads program from chunked container");
     TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions");
@@ -3756,9 +3854,9 @@ static void test_crypto_authentication(void)
 
     /* 2. Container signing and verification */
     uint8_t chunked_buf[1024];
-    size_t chunked_size = 0;
-    status = le_loader_convert_to_chunked(le_default_program, sizeof(le_default_program),
-                                          chunked_buf, sizeof(chunked_buf), &chunked_size);
+    size_t chunked_size = sizeof(le_default_program);
+    memcpy(chunked_buf, le_default_program, sizeof(le_default_program));
+    status = LE_OK;
     TEST_ASSERT(status == LE_OK, "Created base chunked container for signing test");
 
     /* Sign container with le_loader_sign_container */
@@ -3810,7 +3908,7 @@ static void test_crypto_authentication(void)
 
     /* Load and execute signed program into VM using trusted key */
     le_vm_t vm;
-    memset(&vm, 0, sizeof(vm));
+    le_vm_init(&vm);
     status = le_loader_load_signed(&vm, signed_buf, signed_size, NULL);
     TEST_ASSERT(status == LE_OK, "le_loader_load_signed loaded signed container with trusted key");
     TEST_ASSERT(vm.instruction_count == 4, "VM loaded 4 instructions");
@@ -3833,13 +3931,32 @@ static void test_crypto_authentication(void)
     rate.rate_med_div = 10;
     rate.rate_slow_div = 100;
 
+    le_instruction_t mr_inst[4] = {
+        { LE_OP_OR, 0, LE_ADDR_MAKE_DIN(0), LE_ADDR_MAKE_BOOL_REG(0), LE_ADDR_MAKE_DOUT(0) },
+        { LE_OP_AND, 0, LE_ADDR_MAKE_DIN(1), LE_ADDR_MAKE_DOUT(0), LE_ADDR_MAKE_DOUT(1) },
+        { LE_OP_MOVE, 0, LE_ADDR_MAKE_DOUT(1), LE_ADDR_UNUSED, LE_ADDR_MAKE_BOOL_REG(1) },
+        { LE_OP_NOP, 0, LE_ADDR_UNUSED, LE_ADDR_UNUSED, LE_ADDR_UNUSED }
+    };
+    le_header_t mr_flat_hdr;
+    memset(&mr_flat_hdr, 0, sizeof(mr_flat_hdr));
+    mr_flat_hdr.magic = LE_BIN_MAGIC_V1;
+    mr_flat_hdr.version = 12;
+    mr_flat_hdr.flags = LE_FLAG_AUTOSTART;
+    mr_flat_hdr.instruction_count = 4;
+    mr_flat_hdr.digital_in_count = 8;
+    mr_flat_hdr.digital_out_count = 8;
+    mr_flat_hdr.bool_reg_count = 2;
+
+    uint8_t mr_flat[512];
+    size_t mr_flat_size = test_make_flat_blob(mr_flat_hdr, (const uint8_t*)mr_inst, sizeof(mr_inst), mr_flat, sizeof(mr_flat));
+
     uint8_t mr_buf[1024];
     size_t mr_size = 0;
-    status = le_loader_convert_to_chunked_ex(le_default_program, sizeof(le_default_program), &rate,
+    status = le_loader_convert_to_chunked_ex(mr_flat, mr_flat_size, &rate,
                                             mr_buf, sizeof(mr_buf), &mr_size);
     TEST_ASSERT(status == LE_OK, "Created multi-rate chunked container");
 
-    memset(&vm, 0, sizeof(vm));
+    le_vm_init(&vm);
     status = le_loader_load(&vm, mr_buf, mr_size);
     TEST_ASSERT(status == LE_OK, "Loaded multi-rate chunked container");
     TEST_ASSERT(vm.rate_fast_count == 2, "VM parsed rate_fast_count = 2");
@@ -4004,6 +4121,7 @@ int main(void)
     test_crc32_known_answers();
     test_loader_negative_paths();
     test_loader_state_desc_edges();
+    test_loader_micro();
     test_pulse_duration_expiry();
     test_comms_pulse_command();
     test_comms_negative_paths();

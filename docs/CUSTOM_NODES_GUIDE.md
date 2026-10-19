@@ -543,8 +543,8 @@ Example disassembly listing:
 ============================================================
  LOGICELEMENTS BINARY DISASSEMBLY (.lebin)
 ============================================================
-Magic:               0x4C454231 ('LEB1')
-Version:             12
+Magic:               0x4C454232 ('LEB2')
+Version:             13
 Flags:               0x0001 (Autostart: True)
 Instruction Count:   1
 ------------------------------------------------------------
