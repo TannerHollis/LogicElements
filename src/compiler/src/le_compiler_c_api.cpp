@@ -1,11 +1,55 @@
+/**
+ * @file le_compiler_c_api.cpp
+ * @brief Implementation of the public C API bridge for the LogicElements compiler.
+ *
+ * Provides a clean C ABI boundary around internal C++ compiler classes (`CompilerCore`,
+ * `disassemble_binary`). Guarantees that C++ exceptions never leak across the C linkage
+ * boundary into external callers.
+ */
+
 #include "le_compiler.h"
 #include "le_compiler_core.h"
 #include "le_disasm_core.h"
 #include "le_loader.h"
 #include "le_crypto.h"
+
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
+
+namespace {
+
+/**
+ * @brief Helper that allocates a null-terminated heap copy of a string safely.
+ * @param[in] s String content to duplicate.
+ * @return Heap-allocated char pointer, or nullptr on allocation failure.
+ */
+char* duplicate_string(const std::string& s) noexcept {
+    char* buf = static_cast<char*>(std::malloc(s.size() + 1));
+    if (buf) {
+        std::memcpy(buf, s.data(), s.size());
+        buf[s.size()] = '\0';
+    }
+    return buf;
+}
+
+/**
+ * @brief Helper that allocates a null-terminated heap copy of a C-string safely.
+ * @param[in] s Null-terminated C string.
+ * @return Heap-allocated char pointer, or nullptr on allocation failure.
+ */
+char* duplicate_cstring(const char* s) noexcept {
+    if (!s) return nullptr;
+    size_t len = std::strlen(s);
+    char* buf = static_cast<char*>(std::malloc(len + 1));
+    if (buf) {
+        std::memcpy(buf, s, len + 1);
+    }
+    return buf;
+}
+
+} // namespace
 
 extern "C" {
 
@@ -15,23 +59,34 @@ LE_COMPILER_API int le_compile_json_ex(
     const le_compiler_options_t* options,
     le_compile_result_t* out_result)
 {
-    if (!out_result) return -1;
+    if (!out_result) {
+        return -1;
+    }
+    std::memset(out_result, 0, sizeof(le_compile_result_t));
+
     if (!circuit_json) {
-        std::memset(out_result, 0, sizeof(le_compile_result_t));
         out_result->success = 0;
-        const char* err = "circuit_json parameter is null";
-        out_result->error_message = (char*)std::malloc(std::strlen(err) + 1);
-        std::strcpy(out_result->error_message, err);
+        out_result->error_message = duplicate_cstring("circuit_json parameter is null");
         return -1;
     }
 
-    std::string c_str = circuit_json;
-    std::string b_str = board_profile_json ? board_profile_json : "";
+    try {
+        std::string c_str = circuit_json;
+        std::string b_str = board_profile_json ? board_profile_json : "";
+        le_compiler_options_t opts = options ? *options : le_compiler_options_init_default();
 
-    le_compiler_options_t opts = options ? *options : le_compiler_options_init_default();
-
-    LogicElements::CompilerCore compiler;
-    return compiler.compile_ex(c_str, b_str, opts, out_result);
+        LogicElements::CompilerCore compiler;
+        return compiler.compile_ex(c_str, b_str, opts, out_result);
+    } catch (const std::exception& e) {
+        out_result->success = 0;
+        std::string err = std::string("Unhandled compiler exception: ") + e.what();
+        out_result->error_message = duplicate_string(err);
+        return 1;
+    } catch (...) {
+        out_result->success = 0;
+        out_result->error_message = duplicate_cstring("Unknown critical exception during compilation");
+        return 1;
+    }
 }
 
 LE_COMPILER_API int le_compile_json(
@@ -59,24 +114,26 @@ LE_COMPILER_API int le_disassemble_bin(
 
     if (!bin_data || bin_len == 0) {
         if (out_error_msg) {
-            const char* err = "Binary data is null or empty";
-            *out_error_msg = (char*)std::malloc(std::strlen(err) + 1);
-            std::strcpy(*out_error_msg, err);
+            *out_error_msg = duplicate_cstring("Binary data is null or empty");
         }
         return -1;
     }
 
     try {
         std::string board = board_profile_json ? board_profile_json : "";
-        std::string dis = LogicElements::disassemble_binary(bin_data, bin_len, user_bool_count, user_float_count, user_int_count, board);
-        *out_disassembly = (char*)std::malloc(dis.size() + 1);
-        std::strcpy(*out_disassembly, dis.c_str());
-        return 0;
+        std::string dis = LogicElements::disassemble_binary(
+            bin_data, bin_len, user_bool_count, user_float_count, user_int_count, board);
+        *out_disassembly = duplicate_string(dis);
+        return (*out_disassembly != nullptr) ? 0 : -1;
     } catch (const std::exception& e) {
         if (out_error_msg) {
             std::string err = std::string("Disassembly error: ") + e.what();
-            *out_error_msg = (char*)std::malloc(err.size() + 1);
-            std::strcpy(*out_error_msg, err.c_str());
+            *out_error_msg = duplicate_string(err);
+        }
+        return -1;
+    } catch (...) {
+        if (out_error_msg) {
+            *out_error_msg = duplicate_cstring("Unknown critical exception during disassembly");
         }
         return -1;
     }
@@ -93,12 +150,15 @@ LE_COMPILER_API int le_export_c_header(
 
     if (!bin_data || bin_len == 0) return -1;
 
-    std::string name = (array_name && *array_name) ? array_name : "le_default_program";
-    std::string hdr = LogicElements::CompilerCore::export_c_header(bin_data, bin_len, name);
+    try {
+        std::string name = (array_name && *array_name) ? array_name : "le_default_program";
+        std::string hdr = LogicElements::CompilerCore::export_c_header(bin_data, bin_len, name);
 
-    *out_c_header = (char*)std::malloc(hdr.size() + 1);
-    std::strcpy(*out_c_header, hdr.c_str());
-    return 0;
+        *out_c_header = duplicate_string(hdr);
+        return (*out_c_header != nullptr) ? 0 : -1;
+    } catch (...) {
+        return -1;
+    }
 }
 
 LE_COMPILER_API int le_compiler_sign_container(
@@ -109,7 +169,8 @@ LE_COMPILER_API int le_compiler_sign_container(
     size_t max_out_size,
     size_t* out_size)
 {
-    return (int)le_loader_sign_container(in_container, in_size, secret_key, out_container, max_out_size, out_size);
+    return static_cast<int>(le_loader_sign_container(
+        in_container, in_size, secret_key, out_container, max_out_size, out_size));
 }
 
 LE_COMPILER_API int le_compiler_keygen(
@@ -117,7 +178,7 @@ LE_COMPILER_API int le_compiler_keygen(
     uint8_t out_sk[64],
     const uint8_t seed[32])
 {
-    return (int)le_crypto_ed25519_keypair_from_seed(out_pk, out_sk, seed);
+    return static_cast<int>(le_crypto_ed25519_keypair_from_seed(out_pk, out_sk, seed));
 }
 
 LE_COMPILER_API void le_compile_result_free(le_compile_result_t* result)

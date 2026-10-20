@@ -56,6 +56,7 @@ if(MSVC)
 endif()
 
 set(LE_COMPILER_SOURCES
+    src/compiler/src/le_element_registry.cpp
     src/compiler/src/le_code_block.cpp
     src/compiler/src/le_optimizer.cpp
     src/compiler/src/le_compiler_core.cpp

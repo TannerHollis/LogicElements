@@ -23,6 +23,64 @@ A circuit net connects an element port to a consumer port:
 
 ---
 
+## Table of contents
+
+- [How element properties reach the runtime](#how-element-properties-reach-the-runtime)
+- [I/O and storage](#io-and-storage)
+  - [`DIGITALINPUT`](#digitalinput)
+  - [`DIGITALOUTPUT`](#digitaloutput)
+  - [`BOOLREGISTER`](#boolregister)
+  - [`FLOATREGISTER`](#floatregister)
+  - [`INTREGISTER`](#intregister)
+  - [`ANALOGINPUT`](#analoginput)
+  - [`ANALOGOUTPUT`](#analogoutput)
+  - [`CONSTANT`](#constant)
+- [Logic gates](#logic-gates)
+  - [`AND`](#and)
+  - [`OR`](#or)
+  - [`NOT`](#not)
+  - [`XOR`](#xor)
+  - [`NAND` / `NOR`](#nand--nor)
+  - [`MUX` (variable-arity block)](#mux-variable-arity-block)
+- [Edge detection and latches](#edge-detection-and-latches)
+  - [`RTRIG` / `FTRIG`](#rtrig--ftrig)
+  - [`SR` / `RS` / `LATCH`](#sr--rs--latch)
+- [Timers](#timers)
+  - [`TON`](#ton)
+  - [`TOF`](#tof)
+  - [`TP`](#tp)
+- [Counters](#counters)
+  - [`CTU`](#ctu)
+  - [`CTD`](#ctd)
+  - [`CTUD`](#ctud)
+- [Float arithmetic](#float-arithmetic)
+  - [`CLAMP` (variable-arity block)](#clamp-variable-arity-block)
+  - [Complex arithmetic (`T_CMPLX`)](#complex-arithmetic-t_cmplx)
+  - [Conversions (complex register <-> rect/polar floats)](#conversions-complex-register---rectpolar-floats)
+- [Comparisons](#comparisons)
+- [Control, protection & phasor conversions](#control-protection--phasor-conversions)
+  - [`PID`](#pid)
+  - [`OVERCURRENT` / `OVERCURRENT_51`](#overcurrent--overcurrent_51)
+  - [`PHASOR_1P` (variable-arity block)](#phasor_1p-variable-arity-block)
+  - [`PHASOR_3P` (variable-arity block)](#phasor_3p-variable-arity-block)
+  - [`FREQ_EST` (variable-arity block, ANSI 81)](#freq_est-variable-arity-block-ansi-81)
+  - [`RECT2POLAR` (variable-arity block)](#rect2polar-variable-arity-block)
+  - [`POLAR2RECT` (variable-arity block)](#polar2rect-variable-arity-block)
+  - [`PHASOR_SHIFT` (variable-arity block)](#phasor_shift-variable-arity-block)
+  - [`SYM_COMP`](#sym_comp)
+  - [`DIFF` / `DIFF_87` (variable-arity block, dynamic N-input, dual-slope)](#diff--diff_87-variable-arity-block-dynamic-n-input-dual-slope)
+  - [`PHASE_COMP` (variable-arity block, 3-in/3-out, ANSI 87T)](#phase_comp-variable-arity-block-3-in3-out-ansi-87t)
+  - [`DIST_21` - Mho distance relay with prefault-voltage memory](#dist_21---mho-distance-relay-with-prefault-voltage-memory)
+- [Serial bus](#serial-bus)
+  - [`I2C` / `SPI`](#i2c--spi)
+- [DSP & filters](#dsp--filters)
+- [Tags & board extensibility](#tags--board-extensibility)
+  - [`TAG`](#tag)
+  - [`LE_CUSTOM` (variable-arity block)](#le_custom-variable-arity-block)
+  - [`CODE_BLOCK` (compile-time synthesized algorithm)](#code_block-compile-time-synthesized-algorithm)
+
+---
+
 ## How element properties reach the runtime
 
 A "complex" element has **tuning properties** (e.g. `PID` `kp`/`ki`/`kd`,
@@ -701,7 +759,7 @@ compensation matrix index k.
 [0000]  PHASE_COMP     BLK[0]       fn:0x0E      -> 3->3 [CMPLX[0] CMPLX[1] CMPLX[2] | T_CMPLX[0] T_CMPLX[1] T_CMPLX[2]]
 ```
 
-### `DIST_21` — Mho distance relay with prefault-voltage memory
+### `DIST_21` - Mho distance relay with prefault-voltage memory
 Mho-circle distance relay (ANSI 21). Takes two **complex phasor** inputs
 (voltage `v`, current `i`) plus a boolean `offset_on`, and trips when the
 measured apparent impedance `Z = V / I` lies inside the mho circle (center at
@@ -813,3 +871,29 @@ A board-defined custom node. Emitted as a **block** with a function id
 ```
 [0000]  BLOCK          BLK[0]       fn:0x81      -> 0->1 [- | T_BOOL[0]]
 ```
+
+### `CODE_BLOCK` (compile-time synthesized algorithm)
+A high-level algorithmic code block written in a deterministic C99 subset. The compiler lowers `CODE_BLOCK` elements at compile time into cycle-bounded primitive hardware elements (`MUX`, `CLAMP`, logic gates, and registers) and synthesized nets. It incurs **zero VM opcode overhead** and maintains strict time predictability.
+
+- **Inputs**: Heterogeneous named input ports declared in the element JSON.
+- **Outputs**: Heterogeneous named output ports declared in the element JSON.
+- **Properties**:
+  - `code` (string): Textual algorithm in embedded C syntax.
+
+#### JSON schema example
+
+```json
+{
+  "name": "CB1",
+  "type": "CODE_BLOCK",
+  "code": "if (in_val > 10.0) { out_val = in_val * 0.5; } else { out_val = 0.0; }",
+  "inputs": [
+    { "name": "in_val", "type": "float" }
+  ],
+  "outputs": [
+    { "name": "out_val", "type": "float" }
+  ]
+}
+```
+
+For the complete formal grammar (EBNF), type system, `static` state registers, and hardware lowering rules, see [Structured code blocks in the Compiler Guide](COMPILER_GUIDE.md#structured-code-blocks-code_block-synthesis-pass).

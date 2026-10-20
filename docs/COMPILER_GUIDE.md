@@ -4,6 +4,69 @@ This document describes the architecture, optimization pipeline, application pro
 
 ---
 
+## Table of contents
+
+- [Architectural overview](#architectural-overview)
+  - [Compilation pipeline](#compilation-pipeline)
+- [Optimization levels](#optimization-levels)
+- [Multi-pass optimizer details](#multi-pass-optimizer-details)
+  - [1. Constant folding and algebraic simplification](#1-constant-folding-and-algebraic-simplification)
+  - [2. Double negation elimination](#2-double-negation-elimination)
+  - [3. Hardware inversion folding](#3-hardware-inversion-folding)
+  - [4. Common subexpression elimination (CSE)](#4-common-subexpression-elimination-cse)
+  - [5. Direct destination coalescing (DDC)](#5-direct-destination-coalescing-ddc)
+  - [6. Dead code elimination (DCE)](#6-dead-code-elimination-dce)
+- [Canonical Circuit JSON specification](#canonical-circuit-json-specification)
+  - [Supported element types](#supported-element-types)
+- [Variables in element properties](#variables-in-element-properties)
+  - [Declaration](#declaration)
+  - [Usage in properties](#usage-in-properties)
+  - [Supported expression grammar](#supported-expression-grammar)
+  - [Resolution & errors](#resolution--errors)
+- [Target Board Profile specification (`.leconfig`)](#target-board-profile-specification-leconfig)
+- [C API reference](#c-api-reference)
+  - [`le_compile_json_ex`](#le_compile_json_ex)
+  - [`le_compile_result_t` structure](#le_compile_result_t-structure)
+  - [Memory management](#memory-management)
+- [Standalone CLI tool (`le_compile`)](#standalone-cli-tool-le_compile)
+  - [Syntax](#syntax)
+  - [Options](#options)
+- [Binary bytecode specification (`.lebin`)](#binary-bytecode-specification-lebin)
+  - [Container Header (20 Bytes)](#container-header-20-bytes)
+  - [Chunk Descriptor Header (16 Bytes)](#chunk-descriptor-header-16-bytes)
+  - [HEAD Chunk Payload: Circuit Header (`le_header_t`, 44 Bytes)](#head-chunk-payload-circuit-header-le_header_t-44-bytes)
+  - [Binary Instruction (8 Bytes)](#binary-instruction-8-bytes)
+  - [Virtual operand encoding vs. physical MCU RAM layout](#virtual-operand-encoding-vs-physical-mcu-ram-layout)
+  - [Timing descriptor (10 bytes, `timing_count == 1`)](#timing-descriptor-10-bytes-timing_count--1)
+  - [Multi-rate execution descriptor (`RATE` Chunk Payload, 8 Bytes)](#multi-rate-execution-descriptor-rate-chunk-payload-8-bytes)
+  - [Non-volatile memory requirements descriptor (`NVMD` Chunk Payload)](#non-volatile-memory-requirements-descriptor-nvmd-chunk-payload)
+  - [Cryptographic authentication descriptor (`SIGN` Chunk Payload, 64 Bytes)](#cryptographic-authentication-descriptor-sign-chunk-payload-64-bytes)
+  - [Structured code blocks (`CODE_BLOCK` synthesis pass)](#structured-code-blocks-code_block-synthesis-pass)
+    - [Architecture and lowering pipeline](#architecture-and-lowering-pipeline)
+    - [JSON element schema](#json-element-schema)
+    - [Embedded C language grammar (EBNF)](#embedded-c-language-grammar-ebnf)
+    - [Type system and built-in functions](#type-system-and-built-in-functions)
+    - [State registers and persistent variables (`static`)](#state-registers-and-persistent-variables-static)
+    - [Compile-time loop unrolling and conditionals](#compile-time-loop-unrolling-and-conditionals)
+    - [Inferred latch diagnostics](#inferred-latch-diagnostics)
+  - [Fixed-rate scan contract](#fixed-rate-scan-contract)
+- [Deterministic timing analysis](#deterministic-timing-analysis)
+- [Register aliases](#register-aliases)
+  - [Declaring aliases in a circuit](#declaring-aliases-in-a-circuit)
+  - [Binary storage](#binary-storage)
+  - [Board aliases do not grow the binary](#board-aliases-do-not-grow-the-binary)
+  - [Runtime API](#runtime-api)
+  - [Terminal command](#terminal-command)
+- [Digital signal processing (DSP) and real-time filtering](#digital-signal-processing-dsp-and-real-time-filtering)
+  - [Zero-heap static memory architecture](#zero-heap-static-memory-architecture)
+  - [DSP opcode specification](#dsp-opcode-specification)
+  - [Numerical stability safeguards](#numerical-stability-safeguards)
+  - [Circuit JSON schema for DSP elements](#circuit-json-schema-for-dsp-elements)
+  - [Board capability and workspace validation](#board-capability-and-workspace-validation)
+- [Related guides](#related-guides)
+
+---
+
 ## Architectural overview
 
 The LogicElements compiler translates high-level graphical circuit schematics or JSON circuit representations into compact, deterministic bytecode (`.lebin`) targeted at embedded microcontrollers.
@@ -709,7 +772,155 @@ To prevent tampering, unauthorized firmware modifications, and unsafe configurat
 
 ### Structured code blocks (`CODE_BLOCK` synthesis pass)
 
-The compiler includes an integrated lowering pass (`CodeBlockExpander`) that processes high-level algorithmic statements written inside `"CODE_BLOCK"` elements. Before intermediate representation construction, this pass expands C-like statements (assignments, `if/else`, ternary logic, and clamping) into deterministic, cycle-bounded primitive hardware elements (`MUX`, `CLAMP`, logic gates, and registers) and synthesized nets. This eliminates non-deterministic branches or unbounded loops, guaranteeing strict time predictability.
+The compiler includes an integrated hardware-synthesis frontend pass (`CodeBlockExpander`) that processes high-level algorithmic expressions written inside `"CODE_BLOCK"` elements. Before intermediate representation construction and optimization, this pass compiles textual C-like source code directly into deterministic, cycle-bounded primitive hardware elements (`MUX`, `CLAMP`, logic gates, arithmetic units, and state registers) and synthesized nets.
+
+Because code blocks are lowered entirely during compilation into standard hardware elements, they require **no dedicated runtime virtual machine opcodes** and execute with strictly bounded, cycle-accurate timing.
+
+#### Architecture and lowering pipeline
+
+```mermaid
+flowchart TD
+    JSON["Circuit JSON (CODE_BLOCK element)"] --> Lexer["Lexer (Locale-Independent Tokenizer)"]
+    Lexer --> Parser["Recursive-Descent Parser"]
+    Parser --> AST["Abstract Syntax Tree (AST)"]
+    AST --> Lowering["LoweringContext (Type Checker & Netlist Synthesizer)"]
+    Lowering --> Synthesized["Primitive Elements (MUX, Gates, Registers) & Nets"]
+    Synthesized --> Pipeline["Optimizer & Bytecode CodeGen"]
+```
+
+1. **Extraction**: `CodeBlockExpander::expand_code_blocks` extracts the `"code"` property and port declarations from each `CODE_BLOCK` element.
+2. **Lexing & Parsing**: The embedded mini-C code is tokenized and parsed into a formal AST hierarchy (`Expr`, `Stmt`, `FunctionDef`).
+3. **Hardware Synthesis**: Statements are lowered into primitive dataflow nets:
+   - Arithmetic and logical expressions lower to discrete math blocks (`ADD_F`, `SUB_F`, `MUL_F`, `DIV_F`, `AND`, `OR`, `XOR`, etc.).
+   - Branching expressions (`if/else`, `? :`) lower to hardware multiplexers (`MUX`, `MUX_F`).
+   - Static variables (`static`) instantiate persistent hardware registers (`BOOLREGISTER`, `INTREGISTER`, `FLOATREGISTER`, `COMPLEXREGISTER`).
+   - Loop statements (`for`) are statically unrolled at compile time.
+4. **Schematic Replacement**: The original `CODE_BLOCK` container element is removed from the circuit netlist and replaced by the newly synthesized hardware elements and interconnecting nets.
+
+#### JSON element schema
+
+A code block is declared within a circuit's `"elements"` array using the `"type": "CODE_BLOCK"`. Inputs and outputs are declared as dynamic port descriptors:
+
+```json
+{
+  "name": "HYST_CTRL",
+  "type": "CODE_BLOCK",
+  "code": "static bool state = false;\nif (in_val > upper_th) state = true;\nelse if (in_val < lower_th) state = false;\nout_trip = state;",
+  "inputs": [
+    { "name": "in_val", "type": "float" },
+    { "name": "upper_th", "type": "float" },
+    { "name": "lower_th", "type": "float" }
+  ],
+  "outputs": [
+    { "name": "out_trip", "type": "bool" }
+  ]
+}
+```
+
+- `name` (string): Unique identifier for the element.
+- `type` (string): Must be `"CODE_BLOCK"`.
+- `code` (string): Embedded C algorithm string.
+- `inputs` (array of objects): Declares input port identifiers and logical types (`"bool"`, `"int"`, `"float"`, `"complex"`).
+- `outputs` (array of objects): Declares output port identifiers and logical types (`"bool"`, `"int"`, `"float"`, `"complex"`).
+
+#### Embedded C language grammar (EBNF)
+
+The code block subcompiler implements a deterministic, statically-typed subset of C99:
+
+```ebnf
+Program         ::= { FunctionDef | Stmt } ;
+FunctionDef     ::= Type Identifier '(' [ ParamList ] ')' BlockStmt ;
+ParamList       ::= Param { ',' Param } ;
+Param           ::= Type Identifier ;
+
+Stmt            ::= VarDeclStmt | AssignStmt | IfStmt | ForStmt | ReturnStmt | ExprStmt | BlockStmt ;
+VarDeclStmt     ::= [ 'static' ] Type Identifier [ '[' IntLiteral ']' ] [ '=' Expr ] ';' ;
+AssignStmt      ::= LValue ( '=' | '+=' | '-=' | '*=' | '/=' ) Expr ';' ;
+IfStmt          ::= 'if' '(' Expr ')' Stmt [ 'else' Stmt ] ;
+ForStmt         ::= 'for' '(' [ Stmt ] ';' [ Expr ] ';' [ Stmt ] ')' Stmt ;
+ReturnStmt      ::= 'return' [ Expr ] ';' ;
+ExprStmt        ::= [ Expr ] ';' ;
+BlockStmt       ::= '{' { Stmt } '}' ;
+
+Type            ::= 'bool' | 'int' | 'float' | 'complex' | 'void' ;
+LValue          ::= Identifier [ '[' Expr ']' ] [ '.' Identifier ] ;
+
+Expr            ::= TernaryExpr ;
+TernaryExpr     ::= LogicalOrExpr [ '?' Expr ':' TernaryExpr ] ;
+LogicalOrExpr   ::= LogicalAndExpr { '||' LogicalAndExpr } ;
+LogicalAndExpr  ::= BitOrExpr { '&&' BitOrExpr } ;
+BitOrExpr       ::= BitXorExpr { '|' BitXorExpr } ;
+BitXorExpr      ::= BitAndExpr { '^' BitAndExpr } ;
+BitAndExpr      ::= EqualityExpr { '&' EqualityExpr } ;
+EqualityExpr    ::= RelationalExpr { ( '==' | '!=' ) RelationalExpr } ;
+RelationalExpr  ::= AdditiveExpr { ( '<' | '<=' | '>' | '>=' ) AdditiveExpr } ;
+AdditiveExpr    ::= MultiplicativeExpr { ( '+' | '-' ) MultiplicativeExpr } ;
+Multiplicative  ::= UnaryExpr { ( '*' | '/' | '%' ) UnaryExpr } ;
+UnaryExpr       ::= ( '+' | '-' | '!' | '~' | '++' | '--' ) UnaryExpr | PostfixExpr ;
+PostfixExpr     ::= PrimaryExpr { '[' Expr ']' | '.' Identifier | '(' [ ArgList ] ')' | '++' | '--' } ;
+PrimaryExpr     ::= Identifier | IntLiteral | FloatLiteral | 'true' | 'false' | '(' Expr ')' ;
+```
+
+#### Type system and built-in functions
+
+The code block subcompiler supports four core data types:
+
+| Type | Physical Bitwidth | Description | Literal Examples |
+| :--- | :--- | :--- | :--- |
+| `bool` | 1 bit | Boolean logic (`0` or `1`) | `true`, `false` |
+| `int` | 16-bit signed | Integer arithmetic | `0`, `42`, `-100` |
+| `float` | 32-bit IEEE 754 | Single-precision floating point | `0.0`, `3.14159`, `-0.5f` |
+| `complex` | 64-bit pair | Cartesian complex phasor (`real`, `imag`) | `rect2polar(...)`, `.real`, `.imag` |
+
+##### Built-in mathematical functions
+
+The following built-in functions are recognized and synthesized into hardware math operators:
+
+- `abs(x)`: Absolute value. Lowers to `ABS_F`.
+- `min(a, b)`: Minimum of two values. Lowers to `MIN_F`.
+- `max(a, b)`: Maximum of two values. Lowers to `MAX_F`.
+- `clamp(val, lo, hi)`: Bounds a value between `lo` and `hi`. Lowers to `CLAMP_F`.
+- `sqrt(x)`: Square root. Lowers to `SQRT_F`.
+- `sin(x)`, `cos(x)`, `tan(x)`, `atan2(y, x)`: Trigonometric functions.
+- `rect2polar(r, i)`: Converts Cartesian coordinates to polar magnitude and angle.
+- `polar2rect(mag, ang)`: Converts polar magnitude and angle to Cartesian coordinates.
+
+#### State registers and persistent variables (`static`)
+
+In embedded real-time PLCs, state variables retain their values across successive scan executions:
+
+- **Local variables** (e.g. `float temp = 0.0;`): Intermediate combinational wires synthesized during the current scan. They do not retain values across scans.
+- **Static variables** (e.g. `static float accum = 0.0;`): Synthesized into physical hardware registers (`FLOATREGISTER`, `INTREGISTER`, or `BOOLREGISTER`). The compiler creates a feedback loop connecting the register output to the scan logic, and routing the updated value to the register input at the end of the scan cycle.
+
+```c
+// Example: Moving average accumulator with persistent state
+static float sum = 0.0;
+static int count = 0;
+
+sum += in_sample;
+count++;
+avg_out = sum / count;
+```
+
+#### Compile-time loop unrolling and conditionals
+
+To maintain the **bounded-execution contract** required by mission-critical control systems:
+
+1. **Conditionals (`if/else`, `? :`)**: Real-time control does not support dynamic branch prediction or indeterminate jump instructions. Instead, conditionals lower to **hardware multiplexers (`MUX` / `MUX_F`)**. Both arms of the branch are evaluated combinationally, and the condition signal routes the selected output.
+2. **Loops (`for`)**: Loops must have statically determinable compile-time bounds. The compiler **completely unrolls** the loop during the expansion pass, generating unrolled hardware stages. Unbounded `while` loops or dynamic loop termination conditions are disallowed to prevent unbounded scan execution.
+
+#### Inferred latch diagnostics
+
+If an algorithmic variable is assigned inside an `if` branch but omitted in the corresponding `else` branch (or lacks a default assignment before the conditional block), the compiler detects an **inferred latch condition**.
+
+The compiler emits a non-fatal diagnostic warning:
+```
+Warning: Inferred latch detected for variable 'out_signal' in CODE_BLOCK 'CB1'.
+Variable retains previous value when condition is false.
+```
+In response, the synthesizer automatically instantiates a unit delay state latch to ensure well-defined hardware memory semantics.
+
+---
 
 ### Fixed-rate scan contract
 

@@ -8,6 +8,8 @@
 #include "le_nvram.h"
 #include "le_ser.h"
 #include "le_event_rec.h"
+#include "le_endian.h"
+#include "le_element_registry.h"
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
@@ -32,119 +34,66 @@ static float le_pack_u32_bits(uint32_t v)
     return x.f;
 }
 
-CompilerCore::CompilerCore()
-    : m_user_bool_count(0)
-    , m_user_int_count(0)
-    , m_user_float_count(0)
-    , m_user_complex_count(0)
-    , m_peak_temp_bool(0)
-    , m_peak_temp_float(0)
-    , m_peak_temp_complex(0)
-    , m_peak_temp_int(0)
-{
-}
+CompilerCore::CompilerCore() = default;
 
 uint16_t CompilerCore::allocate_user_bool()
 {
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_BOOL_REG | (m_user_bool_count & 0x1FFF));
-    m_user_bool_count++;
-    return addr;
+    return m_reg_alloc.allocate_user_bool();
 }
 
 uint16_t CompilerCore::allocate_user_int()
 {
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_INT_REG | (m_user_int_count & 0x0FFF));
-    m_user_int_count++;
-    return addr;
+    return m_reg_alloc.allocate_user_int();
 }
 
 uint16_t CompilerCore::allocate_user_float()
 {
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_FLOAT | (m_user_float_count & 0x3FFF));
-    m_user_float_count++;
-    return addr;
+    return m_reg_alloc.allocate_user_float();
 }
 
 uint16_t CompilerCore::allocate_user_complex()
 {
-    uint16_t addr = static_cast<uint16_t>(LE_REGION_CMPLX | (m_user_complex_count & LE_ADDR_INDEX_MASK));
-    m_user_complex_count++;
-    return addr;
+    return m_reg_alloc.allocate_user_complex();
 }
 
 uint16_t CompilerCore::acquire_temp_bool(int& out_temp_idx)
 {
-    if (!m_free_temp_bool_pool.empty()) {
-        auto it = std::min_element(m_free_temp_bool_pool.begin(), m_free_temp_bool_pool.end());
-        out_temp_idx = *it;
-        m_free_temp_bool_pool.erase(it);
-    } else {
-        out_temp_idx = m_peak_temp_bool++;
-    }
-    return static_cast<uint16_t>(LE_REGION_BOOL_REG | ((m_user_bool_count + out_temp_idx) & 0x1FFF));
+    return m_reg_alloc.acquire_temp_bool(out_temp_idx);
 }
 
 void CompilerCore::release_temp_bool(int temp_idx)
 {
-    if (temp_idx >= 0 && std::find(m_free_temp_bool_pool.begin(), m_free_temp_bool_pool.end(), temp_idx) == m_free_temp_bool_pool.end()) {
-        m_free_temp_bool_pool.push_back(temp_idx);
-    }
+    m_reg_alloc.release_temp_bool(temp_idx);
 }
 
 uint16_t CompilerCore::acquire_temp_float(int& out_temp_idx)
 {
-    if (!m_free_temp_float_pool.empty()) {
-        auto it = std::min_element(m_free_temp_float_pool.begin(), m_free_temp_float_pool.end());
-        out_temp_idx = *it;
-        m_free_temp_float_pool.erase(it);
-    } else {
-        out_temp_idx = m_peak_temp_float++;
-    }
-    return static_cast<uint16_t>(LE_REGION_FLOAT | ((m_user_float_count + out_temp_idx) & 0x3FFF));
+    return m_reg_alloc.acquire_temp_float(out_temp_idx);
 }
 
 void CompilerCore::release_temp_float(int temp_idx)
 {
-    if (temp_idx >= 0 && std::find(m_free_temp_float_pool.begin(), m_free_temp_float_pool.end(), temp_idx) == m_free_temp_float_pool.end()) {
-        m_free_temp_float_pool.push_back(temp_idx);
-    }
+    m_reg_alloc.release_temp_float(temp_idx);
 }
 
 uint16_t CompilerCore::acquire_temp_complex(int& out_temp_idx)
 {
-    if (!m_free_temp_complex_pool.empty()) {
-        auto it = std::min_element(m_free_temp_complex_pool.begin(), m_free_temp_complex_pool.end());
-        out_temp_idx = *it;
-        m_free_temp_complex_pool.erase(it);
-    } else {
-        out_temp_idx = m_peak_temp_complex++;
-    }
-    return static_cast<uint16_t>(LE_REGION_CMPLX | ((m_user_complex_count + out_temp_idx) & LE_ADDR_INDEX_MASK));
+    return m_reg_alloc.acquire_temp_complex(out_temp_idx);
 }
 
 void CompilerCore::release_temp_complex(int temp_idx)
 {
-    if (temp_idx >= 0 && std::find(m_free_temp_complex_pool.begin(), m_free_temp_complex_pool.end(), temp_idx) == m_free_temp_complex_pool.end()) {
-        m_free_temp_complex_pool.push_back(temp_idx);
-    }
+    m_reg_alloc.release_temp_complex(temp_idx);
 }
+
 uint16_t CompilerCore::acquire_temp_int(int& out_temp_idx)
 {
-    if (!m_free_temp_int_pool.empty()) {
-        auto it = std::min_element(m_free_temp_int_pool.begin(), m_free_temp_int_pool.end());
-        out_temp_idx = *it;
-        m_free_temp_int_pool.erase(it);
-    } else {
-        out_temp_idx = m_peak_temp_int++;
-    }
-    return static_cast<uint16_t>(LE_REGION_INT_REG | ((m_user_int_count + out_temp_idx) & 0x0FFF));
+    return m_reg_alloc.acquire_temp_int(out_temp_idx);
 }
 
 void CompilerCore::release_temp_int(int temp_idx)
 {
-    if (temp_idx >= 0 && std::find(m_free_temp_int_pool.begin(), m_free_temp_int_pool.end(), temp_idx) == m_free_temp_int_pool.end()) {
-        m_free_temp_int_pool.push_back(temp_idx);
-    }
+    m_reg_alloc.release_temp_int(temp_idx);
 }
 
 uint32_t CompilerCore::compute_crc32(const uint8_t* data, size_t length)
@@ -470,23 +419,23 @@ int CompilerCore::build_variables(const JsonValue& circuit_doc)
     if (!circuit_doc.contains("variables") || !circuit_doc.get("variables").is_object())
         return 0;
     const auto& vars = circuit_doc.get("variables").as_object();
-    for (const auto& kv : vars) {
-        if (kv.second.is_number()) {
+    for (const auto& [var_name, var_val] : vars) {
+        if (var_val.is_number()) {
             /* direct scalar: value only (no expression stored) */
-            m_var_values[kv.first] = kv.second.as_double(0.0);
-        } else if (kv.second.is_string()) {
-            m_var_exprs[kv.first] = kv.second.as_string();
+            m_var_values[var_name] = var_val.as_double(0.0);
+        } else if (var_val.is_string()) {
+            m_var_exprs[var_name] = var_val.as_string();
         }
     }
     /* Resolve every variable once (memoized); direct ones return immediately. */
-    for (const auto& kv : vars) {
-        resolve_var_value(kv.first, m_var_values, m_var_exprs, m_var_state, m_var_error);
+    for (const auto& [var_name, var_val] : vars) {
+        resolve_var_value(var_name, m_var_values, m_var_exprs, m_var_state, m_var_error);
         if (!m_var_error.empty()) break;
     }
     /* mark any remaining direct numerics done */
-    for (const auto& kv : vars) {
-        if (kv.second.is_number() && m_var_state[kv.first] == 0) {
-            m_var_state[kv.first] = 2;
+    for (const auto& [var_name, var_val] : vars) {
+        if (var_val.is_number() && m_var_state[var_name] == 0) {
+            m_var_state[var_name] = 2;
         }
     }
     return m_var_error.empty() ? 0 : -1;
@@ -553,6 +502,856 @@ static bool parse_register_addr(const std::string& in, uint16_t* out)
     return true;
 }
 
+BoardProfile CompilerCore::parse_board_profile(
+    const std::string& board_json_str,
+    uint16_t requested_target_version,
+    JsonValue& out_board_doc)
+{
+    BoardProfile profile;
+    profile.effective_target_version = requested_target_version > 0 ? requested_target_version : LE_CONTAINER_VERSION;
+
+    if (board_json_str.empty()) {
+        return profile;
+    }
+
+    try {
+        out_board_doc = JsonValue::parse(board_json_str);
+        profile.has_board = out_board_doc.is_object();
+    } catch (...) {
+        profile.has_board = false;
+        return profile;
+    }
+
+    if (!profile.has_board) {
+        return profile;
+    }
+
+    if (out_board_doc.contains("device") && out_board_doc.get("device").is_object()) {
+        const auto& dev = out_board_doc.get("device");
+        if (dev.contains("container_version")) {
+            int b_cv = dev.get("container_version").as_int(0);
+            if (b_cv > 0 && requested_target_version == 13) {
+                profile.effective_target_version = static_cast<uint16_t>(b_cv);
+            }
+        }
+    }
+
+    if (out_board_doc.contains("pin_map") && out_board_doc.get("pin_map").is_object()) {
+        profile.has_pinmap = true;
+        const auto& pm = out_board_doc.get("pin_map").as_object();
+
+        int board_pm_din_count = 0, board_pm_max_din_idx = -1;
+        int board_pm_dout_count = 0, board_pm_max_dout_idx = -1;
+        int board_pm_ain_count = 0, board_pm_max_ain_idx = -1;
+        int board_pm_aout_count = 0, board_pm_max_aout_idx = -1;
+
+        auto scan_aliases = [&](const JsonValue& obj, int& count, int& max_idx) {
+            if (!obj.is_object()) return;
+            for (const auto& kv : obj.as_object()) {
+                count++;
+                int idx = -1;
+                size_t pos = kv.first.find_first_of("0123456789");
+                if (pos != std::string::npos) {
+                    try { idx = std::stoi(kv.first.substr(pos)); } catch (...) {}
+                }
+                if (idx > max_idx) max_idx = idx;
+
+                if (kv.second.is_object() && kv.second.contains("alias")) {
+                    std::string al = kv.second.get("alias").as_string();
+                    if (!al.empty()) profile.alias_to_addr[al] = kv.first;
+                }
+            }
+        };
+
+        // Digital inputs & outputs (hierarchical "digital" or flat "inputs"/"outputs")
+        if (pm.find("digital") != pm.end() && pm.at("digital").is_object()) {
+            const auto& dig = pm.at("digital").as_object();
+            if (dig.find("inputs") != dig.end()) scan_aliases(dig.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
+            if (dig.find("outputs") != dig.end()) scan_aliases(dig.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
+        } else {
+            if (pm.find("inputs") != pm.end()) scan_aliases(pm.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
+            if (pm.find("outputs") != pm.end()) scan_aliases(pm.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
+        }
+
+        // Analog inputs & outputs (hierarchical "analog" or flat "analogs"/"analog_outputs")
+        if (pm.find("analog") != pm.end() && pm.at("analog").is_object() &&
+            (pm.at("analog").as_object().find("inputs") != pm.at("analog").as_object().end() ||
+             pm.at("analog").as_object().find("outputs") != pm.at("analog").as_object().end())) {
+            const auto& an = pm.at("analog").as_object();
+            if (an.find("inputs") != an.end()) scan_aliases(an.at("inputs"), board_pm_ain_count, board_pm_max_ain_idx);
+            if (an.find("outputs") != an.end()) scan_aliases(an.at("outputs"), board_pm_aout_count, board_pm_max_aout_idx);
+        } else {
+            std::string ain_key;
+            if (pm.find("analogs") != pm.end() && pm.at("analogs").is_object()) ain_key = "analogs";
+            else if (pm.find("analog") != pm.end() && pm.at("analog").is_object()) ain_key = "analog";
+            else if (pm.find("analog_inputs") != pm.end() && pm.at("analog_inputs").is_object()) ain_key = "analog_inputs";
+            if (!ain_key.empty()) scan_aliases(pm.at(ain_key), board_pm_ain_count, board_pm_max_ain_idx);
+
+            if (pm.find("analog_outputs") != pm.end()) scan_aliases(pm.at("analog_outputs"), board_pm_aout_count, board_pm_max_aout_idx);
+        }
+
+        profile.derived_din = std::max(board_pm_din_count, board_pm_max_din_idx + 1);
+        profile.derived_dout = std::max(board_pm_dout_count, board_pm_max_dout_idx + 1);
+        profile.derived_ain = std::max(board_pm_ain_count, board_pm_max_ain_idx + 1);
+        profile.derived_aout = std::max(board_pm_aout_count, board_pm_max_aout_idx + 1);
+    }
+
+    if (out_board_doc.contains("custom_nodes") && out_board_doc.get("custom_nodes").is_array()) {
+        for (const auto& cn_val : out_board_doc.get("custom_nodes").as_array()) {
+            if (!cn_val.is_object()) continue;
+            CustomNodeInfo info;
+            info.type_id = cn_val.get("type_id").as_string(cn_val.get("type").as_string(cn_val.get("name").as_string()));
+            info.display_name = cn_val.get("display_name").as_string(info.type_id);
+            info.category = cn_val.get("category").as_string("Custom");
+            info.description = cn_val.get("description").as_string();
+            info.function_id = static_cast<uint8_t>(cn_val.get("function_id").as_int(1));
+            info.c_header = cn_val.get("c_header").as_string(cn_val.get("header").as_string());
+            if (!info.c_header.empty()) {
+                if (std::find(profile.custom_headers.begin(), profile.custom_headers.end(), info.c_header) == profile.custom_headers.end()) {
+                    profile.custom_headers.push_back(info.c_header);
+                }
+            }
+
+            if (cn_val.contains("inputs") && cn_val.get("inputs").is_array()) {
+                for (const auto& p : cn_val.get("inputs").as_array()) {
+                    CustomPinInfo pi;
+                    pi.name = p.get("name").as_string();
+                    pi.type = p.get("type").as_string("bool");
+                    info.inputs.push_back(pi);
+                }
+            }
+            if (cn_val.contains("outputs") && cn_val.get("outputs").is_array()) {
+                for (const auto& p : cn_val.get("outputs").as_array()) {
+                    CustomPinInfo pi;
+                    pi.name = p.get("name").as_string();
+                    pi.type = p.get("type").as_string("bool");
+                    info.outputs.push_back(pi);
+                }
+            }
+
+            if (!info.type_id.empty()) {
+                profile.custom_nodes[info.type_id] = info;
+            }
+        }
+    }
+
+    return profile;
+}
+
+int CompilerCore::deduce_element_type(
+    const std::string& node_name,
+    const std::map<std::string, JsonValue>& elem_by_name,
+    const std::map<std::string, CustomNodeInfo>& custom_nodes)
+{
+    // 0: Bool, 1: Float, 2: Int, 3: Complex
+    auto it = elem_by_name.find(node_name);
+    if (it == elem_by_name.end()) return 0;
+    const auto& el = it->second;
+    std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
+    if (dt == "float" || dt == "real" || dt == "double") return 1;
+    if (dt == "int" || dt == "integer" || dt == "int32" || dt == "uint32") return 2;
+    if (dt == "complex") return 3;
+    if (dt == "bool" || dt == "boolean") return 0;
+
+    std::string custom_type = el.get("custom_type").as_string(el.get("type").as_string());
+    auto cnit = custom_nodes.find(custom_type);
+    if (cnit != custom_nodes.end() && !cnit->second.outputs.empty()) {
+        std::string cot = to_lower_str(cnit->second.outputs[0].type);
+        if (cot.find("float") != std::string::npos || cot.find("real") != std::string::npos) return 1;
+        if (cot.find("complex") != std::string::npos) return 3;
+        if (cot.find("int") != std::string::npos) return 2;
+    }
+
+    std::string type = to_upper_str(el.get("type").as_string());
+    return static_cast<int>(ElementRegistry::get_data_type(type));
+}
+
+void CompilerCore::detect_cycles_and_oscillators(
+    const std::vector<JsonValue>& elements,
+    const std::vector<JsonValue>& nets,
+    const std::map<std::string, JsonValue>& elem_by_name,
+    const std::map<std::string, CustomNodeInfo>& custom_nodes,
+    std::map<std::string, uint16_t>& element_outputs,
+    std::set<std::string>& feedback_state_nodes,
+    std::vector<std::string>& oscillator_warnings)
+{
+    std::map<std::string, std::string> tag_send_name;
+    for (const auto& el : elements) {
+        if (!el.is_object()) continue;
+        std::string nm = el.get("name").as_string();
+        std::string type = to_upper_str(el.get("type").as_string());
+        if (type.find("TAG") != std::string::npos) {
+            std::string dir = to_lower_str(el.get("direction").as_string());
+            if (dir == "send") {
+                std::string tag_nm = el.get("tag_name").as_string(nm);
+                tag_send_name[tag_nm] = nm;
+            }
+        }
+    }
+
+    std::map<std::string, std::vector<std::string>> net_graph;
+    for (const auto& net : nets) {
+        if (!net.is_object()) continue;
+        std::string out_elem = net.get("output").get("name").as_string();
+        for (const auto& inp : net.get("inputs").as_array()) {
+            if (!inp.is_object()) continue;
+            std::string target_elem = inp.get("name").as_string();
+            if (!out_elem.empty() && !target_elem.empty()) {
+                net_graph[target_elem].push_back(out_elem);
+            }
+        }
+    }
+
+    // Bridge tag receivers to tag senders so feedback loops across tags are also detected
+    for (const auto& el : elements) {
+        if (!el.is_object()) continue;
+        std::string type = to_upper_str(el.get("type").as_string());
+        if (type.find("TAG") != std::string::npos) {
+            std::string dir = to_lower_str(el.get("direction").as_string());
+            if (dir != "send") {
+                std::string nm = el.get("name").as_string();
+                std::string tag_nm = el.get("tag_name").as_string(nm);
+                auto it_snd = tag_send_name.find(tag_nm);
+                if (it_snd != tag_send_name.end() && !it_snd->second.empty()) {
+                    net_graph[nm].push_back(it_snd->second);
+                }
+            }
+        }
+    }
+
+    std::set<std::string> visited;
+    std::set<std::string> visiting;
+    std::vector<std::string> dfs_path;
+
+    std::function<void(const std::string&)> find_feedback = [&](const std::string& u) {
+        if (visited.count(u)) return;
+        visiting.insert(u);
+        dfs_path.push_back(u);
+
+        auto it = net_graph.find(u);
+        if (it != net_graph.end()) {
+            for (const auto& v : it->second) {
+                if (visiting.count(v)) {
+                    // v is an ancestor of u in the current DFS path (back-edge detected)
+                    auto it_start = std::find(dfs_path.begin(), dfs_path.end(), v);
+                    if (it_start != dfs_path.end()) {
+                        std::vector<std::string> cycle_nodes(it_start, dfs_path.end());
+
+                        // Check if cycle contains explicit state/storage elements
+                        bool has_state_element = false;
+                        int inversion_count = 0;
+
+                        for (const auto& cn : cycle_nodes) {
+                            auto it_el = elem_by_name.find(cn);
+                            if (it_el != elem_by_name.end()) {
+                                std::string t = to_upper_str(it_el->second.get("type").as_string());
+                                if (ElementRegistry::is_root(t) || ElementRegistry::is_stateful(t) ||
+                                    t == "TON" || t == "TOF" || t == "TP" ||
+                                    t == "CTU" || t == "CTD" || t == "CTUD" ||
+                                    t == "PID" || t == "LPF" || t == "BIQUAD" ||
+                                    t == "RATE_LIMITER" || t == "TOTALIZER" ||
+                                    t == "SR" || t == "RS" || t == "LATCH" ||
+                                    t == "RTRIG" || t == "FTRIG") {
+                                    has_state_element = true;
+                                    break;
+                                }
+                                if (t == "NOT" || t == "LE_NOT" ||
+                                    t == "NAND" || t == "LE_NAND" ||
+                                    t == "NOR" || t == "LE_NOR") {
+                                    inversion_count++;
+                                }
+                            }
+                        }
+
+                        // If pure combinatorial loop with odd inversion count, flag hazard warning!
+                        if (!has_state_element && (inversion_count % 2 != 0)) {
+                            std::string cycle_str;
+                            for (size_t i = 0; i < cycle_nodes.size(); ++i) {
+                                if (i > 0) cycle_str += " -> ";
+                                cycle_str += cycle_nodes[i];
+                            }
+                            cycle_str += " -> " + v;
+                            std::string warn_msg = "Warning: Combinatorial ring oscillator detected with odd inversion parity along path: " +
+                                                   cycle_str + " (hazard: synthesizing unit-delay register to prevent runtime glitch).";
+                            if (std::find(oscillator_warnings.begin(), oscillator_warnings.end(), warn_msg) == oscillator_warnings.end()) {
+                                oscillator_warnings.push_back(warn_msg);
+                            }
+                        }
+                    }
+
+                    // If v does not already have a persistent address allocated, mark it as a feedback state driver!
+                    if (element_outputs.find(v) == element_outputs.end() && feedback_state_nodes.find(v) == feedback_state_nodes.end()) {
+                        feedback_state_nodes.insert(v);
+                    }
+                } else if (!visited.count(v)) {
+                    find_feedback(v);
+                }
+            }
+        }
+        dfs_path.pop_back();
+        visiting.erase(u);
+        visited.insert(u);
+    };
+
+    for (const auto& [node_name, neighbors] : net_graph) {
+        find_feedback(node_name);
+    }
+
+    for (const std::string& fn : feedback_state_nodes) {
+        if (element_outputs.find(fn) == element_outputs.end()) {
+            int t = deduce_element_type(fn, elem_by_name, custom_nodes);
+            if (t == 1) {
+                element_outputs[fn] = allocate_user_float();
+            } else if (t == 2) {
+                element_outputs[fn] = allocate_user_int();
+            } else if (t == 3) {
+                element_outputs[fn] = allocate_user_complex();
+            } else {
+                element_outputs[fn] = allocate_user_bool();
+            }
+        }
+    }
+}
+
+int CompilerCore::resolve_circuit_aliases(
+    const JsonValue& circuit_doc,
+    const std::vector<JsonValue>& elements,
+    const std::map<std::string, uint16_t>& element_outputs,
+    const std::map<std::string, std::string>& board_alias_to_addr,
+    std::vector<le_alias_t>& out_aliases,
+    std::string& out_error)
+{
+    // Step 1b: Parse + resolve the circuit's "aliases" object.
+    if (circuit_doc.contains("aliases") && circuit_doc.get("aliases").is_object()) {
+        const auto& als = circuit_doc.get("aliases").as_object();
+        for (const auto& [alias_name, target_val] : als) {
+            std::string nm = alias_name;
+            std::string target = target_val.is_string() ? target_val.as_string() : "";
+            if (nm.empty() || nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
+                out_error = "Alias Error: alias name '" + nm + "' must be 1.." +
+                            std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
+                return -1;
+            }
+            if (target.empty()) {
+                out_error = "Alias Error: alias '" + nm + "' has no target register.";
+                return -1;
+            }
+
+            uint16_t addr = 0;
+            bool ok = false;
+            auto eit = element_outputs.find(target);
+            if (eit != element_outputs.end()) {
+                addr = eit->second;
+                ok = true;
+            } else {
+                std::string resolved = target;
+                auto bit = board_alias_to_addr.find(target);
+                if (bit != board_alias_to_addr.end()) resolved = bit->second;
+                ok = parse_register_addr(resolved, &addr);
+            }
+            if (!ok) {
+                out_error = "Alias Error: alias '" + nm + "' target '" + target +
+                            "' is not a valid register or element.";
+                return -1;
+            }
+            le_alias_t a;
+            std::memset(&a, 0, sizeof(a));
+            std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
+            a.kind = 0; a.pad = 0;
+            a.addr = addr;
+            out_aliases.push_back(a);
+        }
+    }
+
+    // Step 1c: Also discover inline element aliases if not already in alias_list
+    for (const auto& el : elements) {
+        if (!el.is_object()) continue;
+        if (!el.contains("alias")) continue;
+        std::string nm = el.get("alias").as_string();
+        if (nm.empty()) continue;
+        if (nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
+            out_error = "Alias Error: element alias '" + nm + "' must be 1.." +
+                        std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
+            return -1;
+        }
+        // Check if already registered
+        bool already_added = false;
+        for (const auto& a : out_aliases) {
+            if (std::strncmp(a.name, nm.c_str(), LE_ALIAS_NAME_MAX) == 0) {
+                already_added = true;
+                break;
+            }
+        }
+        if (already_added) continue;
+
+        std::string elem_name = el.get("name").as_string();
+        uint16_t addr = 0;
+        bool ok = false;
+        auto eit = element_outputs.find(elem_name);
+        if (eit != element_outputs.end()) {
+            addr = eit->second;
+            ok = true;
+        } else if (el.contains("address")) {
+            std::string explicit_addr = el.get("address").as_string();
+            ok = parse_register_addr(explicit_addr, &addr);
+        }
+        if (ok) {
+            le_alias_t a;
+            std::memset(&a, 0, sizeof(a));
+            std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
+            a.kind = 0; a.pad = 0;
+            a.addr = addr;
+            out_aliases.push_back(a);
+        }
+    }
+
+    return 0;
+}
+
+bool CompilerCore::build_nvram_descriptor(
+    const JsonValue& circuit_doc,
+    const JsonValue& board_doc,
+    const std::vector<JsonValue>& elements,
+    const std::map<std::string, uint16_t>& element_outputs,
+    const std::map<std::string, std::map<std::string, uint16_t>>& element_outputs_port,
+    const std::map<std::string, std::string>& alias_to_addr,
+    std::vector<le_nvram_range_t>& out_ranges,
+    le_nvram_desc_t& out_nvmd)
+{
+    std::memset(&out_nvmd, 0, sizeof(out_nvmd));
+    bool has_nvmd = false;
+
+    const JsonValue* nv_obj = nullptr;
+    if (circuit_doc.is_object() && circuit_doc.contains("nvram") && circuit_doc.get("nvram").is_object()) {
+        nv_obj = &circuit_doc.get("nvram");
+        has_nvmd = true;
+    } else if (board_doc.is_object() && board_doc.contains("nvram") && board_doc.get("nvram").is_object()) {
+        nv_obj = &board_doc.get("nvram");
+    } else if (board_doc.is_object() && board_doc.contains("retentive") && board_doc.get("retentive").is_object()) {
+        nv_obj = &board_doc.get("retentive");
+    }
+
+    uint32_t explicit_retentive_bytes = 0;
+    uint32_t ser_records = 0;
+    uint32_t explicit_ser_bytes = 0;
+    uint32_t event_records = 0;
+    uint32_t explicit_event_bytes = 0;
+
+    if (nv_obj) {
+        if (nv_obj->contains("retentive_bytes")) {
+            explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("retentive_bytes").as_int(0)));
+        }
+        if (nv_obj->contains("ser_records")) {
+            ser_records = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_records").as_int(0)));
+        }
+        if (nv_obj->contains("ser_bytes")) {
+            explicit_ser_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_bytes").as_int(0)));
+        }
+        if (nv_obj->contains("event_records")) {
+            event_records = static_cast<uint32_t>(std::max(0, nv_obj->get("event_records").as_int(0)));
+        }
+        if (nv_obj->contains("event_bytes")) {
+            explicit_event_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("event_bytes").as_int(0)));
+        }
+    }
+
+    // Top-level fallbacks in circuit JSON
+    if (circuit_doc.contains("retentive_bytes")) {
+        explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("retentive_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("ser_records")) {
+        ser_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_records").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("ser_bytes")) {
+        explicit_ser_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("event_records")) {
+        event_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_records").as_int(0)));
+        has_nvmd = true;
+    }
+    if (circuit_doc.contains("event_bytes")) {
+        explicit_event_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_bytes").as_int(0)));
+        has_nvmd = true;
+    }
+
+    // Discover retentive register targets
+    std::set<uint16_t> retentive_addrs;
+
+    auto add_retentive_addr = [&](const std::string& target) {
+        if (target.empty()) return;
+        size_t dash_pos = target.find('-');
+        size_t dot_pos = target.find("..");
+        if (dot_pos != std::string::npos || (dash_pos != std::string::npos && dash_pos > 0)) {
+            std::string s_start, s_end;
+            if (dot_pos != std::string::npos) {
+                s_start = target.substr(0, dot_pos);
+                s_end = target.substr(dot_pos + 2);
+            } else {
+                s_start = target.substr(0, dash_pos);
+                s_end = target.substr(dash_pos + 1);
+            }
+            uint16_t a1 = 0, a2 = 0;
+            if (parse_register_addr(s_start, &a1) && parse_register_addr(s_end, &a2)) {
+                if ((a1 & LE_ADDR_REGION_MASK) == (a2 & LE_ADDR_REGION_MASK) && a2 >= a1) {
+                    for (uint32_t a = a1; a <= a2; ++a) {
+                        retentive_addrs.insert(static_cast<uint16_t>(a));
+                    }
+                    return;
+                }
+            }
+        }
+
+        auto eit = element_outputs.find(target);
+        if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
+            retentive_addrs.insert(eit->second);
+            return;
+        }
+
+        std::string resolved = target;
+        auto bit = alias_to_addr.find(target);
+        if (bit != alias_to_addr.end()) resolved = bit->second;
+
+        uint16_t addr = 0;
+        if (parse_register_addr(resolved, &addr)) {
+            retentive_addrs.insert(addr);
+        }
+    };
+
+    const JsonValue* ret_regs_val = nullptr;
+    if (nv_obj && nv_obj->contains("retentive_registers")) {
+        ret_regs_val = &nv_obj->get("retentive_registers");
+    } else if (circuit_doc.contains("retentive_registers")) {
+        ret_regs_val = &circuit_doc.get("retentive_registers");
+    }
+
+    if (ret_regs_val && ret_regs_val->is_array()) {
+        has_nvmd = true;
+        for (const auto& item : ret_regs_val->as_array()) {
+            if (item.is_string()) {
+                add_retentive_addr(item.as_string());
+            } else if (item.is_number()) {
+                retentive_addrs.insert(static_cast<uint16_t>(item.as_int()));
+            } else if (item.is_object()) {
+                std::string s_addr = item.get("start").is_string() ? item.get("start").as_string() :
+                                     (item.get("address").is_string() ? item.get("address").as_string() : "");
+                int cnt = item.get("count").as_int(1);
+                uint16_t base_addr = 0;
+                if (!s_addr.empty() && parse_register_addr(s_addr, &base_addr)) {
+                    for (int c = 0; c < cnt; ++c) {
+                        retentive_addrs.insert(static_cast<uint16_t>(base_addr + c));
+                    }
+                }
+            }
+        }
+    }
+
+    // Inline element "retentive": true
+    for (const auto& el : elements) {
+        if (el.get("retentive").as_bool(false)) {
+            has_nvmd = true;
+            std::string el_id = el.get("id").as_string();
+            if (!el_id.empty()) {
+                auto eit = element_outputs.find(el_id);
+                if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
+                    retentive_addrs.insert(eit->second);
+                }
+                auto epit = element_outputs_port.find(el_id);
+                if (epit != element_outputs_port.end()) {
+                    for (const auto& kv : epit->second) {
+                        if (kv.second != LE_ADDR_UNUSED) {
+                            retentive_addrs.insert(kv.second);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out_ranges.clear();
+    if (!retentive_addrs.empty()) {
+        auto it = retentive_addrs.begin();
+        uint16_t cur_start = *it;
+        uint16_t cur_count = 1;
+        ++it;
+        for (; it != retentive_addrs.end(); ++it) {
+            uint16_t addr = *it;
+            uint16_t prev_addr = static_cast<uint16_t>(cur_start + cur_count - 1);
+            if (addr == prev_addr + 1 && (addr & LE_ADDR_REGION_MASK) == (prev_addr & LE_ADDR_REGION_MASK)) {
+                cur_count++;
+            } else {
+                le_nvram_range_t rng;
+                rng.start_addr = cur_start;
+                rng.count = cur_count;
+                out_ranges.push_back(rng);
+                cur_start = addr;
+                cur_count = 1;
+            }
+        }
+        le_nvram_range_t rng;
+        rng.start_addr = cur_start;
+        rng.count = cur_count;
+        out_ranges.push_back(rng);
+    }
+
+    uint32_t retentive_payload_bytes = 0;
+    for (const auto& rng : out_ranges) {
+        uint16_t base = rng.start_addr;
+        uint16_t region = base & LE_ADDR_REGION_MASK;
+        for (uint16_t i = 0; i < rng.count; ++i) {
+            if (region == LE_REGION_BOOL_REG || region == LE_REGION_BOOL_REG_EXT ||
+                region == LE_REGION_DIN || region == LE_REGION_DOUT) {
+                retentive_payload_bytes += 1;
+            } else if (region == LE_REGION_INT_REG || region == LE_REGION_INT_REG_EXT) {
+                retentive_payload_bytes += 4;
+            } else if (region == LE_REGION_CMPLX) {
+                retentive_payload_bytes += 8;
+            } else {
+                retentive_payload_bytes += 4; // Float
+            }
+        }
+    }
+
+    uint32_t calc_regs_bytes = (retentive_payload_bytes > 0) ?
+        static_cast<uint32_t>(sizeof(le_nvram_regs_header_t) + retentive_payload_bytes) : 0;
+    out_nvmd.retentive_bytes = std::max(explicit_retentive_bytes, calc_regs_bytes);
+
+    uint32_t calc_ser_bytes = (ser_records > 0) ?
+        static_cast<uint32_t>(sizeof(le_ser_nv_header_t) + ser_records * sizeof(le_ser_event_t)) : 0;
+    out_nvmd.ser_records = ser_records;
+    out_nvmd.ser_bytes = std::max(explicit_ser_bytes, calc_ser_bytes);
+
+    uint32_t calc_event_bytes = (event_records > 0) ?
+        static_cast<uint32_t>(sizeof(le_event_rec_nv_header_t) + event_records * 32) : 0;
+    out_nvmd.event_records = event_records;
+    out_nvmd.event_bytes = std::max(explicit_event_bytes, calc_event_bytes);
+
+    out_nvmd.retentive_range_count = static_cast<uint16_t>(std::min<size_t>(out_ranges.size(), LE_NVRAM_MAX_RANGES));
+    for (uint16_t ri = 0; ri < out_nvmd.retentive_range_count; ++ri) {
+        out_nvmd.ranges[ri] = out_ranges[ri];
+    }
+
+    if (out_nvmd.retentive_bytes > 0 || out_nvmd.ser_bytes > 0 || out_nvmd.event_bytes > 0) {
+        has_nvmd = true;
+    }
+
+    return has_nvmd;
+}
+
+bool CompilerCore::validate_board_limits(
+    const BoardProfile& board,
+    const JsonValue& board_doc,
+    const le_compiler_options_t& options,
+    const le_header_t& header,
+    bool has_nvmd,
+    const le_nvram_desc_t& nvmd,
+    size_t num_coalesced_ranges,
+    size_t din_count, int max_din_idx,
+    size_t dout_count, int max_dout_idx,
+    size_t ain_count, int max_ain_idx,
+    size_t aout_count, int max_aout_idx,
+    int total_bool_regs,
+    int total_float_regs,
+    int total_int_regs,
+    int total_complex_regs,
+    const std::map<uint8_t, int>& state_descs,
+    bool uses_protection,
+    bool uses_serial_bus,
+    bool uses_dsp,
+    size_t total_bin_size,
+    std::vector<std::string>& out_errors)
+{
+    bool board_valid = true;
+
+    if (board.effective_target_version < 13) {
+        if (options.enable_multi_rate) {
+            board_valid = false;
+            out_errors.push_back("Version Compatibility Error: Multi-rate execution domains (-m / --multi-rate) are not supported when targeting container version " + std::to_string(board.effective_target_version) + " (introduced in v13).");
+        }
+        if (has_nvmd) {
+            board_valid = false;
+            out_errors.push_back("Version Compatibility Error: Dynamic NVRAM manifest is not supported when targeting container version " + std::to_string(board.effective_target_version) + " (introduced in v13).");
+        }
+    }
+
+    if (num_coalesced_ranges > LE_NVRAM_MAX_RANGES) {
+        board_valid = false;
+        out_errors.push_back("Circuit Error: Retentive registers require " + std::to_string(num_coalesced_ranges) +
+            " disjoint ranges, which exceeds the maximum allowed (" + std::to_string(LE_NVRAM_MAX_RANGES) + "). Group registers contiguously.");
+    }
+
+    if (board.has_board) {
+        std::string dev_name = board_doc.get("device").get("name").as_string("Target Board");
+        const auto& limits = board_doc.get("limits");
+        const auto& features = board_doc.get("features");
+
+        int max_din = limits.get("digital_inputs").as_int(board.has_pinmap ? board.derived_din : 64);
+        if (static_cast<int>(din_count) > max_din || (max_din_idx >= max_din)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(din_count) +
+                " digital inputs (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_din) + ".");
+        }
+
+        int max_dout = limits.get("digital_outputs").as_int(board.has_pinmap ? board.derived_dout : 64);
+        if (static_cast<int>(dout_count) > max_dout || (max_dout_idx >= max_dout)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(dout_count) +
+                " digital outputs (%Q), but target board '" + dev_name + "' only supports up to " + std::to_string(max_dout) + ".");
+        }
+
+        int max_ain = limits.get("analog_inputs").as_int(board.has_pinmap ? board.derived_ain : 16);
+        if (static_cast<int>(ain_count) > max_ain || (max_ain_idx >= max_ain)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Analog Inputs exceed limit: " + std::to_string(ain_count) +
+                " used, " + std::to_string(max_ain) + " max allowed on " + dev_name + ".");
+        }
+
+        int max_aout = limits.get("analog_outputs").as_int(board.has_pinmap ? board.derived_aout : 16);
+        if (static_cast<int>(aout_count) > max_aout || (max_aout_idx >= max_aout)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Analog Outputs exceed limit: " + std::to_string(aout_count) +
+                " used, " + std::to_string(max_aout) + " max allowed on " + dev_name + ".");
+        }
+
+        int max_coils = limits.get("coils").as_int(limits.get("bool_registers").as_int(-1));
+        if (max_coils >= 0 && total_bool_regs > max_coils) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_bool_regs) +
+                " internal boolean registers (%M), but target board '" + dev_name + "' only supports up to " + std::to_string(max_coils) + ".");
+        }
+
+        int max_floats = limits.get("floats").as_int(limits.get("float_registers").as_int(-1));
+        if (max_floats >= 0 && total_float_regs > max_floats) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_float_regs) +
+                " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
+        }
+
+        int max_complex = limits.get("complex_registers").as_int(-1);
+        if (max_complex >= 0 && total_complex_regs > max_complex) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_complex_regs) +
+                " complex registers (%C), but target board '" + dev_name + "' only supports up to " + std::to_string(max_complex) + ".");
+        }
+
+        int max_ints = limits.get("int_registers").as_int(-1);
+        if (max_ints >= 0 && total_int_regs > max_ints) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_int_regs) +
+                " integer registers (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_ints) + ".");
+        }
+
+        /* Architectural 16-bit address limits */
+        if (total_bool_regs > LE_ARCH_MAX_BOOL_REGS) {
+            board_valid = false;
+            out_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_bool_regs) +
+                " internal boolean registers (%M), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_BOOL_REGS) + ").");
+        }
+        if (total_float_regs > LE_ARCH_MAX_FLOATS) {
+            board_valid = false;
+            out_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_float_regs) +
+                " float registers (%R), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_FLOATS) + ").");
+        }
+        if (total_int_regs > LE_ARCH_MAX_INT_REGS) {
+            board_valid = false;
+            out_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_int_regs) +
+                " integer registers (%I), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_INT_REGS) + ").");
+        }
+        if (total_complex_regs > LE_ARCH_MAX_COMPLEX) {
+            board_valid = false;
+            out_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_complex_regs) +
+                " complex registers (%C), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_COMPLEX) + ").");
+        }
+
+        /* Unified RAM Workspace validation: packed register arena + element state */
+        int workspace_bytes = limits.get("workspace_bytes").as_int(LE_RAM_WORKSPACE_BYTES);
+
+        uint32_t din_c    = static_cast<uint32_t>(header.digital_in_count);
+        uint32_t dout_c   = static_cast<uint32_t>(header.digital_out_count);
+        uint32_t bool_c   = static_cast<uint32_t>(total_bool_regs);
+        uint32_t float_c  = static_cast<uint32_t>(total_float_regs);
+        uint32_t int_c    = static_cast<uint32_t>(total_int_regs);
+        uint32_t cmplx_c  = static_cast<uint32_t>(total_complex_regs);
+        uint32_t ain_c    = static_cast<uint32_t>(header.analog_in_count);
+        uint32_t aout_c   = static_cast<uint32_t>(header.analog_out_count);
+
+        uint32_t bits_bytes = (din_c + dout_c + bool_c + 7u) / 8u;
+        uint32_t floats_off = (bits_bytes + 3u) & ~3u;
+        uint32_t ints_off   = (floats_off + float_c * 4u + 3u) & ~3u;
+        uint32_t cmplx_off  = (ints_off   + int_c   * 4u + 3u) & ~3u;
+        uint32_t ain_off    = (cmplx_off  + cmplx_c * 8u + 3u) & ~3u;
+        uint32_t aout_off   = (ain_off    + ain_c   * 8u + 3u) & ~3u;
+        uint32_t arena_bytes = aout_off + aout_c * 4u;
+
+        int total_state_bytes = 0;
+        for (int k = 1; k < LE_BLK_LAST; k++) {
+            auto sit = state_descs.find((uint8_t)k);
+            if (sit == state_descs.end() || sit->second <= 0) continue;
+            uint16_t sz = le_rt_kind_size((uint8_t)k);
+            if (sz == 0) continue;
+            total_state_bytes += (int)sz * sit->second;
+        }
+
+        uint32_t total_ram_needed = arena_bytes + static_cast<uint32_t>(total_state_bytes);
+        if (total_ram_needed > static_cast<uint32_t>(workspace_bytes)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_ram_needed) +
+                " bytes of RAM (" + std::to_string(arena_bytes) + " bytes packed registers + " +
+                std::to_string(total_state_bytes) + " bytes element state), but target board '" + dev_name +
+                "' has a " + std::to_string(workspace_bytes) + "-byte RAM workspace.");
+        }
+
+        int slot_size = limits.get("slot_size_bytes").as_int(2048);
+        if (static_cast<int>(total_bin_size) > slot_size) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Compiled binary size (" + std::to_string(total_bin_size) +
+                " bytes) exceeds slot storage capacity (" + std::to_string(slot_size) + " bytes) of target board '" + dev_name + "'.");
+        }
+
+        int nv_limit = limits.get("nvram_total_bytes").as_int(0);
+        if (nv_limit <= 0) {
+            nv_limit = limits.get("nvram_bytes").as_int(LE_NVRAM_TOTAL_BYTES);
+        }
+        uint32_t total_nvram_avail = static_cast<uint32_t>(nv_limit);
+        uint32_t config_slots = static_cast<uint32_t>(std::max(1, limits.get("config_slots").as_int(LE_MAX_CONFIG_SLOTS)));
+        uint32_t total_nvram_needed = static_cast<uint32_t>(sizeof(le_nvram_manifest_t)) +
+                                      (nvmd.retentive_bytes * config_slots) +
+                                      nvmd.ser_bytes +
+                                      nvmd.event_bytes;
+
+        if (has_nvmd && (total_nvram_needed > total_nvram_avail)) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_nvram_needed) +
+                " bytes of NVRAM (" + std::to_string(nvmd.retentive_bytes * config_slots) + " bytes retentive registers across " +
+                std::to_string(config_slots) + " slots + " + std::to_string(nvmd.ser_bytes) + " bytes SER log + " +
+                std::to_string(nvmd.event_bytes) + " bytes Event Recorder), but target board '" + dev_name +
+                "' only supports " + std::to_string(total_nvram_avail) + " bytes.");
+        }
+
+        bool prot_enabled = features.get("protection").as_bool(true);
+        if (uses_protection && !prot_enabled) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses Protection & Control features, but target board '" + dev_name + "' has protection disabled.");
+        }
+
+        bool serial_enabled = features.get("serial_bus").as_bool(true);
+        if (uses_serial_bus && !serial_enabled) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit uses Serial Bus features, but target board '" + dev_name + "' has serial bus disabled.");
+        }
+
+        bool dsp_enabled = features.get("dsp").as_bool(true);
+        if (uses_dsp && !dsp_enabled) {
+            board_valid = false;
+            out_errors.push_back("Board Validation Error: Circuit requires DSP and signal conditioning filters, but DSP engine is unsupported on " + dev_name + ".");
+        }
+    }
+
+    return board_valid;
+}
+
 int CompilerCore::compile(const std::string& circuit_json_str,
                           const std::string& board_json_str,
                           le_compile_result_t* out_result)
@@ -599,145 +1398,28 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     }
     // 2. Parse Board Profile JSON if provided
     JsonValue board_doc;
-    bool has_board = false;
-    if (!board_json_str.empty()) {
-        try {
-            board_doc = JsonValue::parse(board_json_str);
-            has_board = board_doc.is_object();
-        } catch (...) {
-            // Ignore optional board parsing error or note warning
-        }
-    }
-
-    // Extract board pin mappings & aliases
-    std::map<std::string, std::string> alias_to_addr;
-    std::map<std::string, CustomNodeInfo> custom_nodes;
-    std::vector<std::string> custom_headers;
-    bool board_pm_has_pinmap = false;
-    int derived_din = 0;
-    int derived_dout = 0;
-    int derived_ain = 0;
-    int derived_aout = 0;
-
-    uint16_t effective_target_version = static_cast<uint16_t>(options.target_version > 0 ? options.target_version : LE_CONTAINER_VERSION);
-
-    if (has_board) {
-        if (board_doc.contains("device") && board_doc.get("device").is_object()) {
-            const auto& dev = board_doc.get("device");
-            if (dev.contains("container_version")) {
-                int b_cv = dev.get("container_version").as_int(0);
-                if (b_cv > 0 && options.target_version == 13) {
-                    effective_target_version = static_cast<uint16_t>(b_cv);
-                }
-            }
-        }
-        if (board_doc.contains("pin_map") && board_doc.get("pin_map").is_object()) {
-            board_pm_has_pinmap = true;
-            const auto& pm = board_doc.get("pin_map").as_object();
-
-            int board_pm_din_count = 0, board_pm_max_din_idx = -1;
-            int board_pm_dout_count = 0, board_pm_max_dout_idx = -1;
-            int board_pm_ain_count = 0, board_pm_max_ain_idx = -1;
-            int board_pm_aout_count = 0, board_pm_max_aout_idx = -1;
-
-            auto scan_aliases = [&](const JsonValue& obj, int& count, int& max_idx) {
-                if (!obj.is_object()) return;
-                for (const auto& kv : obj.as_object()) {
-                    count++;
-                    int idx = -1;
-                    size_t pos = kv.first.find_first_of("0123456789");
-                    if (pos != std::string::npos) {
-                        try { idx = std::stoi(kv.first.substr(pos)); } catch (...) {}
-                    }
-                    if (idx > max_idx) max_idx = idx;
-
-                    if (kv.second.is_object() && kv.second.contains("alias")) {
-                        std::string al = kv.second.get("alias").as_string();
-                        if (!al.empty()) alias_to_addr[al] = kv.first;
-                    }
-                }
-            };
-
-            // Digital inputs & outputs (hierarchical "digital" or flat "inputs"/"outputs")
-            if (pm.find("digital") != pm.end() && pm.at("digital").is_object()) {
-                const auto& dig = pm.at("digital").as_object();
-                if (dig.find("inputs") != dig.end()) scan_aliases(dig.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
-                if (dig.find("outputs") != dig.end()) scan_aliases(dig.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
-            } else {
-                if (pm.find("inputs") != pm.end()) scan_aliases(pm.at("inputs"), board_pm_din_count, board_pm_max_din_idx);
-                if (pm.find("outputs") != pm.end()) scan_aliases(pm.at("outputs"), board_pm_dout_count, board_pm_max_dout_idx);
-            }
-
-            // Analog inputs & outputs (hierarchical "analog" or flat "analogs"/"analog_outputs")
-            if (pm.find("analog") != pm.end() && pm.at("analog").is_object() &&
-                (pm.at("analog").as_object().find("inputs") != pm.at("analog").as_object().end() ||
-                 pm.at("analog").as_object().find("outputs") != pm.at("analog").as_object().end())) {
-                const auto& an = pm.at("analog").as_object();
-                if (an.find("inputs") != an.end()) scan_aliases(an.at("inputs"), board_pm_ain_count, board_pm_max_ain_idx);
-                if (an.find("outputs") != an.end()) scan_aliases(an.at("outputs"), board_pm_aout_count, board_pm_max_aout_idx);
-            } else {
-                std::string ain_key;
-                if (pm.find("analogs") != pm.end() && pm.at("analogs").is_object()) ain_key = "analogs";
-                else if (pm.find("analog") != pm.end() && pm.at("analog").is_object()) ain_key = "analog";
-                else if (pm.find("analog_inputs") != pm.end() && pm.at("analog_inputs").is_object()) ain_key = "analog_inputs";
-                if (!ain_key.empty()) scan_aliases(pm.at(ain_key), board_pm_ain_count, board_pm_max_ain_idx);
-
-                if (pm.find("analog_outputs") != pm.end()) scan_aliases(pm.at("analog_outputs"), board_pm_aout_count, board_pm_max_aout_idx);
-            }
-
-            derived_din = std::max(board_pm_din_count, board_pm_max_din_idx + 1);
-            derived_dout = std::max(board_pm_dout_count, board_pm_max_dout_idx + 1);
-            derived_ain = std::max(board_pm_ain_count, board_pm_max_ain_idx + 1);
-            derived_aout = std::max(board_pm_aout_count, board_pm_max_aout_idx + 1);
-        }
-
-        if (board_doc.contains("custom_nodes") && board_doc.get("custom_nodes").is_array()) {
-            for (const auto& cn_val : board_doc.get("custom_nodes").as_array()) {
-                if (!cn_val.is_object()) continue;
-                CustomNodeInfo info;
-                info.type_id = cn_val.get("type_id").as_string(cn_val.get("type").as_string(cn_val.get("name").as_string()));
-                info.display_name = cn_val.get("display_name").as_string(info.type_id);
-                info.category = cn_val.get("category").as_string("Custom");
-                info.description = cn_val.get("description").as_string();
-                info.function_id = static_cast<uint8_t>(cn_val.get("function_id").as_int(1));
-                info.c_header = cn_val.get("c_header").as_string(cn_val.get("header").as_string());
-                if (!info.c_header.empty()) {
-                    if (std::find(custom_headers.begin(), custom_headers.end(), info.c_header) == custom_headers.end()) {
-                        custom_headers.push_back(info.c_header);
-                    }
-                }
-
-                if (cn_val.contains("inputs") && cn_val.get("inputs").is_array()) {
-                    for (const auto& p : cn_val.get("inputs").as_array()) {
-                        CustomPinInfo pi;
-                        pi.name = p.get("name").as_string();
-                        pi.type = p.get("type").as_string("bool");
-                        info.inputs.push_back(pi);
-                    }
-                }
-                if (cn_val.contains("outputs") && cn_val.get("outputs").is_array()) {
-                    for (const auto& p : cn_val.get("outputs").as_array()) {
-                        CustomPinInfo pi;
-                        pi.name = p.get("name").as_string();
-                        pi.type = p.get("type").as_string("bool");
-                        info.outputs.push_back(pi);
-                    }
-                }
-
-                if (!info.type_id.empty()) {
-                    custom_nodes[info.type_id] = info;
-                }
-            }
-        }
-    }
+    BoardProfile board = parse_board_profile(
+        board_json_str,
+        static_cast<uint16_t>(options.target_version > 0 ? options.target_version : LE_CONTAINER_VERSION),
+        board_doc
+    );
+    uint16_t effective_target_version = board.effective_target_version;
+    auto& alias_to_addr = board.alias_to_addr;
+    auto& custom_nodes = board.custom_nodes;
+    auto& custom_headers = board.custom_headers;
+    bool board_pm_has_pinmap = board.has_pinmap;
+    bool has_board = board.has_board;
+    int derived_din = board.derived_din;
+    int derived_dout = board.derived_dout;
+    int derived_ain = board.derived_ain;
+    int derived_aout = board.derived_aout;
 
     // Expand any CODE_BLOCK elements before compiling
-    std::string cb_error;
-    std::vector<std::string> cb_warnings;
-    if (!CodeBlockExpander::expand_code_blocks(circuit_doc, cb_error, cb_warnings)) {
+    CodeBlockResult cb_result = CodeBlockExpander::expand(circuit_doc);
+    if (!cb_result.success) {
         out_result->success = 0;
-        out_result->error_message = (char*)std::malloc(cb_error.size() + 1);
-        std::strcpy(out_result->error_message, cb_error.c_str());
+        out_result->error_message = (char*)std::malloc(cb_result.error_message.size() + 1);
+        std::strcpy(out_result->error_message, cb_result.error_message.c_str());
         return -1;
     }
 
@@ -754,18 +1436,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     if (design_scan_hz > 65535.0) design_scan_hz = 65535.0;
 
     // Reset allocators
-    m_user_bool_count = 0;
-    m_user_int_count = 0;
-    m_user_float_count = 0;
-    m_user_complex_count = 0;
-    m_peak_temp_bool = 0;
-    m_peak_temp_float = 0;
-    m_peak_temp_complex = 0;
-    m_peak_temp_int = 0;
-    m_free_temp_bool_pool.clear();
-    m_free_temp_float_pool.clear();
-    m_free_temp_complex_pool.clear();
-    m_free_temp_int_pool.clear();
+    m_reg_alloc.reset();
 
     std::map<std::string, uint16_t> din_map;
     std::map<std::string, uint16_t> dout_map;
@@ -935,11 +1606,11 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     }
 
     // Check for duplicate drivers on same DOUT
-    for (const auto& kv : output_drivers) {
-        if (kv.second.size() > 1) {
+    for (const auto& [addr, drivers] : output_drivers) {
+        if (drivers.size() > 1) {
             std::ostringstream ss;
             ss << "Duplicate Output Error: Multiple output blocks drive the same output channel %Q"
-               << (kv.first & 0x0FFF) << ".";
+               << (addr & 0x0FFF) << ".";
             std::string err = ss.str();
             out_result->success = 0;
             out_result->error_message = (char*)std::malloc(err.size() + 1);
@@ -957,333 +1628,23 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     }
 
     auto deduce_element_type = [&](const std::string& node_name) -> int {
-        // 0: Bool, 1: Float, 2: Int, 3: Complex
-        auto it = elem_by_name.find(node_name);
-        if (it == elem_by_name.end()) return 0;
-        const auto& el = it->second;
-        std::string dt = to_lower_str(el.get("dataType").as_string(el.get("data_type").as_string("")));
-        if (dt == "float" || dt == "real" || dt == "double") return 1;
-        if (dt == "int" || dt == "integer" || dt == "int32" || dt == "uint32") return 2;
-        if (dt == "complex") return 3;
-        if (dt == "bool" || dt == "boolean") return 0;
-
-        std::string type = to_upper_str(el.get("type").as_string());
-        if (type == "FLOATREGISTER" || type == "LE_FLOATREGISTER" ||
-            type == "ADD" || type == "LE_ADD" ||
-            type == "SUB" || type == "SUBTRACT" || type == "LE_SUB" ||
-            type == "MUL" || type == "MULTIPLY" || type == "LE_MUL" ||
-            type == "DIV" || type == "DIVIDE" || type == "LE_DIV" ||
-            type == "ABS" || type == "LE_ABS" ||
-            type == "NEG" || type == "LE_NEG" ||
-            type == "MIN" || type == "LE_MIN" ||
-            type == "MAX" || type == "LE_MAX" ||
-            type == "CLAMP" || type == "LE_CLAMP" ||
-            type == "PID" || type == "LE_PID" ||
-            type == "LPF" || type == "LE_LPF" || type == "LPF_1P" ||
-            type == "BIQUAD" || type == "LE_BIQUAD" || type == "BIQUAD_IIR" ||
-            type == "MOVING_AVG" || type == "LE_MOVING_AVG" || type == "WINDOW_AVG" ||
-            type == "RATE_LIMITER" || type == "LE_RATE_LIMITER" || type == "SLEW_LIMITER" ||
-            type == "DEADBAND" || type == "LE_DEADBAND" ||
-            type == "WASHOUT" || type == "LE_WASHOUT" ||
-            type == "PEAK_DETECTOR" || type == "LE_PEAK_DETECTOR" || type == "ENVELOPE" ||
-            type == "RMS" || type == "LE_RMS" ||
-            type == "MEDIAN" || type == "LE_MEDIAN" || type == "MEDIAN_FILTER" ||
-            type == "DERIVATIVE" || type == "LE_DERIVATIVE" ||
-            type == "ZERO_CROSSING" || type == "LE_ZERO_CROSSING" ||
-            type == "LUT_1D" || type == "LE_LUT_1D" || type == "LUT" ||
-            type == "TOTALIZER" || type == "LE_TOTALIZER" ||
-            type == "MIN_MAX_HOLD" || type == "LE_MIN_MAX_HOLD" ||
-            type == "RECT2POLAR" || type == "LE_RECT2POLAR" ||
-            type == "POLAR2RECT" || type == "LE_POLAR2RECT" ||
-            type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT" ||
-            type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR" ||
-            type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT" ||
-            type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX" ||
-            type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX" ||
-            type == "ANALOGINPUT" || type == "LE_ANALOG_INPUT" || type == "LE_ANALOGINPUT" ||
-            type == "ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "LE_ANALOGOUTPUT" || type == "AOUT") {
-            return 1;
-        }
-
-        if (type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER" ||
-            type == "CADD" || type == "LE_CADD" || type == "C_ADD" ||
-            type == "CSUB" || type == "LE_CSUB" || type == "C_SUB" ||
-            type == "CMUL" || type == "LE_CMUL" || type == "C_MUL" ||
-            type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") {
-            return 3;
-        }
-
-        if (type == "INTREGISTER" || type == "LE_INTREGISTER" ||
-            type == "ADD_I" || type == "LE_ADD_I" ||
-            type == "SUB_I" || type == "LE_SUB_I" ||
-            type == "MUL_I" || type == "LE_MUL_I" ||
-            type == "DIV_I" || type == "LE_DIV_I" ||
-            type == "NEG_I" || type == "LE_NEG_I" ||
-            type == "WORD_AND" || type == "LE_WORD_AND" ||
-            type == "WORD_OR" || type == "LE_WORD_OR" ||
-            type == "WORD_XOR" || type == "LE_WORD_XOR" ||
-            type == "WORD_NOT" || type == "LE_WORD_NOT" ||
-            type == "MOVE_I" || type == "LE_MOVE_I" ||
-            type == "CTU" || type == "LE_CTU" ||
-            type == "CTD" || type == "LE_CTD" ||
-            type == "CTUD" || type == "LE_CTUD") {
-            return 2;
-        }
-
-        std::string custom_type = el.get("custom_type").as_string(el.get("type").as_string());
-        auto cnit = custom_nodes.find(custom_type);
-        if (cnit != custom_nodes.end() && !cnit->second.outputs.empty()) {
-            std::string cot = to_lower_str(cnit->second.outputs[0].type);
-            if (cot.find("float") != std::string::npos || cot.find("real") != std::string::npos) return 1;
-            if (cot.find("complex") != std::string::npos) return 3;
-            if (cot.find("int") != std::string::npos) return 2;
-        }
-
-        return 0;
+        return CompilerCore::deduce_element_type(node_name, elem_by_name, custom_nodes);
     };
 
     // Step 1.9: Detect generalized feedback loops and algebraic cycles (e.g. control loops, accumulators, cross-coupled logic)
-    // In circuits with feedback paths where no explicit register is placed in the loop, one node
-    // in each cycle must hold state across scans as a unit delay (z^-1). We detect these back-edges
-    // and allocate persistent user registers matching the node's data type (bool, float, int, complex).
     std::set<std::string> feedback_state_nodes;
     std::vector<std::string> oscillator_warnings;
-    {
-        std::map<std::string, std::string> tag_send_name;
-        for (const auto& el : elements) {
-            if (!el.is_object()) continue;
-            std::string nm = el.get("name").as_string();
-            std::string type = to_upper_str(el.get("type").as_string());
-            if (type.find("TAG") != std::string::npos) {
-                std::string dir = to_lower_str(el.get("direction").as_string());
-                if (dir == "send") {
-                    std::string tag_nm = el.get("tag_name").as_string(nm);
-                    tag_send_name[tag_nm] = nm;
-                }
-            }
-        }
+    detect_cycles_and_oscillators(elements, nets, elem_by_name, custom_nodes,
+                                  element_outputs, feedback_state_nodes, oscillator_warnings);
 
-        std::map<std::string, std::vector<std::string>> net_graph;
-        for (const auto& net : nets) {
-            if (!net.is_object()) continue;
-            std::string out_elem = net.get("output").get("name").as_string();
-            for (const auto& inp : net.get("inputs").as_array()) {
-                if (!inp.is_object()) continue;
-                std::string target_elem = inp.get("name").as_string();
-                if (!out_elem.empty() && !target_elem.empty()) {
-                    net_graph[target_elem].push_back(out_elem);
-                }
-            }
-        }
-
-        // Bridge tag receivers to tag senders so feedback loops across tags are also detected
-        for (const auto& el : elements) {
-            if (!el.is_object()) continue;
-            std::string type = to_upper_str(el.get("type").as_string());
-            if (type.find("TAG") != std::string::npos) {
-                std::string dir = to_lower_str(el.get("direction").as_string());
-                if (dir != "send") {
-                    std::string nm = el.get("name").as_string();
-                    std::string tag_nm = el.get("tag_name").as_string(nm);
-                    auto it_snd = tag_send_name.find(tag_nm);
-                    if (it_snd != tag_send_name.end() && !it_snd->second.empty()) {
-                        net_graph[nm].push_back(it_snd->second);
-                    }
-                }
-            }
-        }
-
-        std::set<std::string> visited;
-        std::set<std::string> visiting;
-        std::vector<std::string> dfs_path;
-
-        std::function<void(const std::string&)> find_feedback = [&](const std::string& u) {
-            if (visited.count(u)) return;
-            visiting.insert(u);
-            dfs_path.push_back(u);
-
-            auto it = net_graph.find(u);
-            if (it != net_graph.end()) {
-                for (const auto& v : it->second) {
-                    if (visiting.count(v)) {
-                        // v is an ancestor of u in the current DFS path (back-edge detected)
-                        auto it_start = std::find(dfs_path.begin(), dfs_path.end(), v);
-                        if (it_start != dfs_path.end()) {
-                            std::vector<std::string> cycle_nodes(it_start, dfs_path.end());
-
-                            // Check if cycle contains explicit state/storage elements
-                            bool has_state_element = false;
-                            int inversion_count = 0;
-
-                            for (const auto& cn : cycle_nodes) {
-                                auto it_el = elem_by_name.find(cn);
-                                if (it_el != elem_by_name.end()) {
-                                    std::string t = to_upper_str(it_el->second.get("type").as_string());
-                                    if (t == "BOOLREGISTER" || t == "LE_BOOLREGISTER" ||
-                                        t == "INTREGISTER" || t == "LE_INTREGISTER" ||
-                                        t == "FLOATREGISTER" || t == "LE_FLOATREGISTER" ||
-                                        t == "COMPLEXREGISTER" || t == "LE_COMPLEXREGISTER" ||
-                                        t == "TON" || t == "TOF" || t == "TP" ||
-                                        t == "CTU" || t == "CTD" || t == "CTUD" ||
-                                        t == "PID" || t == "LPF" || t == "BIQUAD" ||
-                                        t == "RATE_LIMITER" || t == "TOTALIZER" ||
-                                        t == "SR" || t == "RS" || t == "LATCH" ||
-                                        t == "RTRIG" || t == "FTRIG") {
-                                        has_state_element = true;
-                                        break;
-                                    }
-                                    if (t == "NOT" || t == "LE_NOT" ||
-                                        t == "NAND" || t == "LE_NAND" ||
-                                        t == "NOR" || t == "LE_NOR") {
-                                        inversion_count++;
-                                    }
-                                }
-                            }
-
-                            // If pure combinatorial loop with odd inversion count, flag hazard warning!
-                            if (!has_state_element && (inversion_count % 2 != 0)) {
-                                std::string cycle_str;
-                                for (size_t i = 0; i < cycle_nodes.size(); ++i) {
-                                    if (i > 0) cycle_str += " -> ";
-                                    cycle_str += cycle_nodes[i];
-                                }
-                                cycle_str += " -> " + v;
-                                std::string warn_msg = "Warning: Combinatorial ring oscillator detected with odd inversion parity along path: " +
-                                                       cycle_str + " (hazard: synthesizing unit-delay register to prevent runtime glitch).";
-                                if (std::find(oscillator_warnings.begin(), oscillator_warnings.end(), warn_msg) == oscillator_warnings.end()) {
-                                    oscillator_warnings.push_back(warn_msg);
-                                }
-                            }
-                        }
-
-                        // If v does not already have a persistent address allocated, mark it as a feedback state driver!
-                        if (element_outputs.find(v) == element_outputs.end() && feedback_state_nodes.find(v) == feedback_state_nodes.end()) {
-                            feedback_state_nodes.insert(v);
-                        }
-                    } else if (!visited.count(v)) {
-                        find_feedback(v);
-                    }
-                }
-            }
-            dfs_path.pop_back();
-            visiting.erase(u);
-            visited.insert(u);
-        };
-
-        for (const auto& kv : net_graph) {
-            find_feedback(kv.first);
-        }
-
-        for (const std::string& fn : feedback_state_nodes) {
-            if (element_outputs.find(fn) == element_outputs.end()) {
-                int t = deduce_element_type(fn);
-                if (t == 1) {
-                    element_outputs[fn] = allocate_user_float();
-                } else if (t == 2) {
-                    element_outputs[fn] = allocate_user_int();
-                } else if (t == 3) {
-                    element_outputs[fn] = allocate_user_complex();
-                } else {
-                    element_outputs[fn] = allocate_user_bool();
-                }
-            }
-        }
-    }
-
-    // Step 1b: Parse + resolve the circuit's "aliases" object.
-    // Each alias maps a short name (<= LE_ALIAS_NAME_MAX chars) to a register
-    // address. The target may be a register mnemonic ("%B0", "%F2", "%OUT1"),
-    // an element name (e.g. a BOOLREGISTER/FLOATREGISTER output), or a board
-    // pin alias supplied by the board profile. Only explicitly declared aliases
-    // (this object) are embedded; board aliases are never auto-baked, so adding
-    // a board profile never grows the .lebin.
+    // Step 1b & 1c: Parse + resolve circuit aliases and inline element aliases
     std::vector<le_alias_t> alias_list;
-    if (circuit_doc.contains("aliases") && circuit_doc.get("aliases").is_object()) {
-        const auto& als = circuit_doc.get("aliases").as_object();
-        for (const auto& kv : als) {
-            std::string nm = kv.first;
-            std::string target = kv.second.is_string() ? kv.second.as_string() : "";
-            std::string err;
-            if (nm.empty() || nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
-                err = "Alias Error: alias name '" + nm + "' must be 1.." +
-                      std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
-            } else if (target.empty()) {
-                err = "Alias Error: alias '" + nm + "' has no target register.";
-            } else {
-                uint16_t addr = 0;
-                bool ok = false;
-                if (element_outputs.find(target) != element_outputs.end()) {
-                    addr = element_outputs[target];
-                    ok = true;
-                } else {
-                    std::string resolved = target;
-                    auto bit = alias_to_addr.find(target);
-                    if (bit != alias_to_addr.end()) resolved = bit->second;
-                    ok = parse_register_addr(resolved, &addr);
-                }
-                if (!ok) {
-                    err = "Alias Error: alias '" + nm + "' target '" + target +
-                          "' is not a valid register or element.";
-                } else {
-                    le_alias_t a;
-                    std::memset(&a, 0, sizeof(a));
-                    std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
-                    a.kind = 0; a.pad = 0;
-                    a.addr = addr;
-                    alias_list.push_back(a);
-                }
-            }
-            if (!err.empty()) {
-                out_result->success = 0;
-                out_result->error_message = (char*)std::malloc(err.size() + 1);
-                std::strcpy(out_result->error_message, err.c_str());
-                return -1;
-            }
-        }
-    }
-
-    // Step 1c: Also discover inline element aliases if not already in alias_list
-    for (const auto& el : elements) {
-        if (!el.is_object()) continue;
-        if (!el.contains("alias")) continue;
-        std::string nm = el.get("alias").as_string();
-        if (nm.empty()) continue;
-        if (nm.size() > (size_t)LE_ALIAS_NAME_MAX) {
-            std::string err = "Alias Error: element alias '" + nm + "' must be 1.." +
-                              std::to_string(LE_ALIAS_NAME_MAX) + " characters.";
-            out_result->success = 0;
-            out_result->error_message = (char*)std::malloc(err.size() + 1);
-            std::strcpy(out_result->error_message, err.c_str());
-            return -1;
-        }
-        // Check if already registered
-        bool already_added = false;
-        for (const auto& a : alias_list) {
-            if (std::strncmp(a.name, nm.c_str(), LE_ALIAS_NAME_MAX) == 0) {
-                already_added = true;
-                break;
-            }
-        }
-        if (already_added) continue;
-
-        std::string elem_name = el.get("name").as_string();
-        uint16_t addr = 0;
-        bool ok = false;
-        if (element_outputs.find(elem_name) != element_outputs.end()) {
-            addr = element_outputs[elem_name];
-            ok = true;
-        } else if (el.contains("address")) {
-            std::string explicit_addr = el.get("address").as_string();
-            ok = parse_register_addr(explicit_addr, &addr);
-        }
-        if (ok) {
-            le_alias_t a;
-            std::memset(&a, 0, sizeof(a));
-            std::strncpy(a.name, nm.c_str(), LE_ALIAS_NAME_MAX);
-            a.kind = 0; a.pad = 0;
-            a.addr = addr;
-            alias_list.push_back(a);
-        }
+    std::string alias_err;
+    if (resolve_circuit_aliases(circuit_doc, elements, element_outputs, alias_to_addr, alias_list, alias_err) != 0) {
+        out_result->success = 0;
+        out_result->error_message = (char*)std::malloc(alias_err.size() + 1);
+        std::strcpy(out_result->error_message, alias_err.c_str());
+        return -1;
     }
 
     // Step 2: Map connections (target_elem -> { port_name -> source_elem_name })
@@ -1334,10 +1695,9 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
 
     std::map<std::string, std::string> tag_effective_source;
     std::vector<std::string> warning_list;
-    warning_list.insert(warning_list.end(), cb_warnings.begin(), cb_warnings.end());
+    warning_list.insert(warning_list.end(), cb_result.warnings.begin(), cb_result.warnings.end());
     warning_list.insert(warning_list.end(), oscillator_warnings.begin(), oscillator_warnings.end());
 
-    
     for (const auto& el : elements) {
         if (!el.is_object()) continue;
         std::string type = to_upper_str(el.get("type").as_string());
@@ -1420,42 +1780,42 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     int current_rate_domain = 0;
 
     // Populate folded constants into element_outputs
-    for (const auto& kv : opt_nodes) {
-        if (kv.second.is_const) {
-            if (kv.second.const_type == "bool") {
-                element_outputs[kv.first] = kv.second.const_bool ? LE_CONST_TRUE : LE_CONST_FALSE;
-            } else if (kv.second.const_type == "float") {
-                float f = kv.second.const_float;
+    for (const auto& [node_name, opt_node] : opt_nodes) {
+        if (opt_node.is_const) {
+            if (opt_node.const_type == "bool") {
+                element_outputs[node_name] = opt_node.const_bool ? LE_CONST_TRUE : LE_CONST_FALSE;
+            } else if (opt_node.const_type == "float") {
+                float f = opt_node.const_float;
                 if (std::abs(f - 0.0f) < 1e-6f) {
-                    element_outputs[kv.first] = LE_CONST_ZERO_F;
+                    element_outputs[node_name] = LE_CONST_ZERO_F;
                 } else if (std::abs(f - 1.0f) < 1e-6f) {
-                    element_outputs[kv.first] = LE_CONST_ONE_F;
+                    element_outputs[node_name] = LE_CONST_ONE_F;
                 } else if (std::abs(f - 60.0f) < 1e-6f) {
-                    element_outputs[kv.first] = LE_CONST_60_F;
+                    element_outputs[node_name] = LE_CONST_60_F;
                 } else {
                     auto it_c = float_const_map.find(f);
                     if (it_c != float_const_map.end()) {
-                        element_outputs[kv.first] = it_c->second;
+                        element_outputs[node_name] = it_c->second;
                     } else {
                         uint16_t addr = allocate_user_float();
-                        element_outputs[kv.first] = addr;
+                        element_outputs[node_name] = addr;
                         float_const_map[f] = addr;
                         float_constants.push_back({addr, f});
                     }
                 }
             } else {
-                int i = kv.second.const_int;
+                int i = opt_node.const_int;
                 if (i == 0) {
-                    element_outputs[kv.first] = LE_CONST_FALSE;
+                    element_outputs[node_name] = LE_CONST_FALSE;
                 } else if (i == 1) {
-                    element_outputs[kv.first] = LE_CONST_TRUE;
+                    element_outputs[node_name] = LE_CONST_TRUE;
                 } else {
                     auto it_c = int_const_map.find(i);
                     if (it_c != int_const_map.end()) {
-                        element_outputs[kv.first] = it_c->second;
+                        element_outputs[node_name] = it_c->second;
                     } else {
                         uint16_t addr = allocate_user_int();
-                        element_outputs[kv.first] = addr;
+                        element_outputs[node_name] = addr;
                         int_const_map[i] = addr;
                         int_constants.push_back({addr, i});
                     }
@@ -1470,8 +1830,7 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
     std::map<std::string, TempType> node_temp_type;
     std::map<std::string, int> ref_counts;
 
-    for (const auto& kv : opt_nodes) {
-        const auto& opt_node = kv.second;
+    for (const auto& [node_name, opt_node] : opt_nodes) {
         if (opt_node.is_dead || opt_node.direct_dest_eliminated) continue;
         if (opt_node.type == "DIGITALINPUT" || opt_node.type == "INPUT") continue;
         if (opt_node.type.find("TAG") != std::string::npos) {
@@ -1522,8 +1881,9 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         le_instruction_t inst{};
         inst.opcode = LE_OP_LOAD_F;
         inst.modifier = 0;
-        uint32_t raw = 0;
-        std::memcpy(&raw, &fc.second, sizeof(float));
+        uint8_t float_bytes[4];
+        le_write_f32_le(float_bytes, fc.second);
+        uint32_t raw = le_read_u32_le(float_bytes);
         inst.in_a = static_cast<uint16_t>(raw & 0xFFFF);
         inst.in_b = static_cast<uint16_t>((raw >> 16) & 0xFFFF);
         inst.out = fc.first;
@@ -1533,7 +1893,9 @@ int CompilerCore::compile_ex(const std::string& circuit_json_str,
         le_instruction_t inst{};
         inst.opcode = LE_OP_LOAD_I;
         inst.modifier = 0;
-        uint32_t raw = static_cast<uint32_t>(ic.second);
+        uint8_t int_bytes[4];
+        le_write_u32_le(int_bytes, static_cast<uint32_t>(ic.second));
+        uint32_t raw = le_read_u32_le(int_bytes);
         inst.in_a = static_cast<uint16_t>(raw & 0xFFFF);
         inst.in_b = static_cast<uint16_t>((raw >> 16) & 0xFFFF);
         inst.out = ic.first;
@@ -2493,10 +2855,10 @@ if (type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING") {
             if (ph.samples_per_cycle == 0 || ph.samples_per_cycle > LE_MAX_RAW_SAMPLES)
                 ph.samples_per_cycle = 16;
             phasor_samples_est = ph.samples_per_cycle;
-            
+
             // Initialize self_sync property (default: false = sync-referenced)
             ph.self_sync = prop(el, "self_sync", false);
-            
+
             // Transient runtime fields (raw_write_idx, raw_samples, phasor, mag, angle) are zero-initialized
             append_state(LE_BLK_PHASOR, &ph, sizeof(ph));
 
@@ -3264,35 +3626,35 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
 
     uint32_t crc = compute_crc32(payload_all.data(), total_payload);
 
-    int total_bool_regs = m_user_bool_count + m_peak_temp_bool;
-    int total_float_regs = m_user_float_count + m_peak_temp_float;
-    int total_complex_regs = m_user_complex_count + m_peak_temp_complex;
-    int total_int_regs = m_user_int_count + m_peak_temp_int;
+    int total_bool_regs = m_reg_alloc.total_bool_registers();
+    int total_float_regs = m_reg_alloc.total_float_registers();
+    int total_complex_regs = m_reg_alloc.total_complex_registers();
+    int total_int_regs = m_reg_alloc.total_int_registers();
 
     int max_din_idx = -1;
-    for (const auto& pair : din_map) {
-        int idx = pair.second & 0x0FFF;
+    for (const auto& [name, addr] : din_map) {
+        int idx = addr & 0x0FFF;
         if (idx > max_din_idx) max_din_idx = idx;
     }
     int eff_din_count = std::max(static_cast<int>(din_map.size()), max_din_idx + 1);
 
     int max_dout_idx = -1;
-    for (const auto& pair : dout_map) {
-        int idx = pair.second & 0x0FFF;
+    for (const auto& [name, addr] : dout_map) {
+        int idx = addr & 0x0FFF;
         if (idx > max_dout_idx) max_dout_idx = idx;
     }
     int eff_dout_count = std::max(static_cast<int>(dout_map.size()), max_dout_idx + 1);
 
     int max_ain_idx = -1;
-    for (const auto& pair : ain_map) {
-        int idx = pair.second & 0x0FFF;
+    for (const auto& [name, addr] : ain_map) {
+        int idx = addr & 0x0FFF;
         if (idx > max_ain_idx) max_ain_idx = idx;
     }
     int eff_ain_count = std::max(static_cast<int>(ain_map.size()), max_ain_idx + 1);
 
     int max_aout_idx = -1;
-    for (const auto& pair : aout_map) {
-        int idx = pair.second & 0x0FFF;
+    for (const auto& [name, addr] : aout_map) {
+        int idx = addr & 0x0FFF;
         if (idx > max_aout_idx) max_aout_idx = idx;
     }
     int eff_aout_count = std::max(static_cast<int>(aout_map.size()), max_aout_idx + 1);
@@ -3347,227 +3709,10 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     }
 
     /* Step 5b: Circuit-Driven NVRAM Requirements & Dynamic Partitioning */
-    le_nvram_desc_t nvmd;
-    std::memset(&nvmd, 0, sizeof(nvmd));
-    bool has_nvmd = false;
-
-    const JsonValue* nv_obj = nullptr;
-    if (circuit_doc.contains("nvram") && circuit_doc.get("nvram").is_object()) {
-        nv_obj = &circuit_doc.get("nvram");
-        has_nvmd = true;
-    }
-
-    uint32_t explicit_retentive_bytes = 0;
-    uint32_t ser_records = 0;
-    uint32_t explicit_ser_bytes = 0;
-    uint32_t event_records = 0;
-    uint32_t explicit_event_bytes = 0;
-
-    if (nv_obj) {
-        if (nv_obj->contains("retentive_bytes")) {
-            explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("retentive_bytes").as_int(0)));
-        }
-        if (nv_obj->contains("ser_records")) {
-            ser_records = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_records").as_int(0)));
-        }
-        if (nv_obj->contains("ser_bytes")) {
-            explicit_ser_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("ser_bytes").as_int(0)));
-        }
-        if (nv_obj->contains("event_records")) {
-            event_records = static_cast<uint32_t>(std::max(0, nv_obj->get("event_records").as_int(0)));
-        }
-        if (nv_obj->contains("event_bytes")) {
-            explicit_event_bytes = static_cast<uint32_t>(std::max(0, nv_obj->get("event_bytes").as_int(0)));
-        }
-    }
-
-    // Top-level fallbacks in circuit JSON
-    if (circuit_doc.contains("retentive_bytes")) {
-        explicit_retentive_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("retentive_bytes").as_int(0)));
-        has_nvmd = true;
-    }
-    if (circuit_doc.contains("ser_records")) {
-        ser_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_records").as_int(0)));
-        has_nvmd = true;
-    }
-    if (circuit_doc.contains("ser_bytes")) {
-        explicit_ser_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("ser_bytes").as_int(0)));
-        has_nvmd = true;
-    }
-    if (circuit_doc.contains("event_records")) {
-        event_records = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_records").as_int(0)));
-        has_nvmd = true;
-    }
-    if (circuit_doc.contains("event_bytes")) {
-        explicit_event_bytes = static_cast<uint32_t>(std::max(0, circuit_doc.get("event_bytes").as_int(0)));
-        has_nvmd = true;
-    }
-
-    // Discover retentive register targets
-    std::set<uint16_t> retentive_addrs;
-
-    auto add_retentive_addr = [&](const std::string& target) {
-        if (target.empty()) return;
-        // Check if target is a range (e.g. "%B0-%B15" or "%B0..%B15")
-        size_t dash_pos = target.find('-');
-        size_t dot_pos = target.find("..");
-        if (dot_pos != std::string::npos || (dash_pos != std::string::npos && dash_pos > 0)) {
-            std::string s_start, s_end;
-            if (dot_pos != std::string::npos) {
-                s_start = target.substr(0, dot_pos);
-                s_end = target.substr(dot_pos + 2);
-            } else {
-                s_start = target.substr(0, dash_pos);
-                s_end = target.substr(dash_pos + 1);
-            }
-            uint16_t a1 = 0, a2 = 0;
-            if (parse_register_addr(s_start, &a1) && parse_register_addr(s_end, &a2)) {
-                if ((a1 & LE_ADDR_REGION_MASK) == (a2 & LE_ADDR_REGION_MASK) && a2 >= a1) {
-                    for (uint32_t a = a1; a <= a2; ++a) {
-                        retentive_addrs.insert(static_cast<uint16_t>(a));
-                    }
-                    return;
-                }
-            }
-        }
-
-        // Check element_outputs
-        auto eit = element_outputs.find(target);
-        if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
-            retentive_addrs.insert(eit->second);
-            return;
-        }
-
-        // Check alias mapping
-        std::string resolved = target;
-        auto bit = alias_to_addr.find(target);
-        if (bit != alias_to_addr.end()) resolved = bit->second;
-
-        uint16_t addr = 0;
-        if (parse_register_addr(resolved, &addr)) {
-            retentive_addrs.insert(addr);
-        }
-    };
-
-    // 1. Process retentive_registers list in nvram object or top-level
-    const JsonValue* ret_regs_val = nullptr;
-    if (nv_obj && nv_obj->contains("retentive_registers")) {
-        ret_regs_val = &nv_obj->get("retentive_registers");
-    } else if (circuit_doc.contains("retentive_registers")) {
-        ret_regs_val = &circuit_doc.get("retentive_registers");
-    }
-
-    if (ret_regs_val && ret_regs_val->is_array()) {
-        has_nvmd = true;
-        for (const auto& item : ret_regs_val->as_array()) {
-            if (item.is_string()) {
-                add_retentive_addr(item.as_string());
-            } else if (item.is_number()) {
-                retentive_addrs.insert(static_cast<uint16_t>(item.as_int()));
-            } else if (item.is_object()) {
-                std::string s_addr = item.get("start").is_string() ? item.get("start").as_string() :
-                                     (item.get("address").is_string() ? item.get("address").as_string() : "");
-                int cnt = item.get("count").as_int(1);
-                uint16_t base_addr = 0;
-                if (!s_addr.empty() && parse_register_addr(s_addr, &base_addr)) {
-                    for (int c = 0; c < cnt; ++c) {
-                        retentive_addrs.insert(static_cast<uint16_t>(base_addr + c));
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Discover inline element "retentive": true
-    for (const auto& el : elements) {
-        if (el.get("retentive").as_bool(false)) {
-            has_nvmd = true;
-            std::string el_id = el.get("id").as_string();
-            if (!el_id.empty()) {
-                auto eit = element_outputs.find(el_id);
-                if (eit != element_outputs.end() && eit->second != LE_ADDR_UNUSED) {
-                    retentive_addrs.insert(eit->second);
-                }
-                auto epit = element_outputs_port.find(el_id);
-                if (epit != element_outputs_port.end()) {
-                    for (const auto& kv : epit->second) {
-                        if (kv.second != LE_ADDR_UNUSED) {
-                            retentive_addrs.insert(kv.second);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Coalesce sorted retentive addresses into contiguous ranges
     std::vector<le_nvram_range_t> coalesced_ranges;
-    if (!retentive_addrs.empty()) {
-        auto it = retentive_addrs.begin();
-        uint16_t cur_start = *it;
-        uint16_t cur_count = 1;
-        ++it;
-        for (; it != retentive_addrs.end(); ++it) {
-            uint16_t addr = *it;
-            uint16_t prev_addr = static_cast<uint16_t>(cur_start + cur_count - 1);
-            if (addr == prev_addr + 1 && (addr & LE_ADDR_REGION_MASK) == (prev_addr & LE_ADDR_REGION_MASK)) {
-                cur_count++;
-            } else {
-                le_nvram_range_t rng;
-                rng.start_addr = cur_start;
-                rng.count = cur_count;
-                coalesced_ranges.push_back(rng);
-                cur_start = addr;
-                cur_count = 1;
-            }
-        }
-        le_nvram_range_t rng;
-        rng.start_addr = cur_start;
-        rng.count = cur_count;
-        coalesced_ranges.push_back(rng);
-    }
-
-    // Calculate retentive payload bytes
-    uint32_t retentive_payload_bytes = 0;
-    for (const auto& rng : coalesced_ranges) {
-        uint16_t base = rng.start_addr;
-        uint16_t region = base & LE_ADDR_REGION_MASK;
-        for (uint16_t i = 0; i < rng.count; ++i) {
-            if (region == LE_REGION_BOOL_REG || region == LE_REGION_BOOL_REG_EXT ||
-                region == LE_REGION_DIN || region == LE_REGION_DOUT) {
-                retentive_payload_bytes += 1;
-            } else if (region == LE_REGION_INT_REG || region == LE_REGION_INT_REG_EXT) {
-                retentive_payload_bytes += 4;
-            } else if (region == LE_REGION_CMPLX) {
-                retentive_payload_bytes += 8;
-            } else {
-                retentive_payload_bytes += 4; // Float
-            }
-        }
-    }
-
-    uint32_t calc_regs_bytes = (retentive_payload_bytes > 0) ?
-        static_cast<uint32_t>(sizeof(le_nvram_regs_header_t) + retentive_payload_bytes) : 0;
-    nvmd.retentive_bytes = std::max(explicit_retentive_bytes, calc_regs_bytes);
-
-    uint32_t calc_ser_bytes = (ser_records > 0) ?
-        static_cast<uint32_t>(sizeof(le_ser_nv_header_t) + ser_records * sizeof(le_ser_event_t)) : 0;
-    nvmd.ser_records = ser_records;
-    nvmd.ser_bytes = std::max(explicit_ser_bytes, calc_ser_bytes);
-
-    uint32_t calc_event_bytes = (event_records > 0) ?
-        static_cast<uint32_t>(sizeof(le_event_rec_nv_header_t) + event_records * 32) : 0;
-    nvmd.event_records = event_records;
-    nvmd.event_bytes = std::max(explicit_event_bytes, calc_event_bytes);
-
-    nvmd.retentive_range_count = static_cast<uint16_t>(std::min<size_t>(coalesced_ranges.size(), LE_NVRAM_MAX_RANGES));
-    for (uint16_t ri = 0; ri < nvmd.retentive_range_count; ++ri) {
-        nvmd.ranges[ri] = coalesced_ranges[ri];
-    }
-
-    if (nvmd.retentive_bytes > 0 || nvmd.ser_bytes > 0 || nvmd.event_bytes > 0) {
-        has_nvmd = true;
-    }
+    le_nvram_desc_t nvmd;
+    bool has_nvmd = build_nvram_descriptor(circuit_doc, board_doc, elements, element_outputs,
+                                           element_outputs_port, alias_to_addr, coalesced_ranges, nvmd);
 
     /* Always emit v13 LEB2 chunked container format */
     {
@@ -3602,197 +3747,26 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     out_result->estimated_exec_us = 0.0;
 
     // Step 6: Validate against Board Profile Limits & Version Constraints
-    bool board_valid = true;
     std::vector<std::string> validation_errors;
+    bool board_valid = validate_board_limits(
+        board, board_doc, options, header, has_nvmd, nvmd,
+        coalesced_ranges.size(),
+        din_map.size(), max_din_idx,
+        dout_map.size(), max_dout_idx,
+        ain_map.size(), max_ain_idx,
+        aout_map.size(), max_aout_idx,
+        total_bool_regs, total_float_regs, total_int_regs, total_complex_regs,
+        state_descs, uses_protection, uses_serial_bus, uses_dsp,
+        total_bin_size, validation_errors);
 
-    if (effective_target_version < 13) {
-        if (options.enable_multi_rate) {
-            board_valid = false;
-            validation_errors.push_back("Version Compatibility Error: Multi-rate execution domains (-m / --multi-rate) are not supported when targeting container version " + std::to_string(effective_target_version) + " (introduced in v13).");
-        }
-        if (has_nvmd) {
-            board_valid = false;
-            validation_errors.push_back("Version Compatibility Error: Dynamic NVRAM manifest is not supported when targeting container version " + std::to_string(effective_target_version) + " (introduced in v13).");
-        }
-    }
-
-    if (coalesced_ranges.size() > LE_NVRAM_MAX_RANGES) {
-        board_valid = false;
-        validation_errors.push_back("Circuit Error: Retentive registers require " + std::to_string(coalesced_ranges.size()) +
-            " disjoint ranges, which exceeds the maximum allowed (" + std::to_string(LE_NVRAM_MAX_RANGES) + "). Group registers contiguously.");
-    }
-
-    if (has_board) {
+    /* Fixed-rate achievability (circuit-owned scan rate): the estimated worst-case
+     * scan (compiler cost x board ns/cycle x safety margin) must fit inside the
+     * PERIOD of the circuit's declared scan_rate_hz. If the designer's chosen
+     * rate is unachievable, the error tells them the MAX rate that fits so they
+     * can simply pick a lower one. */
+    if (board.has_board) {
         std::string dev_name = board_doc.get("device").get("name").as_string("Target Board");
         const auto& limits = board_doc.get("limits");
-        const auto& features = board_doc.get("features");
-
-        int max_din = limits.get("digital_inputs").as_int(board_pm_has_pinmap ? derived_din : 64);
-        if (static_cast<int>(din_map.size()) > max_din || (max_din_idx >= max_din)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(din_map.size()) +
-                " digital inputs (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_din) + ".");
-        }
-
-        int max_dout = limits.get("digital_outputs").as_int(board_pm_has_pinmap ? derived_dout : 64);
-        if (static_cast<int>(dout_map.size()) > max_dout || (max_dout_idx >= max_dout)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(dout_map.size()) +
-                " digital outputs (%Q), but target board '" + dev_name + "' only supports up to " + std::to_string(max_dout) + ".");
-        }
-
-        int max_ain = limits.get("analog_inputs").as_int(board_pm_has_pinmap ? derived_ain : 16);
-        if (static_cast<int>(ain_map.size()) > max_ain || (max_ain_idx >= max_ain)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Analog Inputs exceed limit: " + std::to_string(ain_map.size()) +
-                " used, " + std::to_string(max_ain) + " max allowed on " + dev_name + ".");
-        }
-
-        int max_aout = limits.get("analog_outputs").as_int(board_pm_has_pinmap ? derived_aout : 16);
-        if (static_cast<int>(aout_map.size()) > max_aout || (max_aout_idx >= max_aout)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Analog Outputs exceed limit: " + std::to_string(aout_map.size()) +
-                " used, " + std::to_string(max_aout) + " max allowed on " + dev_name + ".");
-        }
-
-        int max_coils = limits.get("coils").as_int(limits.get("bool_registers").as_int(-1));
-        if (max_coils >= 0 && total_bool_regs > max_coils) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_bool_regs) +
-                " internal boolean registers (%M), but target board '" + dev_name + "' only supports up to " + std::to_string(max_coils) + ".");
-        }
-
-        int max_floats = limits.get("floats").as_int(limits.get("float_registers").as_int(-1));
-        if (max_floats >= 0 && total_float_regs > max_floats) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_float_regs) +
-                " float registers (%R), but target board '" + dev_name + "' only supports up to " + std::to_string(max_floats) + ".");
-        }
-
-        int max_complex = limits.get("complex_registers").as_int(-1);
-        if (max_complex >= 0 && total_complex_regs > max_complex) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_complex_regs) +
-                " complex registers (%C), but target board '" + dev_name + "' only supports up to " + std::to_string(max_complex) + ".");
-        }
-
-        int max_ints = limits.get("int_registers").as_int(-1);
-        if (max_ints >= 0 && total_int_regs > max_ints) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses " + std::to_string(total_int_regs) +
-                " integer registers (%I), but target board '" + dev_name + "' only supports up to " + std::to_string(max_ints) + ".");
-        }
-
-        /* Architectural 16-bit address limits */
-        if (total_bool_regs > LE_ARCH_MAX_BOOL_REGS) {
-            board_valid = false;
-            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_bool_regs) +
-                " internal boolean registers (%M), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_BOOL_REGS) + ").");
-        }
-        if (total_float_regs > LE_ARCH_MAX_FLOATS) {
-            board_valid = false;
-            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_float_regs) +
-                " float registers (%R), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_FLOATS) + ").");
-        }
-        if (total_int_regs > LE_ARCH_MAX_INT_REGS) {
-            board_valid = false;
-            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_int_regs) +
-                " integer registers (%I), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_INT_REGS) + ").");
-        }
-        if (total_complex_regs > LE_ARCH_MAX_COMPLEX) {
-            board_valid = false;
-            validation_errors.push_back("Circuit Error: Circuit uses " + std::to_string(total_complex_regs) +
-                " complex registers (%C), which exceeds the 16-bit address space limit (" + std::to_string(LE_ARCH_MAX_COMPLEX) + ").");
-        }
-
-        /* Unified RAM Workspace validation: packed register arena + element state */
-        int workspace_bytes = limits.get("workspace_bytes").as_int(LE_RAM_WORKSPACE_BYTES);
-
-        uint32_t din_c    = static_cast<uint32_t>(header.digital_in_count);
-        uint32_t dout_c   = static_cast<uint32_t>(header.digital_out_count);
-        uint32_t bool_c   = static_cast<uint32_t>(total_bool_regs);
-        uint32_t float_c  = static_cast<uint32_t>(total_float_regs);
-        uint32_t int_c    = static_cast<uint32_t>(total_int_regs);
-        uint32_t cmplx_c  = static_cast<uint32_t>(total_complex_regs);
-        uint32_t ain_c    = static_cast<uint32_t>(header.analog_in_count);
-        uint32_t aout_c   = static_cast<uint32_t>(header.analog_out_count);
-
-        uint32_t bits_bytes = (din_c + dout_c + bool_c + 7u) / 8u;
-        uint32_t floats_off = (bits_bytes + 3u) & ~3u;
-        uint32_t ints_off   = (floats_off + float_c * 4u + 3u) & ~3u;
-        uint32_t cmplx_off  = (ints_off   + int_c   * 4u + 3u) & ~3u;
-        uint32_t ain_off    = (cmplx_off  + cmplx_c * 8u + 3u) & ~3u;
-        uint32_t aout_off   = (ain_off    + ain_c   * 8u + 3u) & ~3u;
-        uint32_t arena_bytes = aout_off + aout_c * 4u;
-
-        int total_state_bytes = 0;
-        for (int k = 1; k < LE_BLK_LAST; k++) {
-            auto sit = state_descs.find((uint8_t)k);
-            if (sit == state_descs.end() || sit->second <= 0) continue;
-            uint16_t sz = state_kind_size((uint8_t)k);
-            if (sz == 0) continue;
-            total_state_bytes += (int)sz * sit->second;
-        }
-
-        uint32_t total_ram_needed = arena_bytes + static_cast<uint32_t>(total_state_bytes);
-        if (total_ram_needed > static_cast<uint32_t>(workspace_bytes)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_ram_needed) +
-                " bytes of RAM (" + std::to_string(arena_bytes) + " bytes packed registers + " +
-                std::to_string(total_state_bytes) + " bytes element state), but target board '" + dev_name +
-                "' has a " + std::to_string(workspace_bytes) + "-byte RAM workspace.");
-        }
-
-        int slot_size = limits.get("slot_size_bytes").as_int(2048);
-        if (static_cast<int>(total_bin_size) > slot_size) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Compiled binary size (" + std::to_string(total_bin_size) +
-                " bytes) exceeds slot storage capacity (" + std::to_string(slot_size) + " bytes) of target board '" + dev_name + "'.");
-        }
-
-        int nv_limit = limits.get("nvram_total_bytes").as_int(0);
-        if (nv_limit <= 0) {
-            nv_limit = limits.get("nvram_bytes").as_int(LE_NVRAM_TOTAL_BYTES);
-        }
-        uint32_t total_nvram_avail = static_cast<uint32_t>(nv_limit);
-        uint32_t config_slots = static_cast<uint32_t>(std::max(1, limits.get("config_slots").as_int(LE_MAX_CONFIG_SLOTS)));
-        uint32_t total_nvram_needed = static_cast<uint32_t>(sizeof(le_nvram_manifest_t)) +
-                                      (nvmd.retentive_bytes * config_slots) +
-                                      nvmd.ser_bytes +
-                                      nvmd.event_bytes;
-
-        if (has_nvmd && (total_nvram_needed > total_nvram_avail)) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit requires " + std::to_string(total_nvram_needed) +
-                " bytes of NVRAM (" + std::to_string(nvmd.retentive_bytes * config_slots) + " bytes retentive registers across " +
-                std::to_string(config_slots) + " slots + " + std::to_string(nvmd.ser_bytes) + " bytes SER log + " +
-                std::to_string(nvmd.event_bytes) + " bytes Event Recorder), but target board '" + dev_name +
-                "' only supports " + std::to_string(total_nvram_avail) + " bytes.");
-        }
-
-        bool prot_enabled = features.get("protection").as_bool(true);
-        if (uses_protection && !prot_enabled) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses Protection & Control features, but target board '" + dev_name + "' has protection disabled.");
-        }
-
-        bool serial_enabled = features.get("serial_bus").as_bool(true);
-        if (uses_serial_bus && !serial_enabled) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses Serial Bus features, but target board '" + dev_name + "' has serial bus disabled.");
-        }
-
-        bool dsp_enabled = features.get("dsp").as_bool(true);
-        if (uses_dsp && !dsp_enabled) {
-            board_valid = false;
-            validation_errors.push_back("Board Validation Error: Circuit uses Digital Signal Processing (DSP) features, but target board '" + dev_name + "' has DSP disabled.");
-        }
-
-        /* Fixed-rate achievability (circuit-owned scan rate): the estimated worst-case
-         * scan (compiler cost x board ns/cycle x safety margin) must fit inside the
-         * PERIOD of the circuit's declared scan_rate_hz. If the designer's chosen
-         * rate is unachievable, the error tells them the MAX rate that fits so they
-         * can simply pick a lower one. */
         double scan_hz = design_scan_hz;                    /* designer-owned */
         double ns_per = limits.get("ns_per_abstract_cycle").as_double(0.0);
         if (scan_hz > 0.0 && ns_per > 0.0) {
@@ -3847,14 +3821,14 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     out_result->counter_count = static_cast<int>(state_instances[LE_BLK_COUNTER].size());
     out_result->alias_count = static_cast<int>(alias_list.size());
     out_result->crc32 = crc;
-    out_result->user_bool_count = m_user_bool_count;
-    out_result->temp_bool_count = m_peak_temp_bool;
-    out_result->user_float_count = m_user_float_count;
-    out_result->temp_float_count = m_peak_temp_float;
-    out_result->user_complex_count = m_user_complex_count;
-    out_result->temp_complex_count = m_peak_temp_complex;
-    out_result->user_int_count = m_user_int_count;
-    out_result->temp_int_count = m_peak_temp_int;
+    out_result->user_bool_count = m_reg_alloc.user_bool_count();
+    out_result->temp_bool_count = m_reg_alloc.peak_temp_bool();
+    out_result->user_float_count = m_reg_alloc.user_float_count();
+    out_result->temp_float_count = m_reg_alloc.peak_temp_float();
+    out_result->user_complex_count = m_reg_alloc.user_complex_count();
+    out_result->temp_complex_count = m_reg_alloc.peak_temp_complex();
+    out_result->user_int_count = m_reg_alloc.user_int_count();
+    out_result->temp_int_count = m_reg_alloc.peak_temp_int();
     out_result->eliminated_instructions = stats.eliminated_instructions;
     out_result->eliminated_registers = stats.eliminated_registers;
 
@@ -3864,7 +3838,10 @@ if (type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || typ
     std::memcpy(out_result->binary_data, full_bin.data(), total_bin_size);
 
     // Generate disassembly
-    std::string disasm = disassemble(full_bin.data(), total_bin_size, m_user_bool_count, m_user_float_count, m_user_int_count);
+    std::string disasm = disassemble(full_bin.data(), total_bin_size,
+                                     m_reg_alloc.user_bool_count(),
+                                     m_reg_alloc.user_float_count(),
+                                     m_reg_alloc.user_int_count());
     out_result->disassembly_text = (char*)std::malloc(disasm.size() + 1);
     std::strcpy(out_result->disassembly_text, disasm.c_str());
 

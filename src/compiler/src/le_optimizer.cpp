@@ -4,6 +4,7 @@
  */
 
 #include "le_optimizer.h"
+#include "le_element_registry.h"
 #include <algorithm>
 #include <cctype>
 #include <sstream>
@@ -52,58 +53,16 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
             node.is_feedback_state = true;
         }
 
-        // Classify roots and stateful elements
-        if (type == "DIGITALOUTPUT" || type == "OUTPUT" || (type == "LE_NODE_DIGITAL" && (name.rfind("OUT", 0) == 0 || name.rfind("DO", 0) == 0)) ||
-            type == "ANALOGOUTPUT" || type == "LE_ANALOGOUTPUT" || type == "LE_ANALOG_OUTPUT" || type == "AOUT") {
-            node.is_root = true;
-        } else if (type == "BOOLREGISTER" || type == "LE_BOOLREGISTER" ||
-                   type == "INTREGISTER" || type == "LE_INTREGISTER" ||
-                   type == "FLOATREGISTER" || type == "LE_FLOATREGISTER" ||
-                   type == "COMPLEXREGISTER" || type == "LE_COMPLEXREGISTER") {
-            node.is_root = true;
-        } else if (type.find("TAG") != std::string::npos) {
-            std::string dir = to_lower(el.get("direction").as_string());
-            if (dir == "send") node.is_root = true;
-        } else if (type == "PID" || type == "LE_PID" ||
-                   type == "OVERCURRENT_51" || type == "OVERCURRENT" || type == "LE_OVERCURRENT_51" || type == "LE_OVERCURRENT" ||
-                   type == "PHASOR_1P" || type == "LE_PHASOR_1P" || type == "LE_1P_WINDING" ||
-                   type == "PHASOR_3P" || type == "LE_PHASOR_3P" ||
-                   type == "FREQ_EST" || type == "LE_FREQ_EST" || type == "FREQ_TRACKER" || type == "ANSI_81" ||
-                   type == "SYM_COMP" || type == "LE_SYM_COMP" ||
-                   type == "DIFF_87" || type == "DIFF" || type == "LE_DIFF_87" || type == "LE_DIFF" ||
-                   type == "PHASE_COMP" || type == "TRANSFORM_33" || type == "TCOMP" || type == "LE_PHASE_COMP" ||
-                   type == "DIST_21" || type == "LE_DIST_21" ||
-                   type == "I2C" || type == "LE_I2C" ||
-                   type == "SPI" || type == "LE_SPI" ||
-                   type == "TON" || type == "LE_TON" ||
-                   type == "TOF" || type == "LE_TOF" ||
-                   type == "TP" || type == "LE_TP" ||
-                   type == "CTU" || type == "LE_CTU" ||
-                   type == "CTD" || type == "LE_CTD" ||
-                   type == "CTUD" || type == "LE_CTUD" ||
-                   type == "SR" || type == "LE_SR" ||
-                   type == "RS" || type == "LE_RS" ||
-                   type == "LATCH" || type == "LE_LATCH" ||
-                   type == "RTRIG" || type == "LE_RTRIG" ||
-                   type == "FTRIG" || type == "LE_FTRIG" ||
-                   type == "LPF" || type == "LE_LPF" || type == "LPF_1P" ||
-                   type == "BIQUAD" || type == "LE_BIQUAD" || type == "BIQUAD_IIR" ||
-                   type == "MOVING_AVG" || type == "LE_MOVING_AVG" || type == "WINDOW_AVG" ||
-                   type == "RATE_LIMITER" || type == "LE_RATE_LIMITER" || type == "SLEW_LIMITER" ||
-                   type == "DEADBAND" || type == "LE_DEADBAND" ||
-                   type == "WASHOUT" || type == "LE_WASHOUT" ||
-                   type == "PEAK_DETECTOR" || type == "LE_PEAK_DETECTOR" || type == "ENVELOPE" ||
-                   type == "RMS" || type == "LE_RMS" ||
-                   type == "MEDIAN" || type == "LE_MEDIAN" || type == "MEDIAN_FILTER" ||
-                   type == "DERIVATIVE" || type == "LE_DERIVATIVE" ||
-                   type == "ZERO_CROSSING" || type == "LE_ZERO_CROSSING" ||
-                   type == "LUT_1D" || type == "LE_LUT_1D" || type == "LUT" ||
-                   type == "TOTALIZER" || type == "LE_TOTALIZER" ||
-                   type == "MIN_MAX_HOLD" || type == "LE_MIN_MAX_HOLD" ||
-                   type == "CUSTOMNODE" || type == "LE_CUSTOM" || type == "EXT_CALL" ||
-                   custom_nodes.find(raw_type) != custom_nodes.end() ||
-                   custom_nodes.find(el.get("custom_type").as_string()) != custom_nodes.end()) {
+        // Classify roots and stateful elements using central ElementRegistry
+        std::string tag_dir = (type.find("TAG") != std::string::npos) ? to_lower(el.get("direction").as_string()) : "";
+        if (ElementRegistry::is_stateful(type) ||
+            type == "CUSTOMNODE" || type == "LE_CUSTOM" || type == "EXT_CALL" ||
+            custom_nodes.find(raw_type) != custom_nodes.end() ||
+            custom_nodes.find(el.get("custom_type").as_string()) != custom_nodes.end()) {
             node.is_stateful = true;
+            node.is_root = true;
+        } else if (ElementRegistry::is_root(type, tag_dir) ||
+                   (type == "LE_NODE_DIGITAL" && (name.rfind("OUT", 0) == 0 || name.rfind("DO", 0) == 0))) {
             node.is_root = true;
         } else if (type == "CONSTANT" || type == "LE_CONSTANT") {
             node.is_const = true;
@@ -118,80 +77,11 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
             }
         }
 
-        // Map opcodes for gates & math
-        if (type == "AND" || type == "LE_AND") node.opcode = LE_OP_AND;
-        else if (type == "OR" || type == "LE_OR") node.opcode = LE_OP_OR;
-        else if (type == "NOT" || type == "LE_NOT") node.opcode = LE_OP_NOT;
-        else if (type == "XOR" || type == "LE_XOR") node.opcode = LE_OP_XOR;
-        else if (type == "NAND" || type == "LE_NAND") node.opcode = LE_OP_NAND;
-        else if (type == "NOR" || type == "LE_NOR") node.opcode = LE_OP_NOR;
-        else if (type == "MUX" || type == "LE_MUX") node.opcode = LE_OP_MUX;
-        else if (type == "MOVE" || type == "LE_MOVE") node.opcode = LE_OP_MOVE;
-        else if (type == "MOVE_I" || type == "LE_MOVE_I") node.opcode = LE_OP_MOVE_I;
-        else if (type == "MOVE_F" || type == "LE_MOVE_F") node.opcode = LE_OP_MOVE_F;
-        else if (type == "MOVE_C" || type == "LE_MOVE_C") node.opcode = LE_OP_MOVE_C;
-        else if (type == "ADD_I" || type == "LE_ADD_I") node.opcode = LE_OP_ADD_I;
-        else if (type == "SUB_I" || type == "LE_SUB_I") node.opcode = LE_OP_SUB_I;
-        else if (type == "MUL_I" || type == "LE_MUL_I") node.opcode = LE_OP_MUL_I;
-        else if (type == "DIV_I" || type == "LE_DIV_I") node.opcode = LE_OP_DIV_I;
-        else if (type == "NEG_I" || type == "LE_NEG_I") node.opcode = LE_OP_NEG_I;
-        else if (type == "WORD_AND" || type == "LE_WORD_AND") node.opcode = LE_OP_WORD_AND;
-        else if (type == "WORD_OR" || type == "LE_WORD_OR") node.opcode = LE_OP_WORD_OR;
-        else if (type == "WORD_XOR" || type == "LE_WORD_XOR") node.opcode = LE_OP_WORD_XOR;
-        else if (type == "WORD_NOT" || type == "LE_WORD_NOT") node.opcode = LE_OP_WORD_NOT;
-        else if (type == "ADD" || type == "LE_ADD") node.opcode = LE_OP_ADD_F;
-        else if (type == "SUB" || type == "SUBTRACT" || type == "LE_SUB") node.opcode = LE_OP_SUB_F;
-        else if (type == "MUL" || type == "MULTIPLY" || type == "LE_MUL") node.opcode = LE_OP_MUL_F;
-        else if (type == "DIV" || type == "DIVIDE" || type == "LE_DIV") node.opcode = LE_OP_DIV_F;
-        else if (type == "FMA" || type == "LE_FMA" || type == "MAC" || type == "LE_MAC") node.opcode = LE_OP_FMA_F;
-        else if (type == "FMS" || type == "LE_FMS") node.opcode = LE_OP_FMS_F;
-        else if (type == "ABS" || type == "LE_ABS") node.opcode = LE_OP_ABS_F;
-        else if (type == "MIN" || type == "LE_MIN") node.opcode = LE_OP_MIN_F;
-        else if (type == "MAX" || type == "LE_MAX") node.opcode = LE_OP_MAX_F;
-        else if (type == "SQRT" || type == "LE_SQRT") node.opcode = LE_OP_SQRT_F;
-        else if (type == "SIN" || type == "LE_SIN") node.opcode = LE_OP_SIN_F;
-        else if (type == "COS" || type == "LE_COS") node.opcode = LE_OP_COS_F;
-        else if (type == "TAN" || type == "LE_TAN") node.opcode = LE_OP_TAN_F;
-        else if (type == "ASIN" || type == "LE_ASIN") node.opcode = LE_OP_ASIN_F;
-        else if (type == "ACOS" || type == "LE_ACOS") node.opcode = LE_OP_ACOS_F;
-        else if (type == "ATAN" || type == "LE_ATAN") node.opcode = LE_OP_ATAN_F;
-        else if (type == "ATAN2" || type == "LE_ATAN2") node.opcode = LE_OP_ATAN2_F;
-        else if (type == "EXP" || type == "LE_EXP") node.opcode = LE_OP_EXP_F;
-        else if (type == "LOG" || type == "LN" || type == "LE_LOG" || type == "LE_LN") node.opcode = LE_OP_LOG_F;
-        else if (type == "LOG10" || type == "LE_LOG10") node.opcode = LE_OP_LOG10_F;
-        else if (type == "POW" || type == "POWER" || type == "LE_POW" || type == "LE_POWER") node.opcode = LE_OP_POW_F;
-        else if (type == "CADD" || type == "LE_CADD" || type == "C_ADD") node.opcode = LE_OP_CADD_F;
-        else if (type == "CSUB" || type == "LE_CSUB" || type == "C_SUB") node.opcode = LE_OP_CSUB_F;
-        else if (type == "CMUL" || type == "LE_CMUL" || type == "C_MUL") node.opcode = LE_OP_CMUL_F;
-        else if (type == "CDIV" || type == "LE_CDIV" || type == "C_DIV") node.opcode = LE_OP_CDIV_F;
-        else if (type == "CMP_GT" || type == "LE_CMP_GT") node.opcode = LE_OP_CMP_GT;
-        else if (type == "CMP_LT" || type == "LE_CMP_LT") node.opcode = LE_OP_CMP_LT;
-        else if (type == "CMP_GE" || type == "LE_CMP_GE") node.opcode = LE_OP_CMP_GE;
-        else if (type == "CMP_LE" || type == "LE_CMP_LE") node.opcode = LE_OP_CMP_LE;
-        else if (type == "CMP_EQ" || type == "LE_CMP_EQ") node.opcode = LE_OP_CMP_EQ;
-        else if (type == "CMP_NE" || type == "LE_CMP_NE") node.opcode = LE_OP_CMP_NE;
-        else if (type == "LPF" || type == "LE_LPF" || type == "LPF_1P") node.opcode = LE_OP_LPF_1P;
-        else if (type == "BIQUAD" || type == "LE_BIQUAD" || type == "BIQUAD_IIR") node.opcode = LE_OP_BIQUAD_IIR;
-        else if (type == "MOVING_AVG" || type == "LE_MOVING_AVG" || type == "WINDOW_AVG") node.opcode = LE_OP_MOVING_AVG;
-        else if (type == "RATE_LIMITER" || type == "LE_RATE_LIMITER" || type == "SLEW_LIMITER") node.opcode = LE_OP_RATE_LIMITER;
-        else if (type == "DEADBAND" || type == "LE_DEADBAND") node.opcode = LE_OP_DEADBAND;
-        else if (type == "WASHOUT" || type == "LE_WASHOUT") node.opcode = LE_OP_WASHOUT;
-        else if (type == "PEAK_DETECTOR" || type == "LE_PEAK_DETECTOR" || type == "ENVELOPE") node.opcode = LE_OP_PEAK_DETECTOR;
-        else if (type == "RMS" || type == "LE_RMS") node.opcode = LE_OP_RMS;
-        else if (type == "MEDIAN" || type == "LE_MEDIAN" || type == "MEDIAN_FILTER") node.opcode = LE_OP_MEDIAN;
-        else if (type == "DERIVATIVE" || type == "LE_DERIVATIVE") node.opcode = LE_OP_DERIVATIVE;
-        else if (type == "ZERO_CROSSING" || type == "LE_ZERO_CROSSING") node.opcode = LE_OP_ZERO_CROSSING;
-        else if (type == "LUT_1D" || type == "LE_LUT_1D" || type == "LUT") node.opcode = LE_OP_LUT_1D;
-        else if (type == "TOTALIZER" || type == "LE_TOTALIZER") node.opcode = LE_OP_TOTALIZER;
-        else if (type == "MIN_MAX_HOLD" || type == "LE_MIN_MAX_HOLD") node.opcode = LE_OP_MIN_MAX_HOLD;
-        else if (type == "CLAMP" || type == "LE_CLAMP") node.opcode = LE_OP_BLOCK;
-        else if (type == "COMPLEX2POLAR" || type == "LE_COMPLEX2POLAR") node.opcode = LE_OP_BLOCK;
-        else if (type == "COMPLEX2RECT" || type == "LE_COMPLEX2RECT") node.opcode = LE_OP_BLOCK;
-        else if (type == "RECT2COMPLEX" || type == "LE_RECT2COMPLEX") node.opcode = LE_OP_BLOCK;
-        else if (type == "POLAR2COMPLEX" || type == "LE_POLAR2COMPLEX") node.opcode = LE_OP_BLOCK;
-        else if (type == "RECT2POLAR" || type == "LE_RECT2POLAR") node.opcode = LE_OP_BLOCK;
-        else if (type == "POLAR2RECT" || type == "LE_POLAR2RECT") node.opcode = LE_OP_BLOCK;
-        else if (type == "PHASOR_SHIFT" || type == "LE_PHASOR_SHIFT") node.opcode = LE_OP_BLOCK;
+        // Map opcodes for gates & math using ElementRegistry
+        uint8_t op = ElementRegistry::get_optimizer_opcode(type);
+        if (op != LE_OP_NOP) {
+            node.opcode = op;
+        }
 
         m_nodes[name] = node;
     }
@@ -212,25 +102,25 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
 
     // 3. Resolve TAG senders & receivers
     std::map<std::string, std::string> tag_senders;
-    for (const auto& kv : m_nodes) {
-        if (kv.second.type.find("TAG") != std::string::npos) {
-            std::string dir = to_lower(kv.second.raw_json.get("direction").as_string());
+    for (const auto& [name, node] : m_nodes) {
+        if (node.type.find("TAG") != std::string::npos) {
+            std::string dir = to_lower(node.raw_json.get("direction").as_string());
             if (dir == "send") {
-                std::string tag_name = kv.second.raw_json.get("tag_name").as_string(kv.first);
-                auto it_in = kv.second.inputs.find("in");
-                if (it_in != kv.second.inputs.end()) tag_senders[tag_name] = it_in->second;
-                else if (!kv.second.inputs.empty()) tag_senders[tag_name] = kv.second.inputs.begin()->second;
+                std::string tag_name = node.raw_json.get("tag_name").as_string(name);
+                auto it_in = node.inputs.find("in");
+                if (it_in != node.inputs.end()) tag_senders[tag_name] = it_in->second;
+                else if (!node.inputs.empty()) tag_senders[tag_name] = node.inputs.begin()->second;
             }
         }
     }
 
-    for (auto& kv : m_nodes) {
-        if (kv.second.type.find("TAG") != std::string::npos) {
-            std::string dir = to_lower(kv.second.raw_json.get("direction").as_string());
+    for (auto& [name, node] : m_nodes) {
+        if (node.type.find("TAG") != std::string::npos) {
+            std::string dir = to_lower(node.raw_json.get("direction").as_string());
             if (dir != "send") {
-                std::string tag_name = kv.second.raw_json.get("tag_name").as_string(kv.first);
+                std::string tag_name = node.raw_json.get("tag_name").as_string(name);
                 if (tag_senders.find(tag_name) != tag_senders.end()) {
-                    kv.second.inputs["in"] = tag_senders[tag_name];
+                    node.inputs["in"] = tag_senders[tag_name];
                 }
             }
         }
@@ -241,15 +131,14 @@ void Optimizer::build_ir(const std::vector<JsonValue>& elements,
 
 void Optimizer::update_consumer_lists()
 {
-    for (auto& kv : m_nodes) {
-        kv.second.consumers.clear();
+    for (auto& [name, node] : m_nodes) {
+        node.consumers.clear();
     }
-    for (const auto& kv : m_nodes) {
-        if (kv.second.is_dead) continue;
-        for (const auto& port_src : kv.second.inputs) {
-            std::string src = port_src.second;
+    for (const auto& [name, node] : m_nodes) {
+        if (node.is_dead) continue;
+        for (const auto& [port, src] : node.inputs) {
             if (m_nodes.find(src) != m_nodes.end()) {
-                m_nodes[src].consumers.push_back(kv.first);
+                m_nodes[src].consumers.push_back(name);
             }
         }
     }
@@ -326,17 +215,17 @@ void Optimizer::pass_dead_code_elimination()
     std::set<std::string> reachable;
     std::vector<std::string> worklist;
 
-    for (const auto& kv : m_nodes) {
-        if (kv.second.is_dead) continue;
+    for (const auto& [name, node] : m_nodes) {
+        if (node.is_dead) continue;
         // Physical inputs, outputs, registers, and stateful elements are roots
-        if (kv.second.is_root || kv.second.is_stateful ||
-            kv.second.type == "DIGITALINPUT" || kv.second.type == "INPUT" ||
-            kv.second.type == "ANALOGINPUT" || kv.second.type == "LE_ANALOG_INPUT" ||
-            kv.second.type == "ANALOGOUTPUT" || kv.second.type == "LE_ANALOGOUTPUT" ||
-            kv.second.type == "LE_ANALOG_OUTPUT" || kv.second.type == "AOUT" ||
-            (kv.second.type == "LE_NODE_DIGITAL" && (kv.first.rfind("IN", 0) == 0 || kv.first.rfind("DI", 0) == 0))) {
-            reachable.insert(kv.first);
-            worklist.push_back(kv.first);
+        if (node.is_root || node.is_stateful ||
+            node.type == "DIGITALINPUT" || node.type == "INPUT" ||
+            node.type == "ANALOGINPUT" || node.type == "LE_ANALOG_INPUT" ||
+            node.type == "ANALOGOUTPUT" || node.type == "LE_ANALOGOUTPUT" ||
+            node.type == "LE_ANALOG_OUTPUT" || node.type == "AOUT" ||
+            (node.type == "LE_NODE_DIGITAL" && (name.rfind("IN", 0) == 0 || name.rfind("DI", 0) == 0))) {
+            reachable.insert(name);
+            worklist.push_back(name);
         }
     }
 
@@ -358,9 +247,9 @@ void Optimizer::pass_dead_code_elimination()
     }
 
     // Prune unreachable nodes
-    for (auto& kv : m_nodes) {
-        if (!kv.second.is_dead && reachable.find(kv.first) == reachable.end()) {
-            kv.second.is_dead = true;
+    for (auto& [name, node] : m_nodes) {
+        if (!node.is_dead && reachable.find(name) == reachable.end()) {
+            node.is_dead = true;
             m_stats.eliminated_dead_nodes++;
             m_stats.eliminated_instructions++;
             m_stats.eliminated_registers++;
@@ -934,8 +823,7 @@ void Optimizer::pass_inversion_folding()
 {
     update_consumer_lists();
 
-    for (auto& kv : m_nodes) {
-        OptNode& not_node = kv.second;
+    for (auto& [name, not_node] : m_nodes) {
         if (not_node.is_dead || not_node.is_root || not_node.is_feedback_state || not_node.opcode != LE_OP_NOT) continue;
 
         auto it_in = not_node.inputs.find("in");
@@ -1087,8 +975,7 @@ void Optimizer::pass_instruction_fusion()
 {
     update_consumer_lists();
 
-    for (auto& kv : m_nodes) {
-        OptNode& node = kv.second;
+    for (auto& [name, node] : m_nodes) {
         if (node.is_dead || node.is_stateful || node.is_feedback_state) continue;
 
         if (node.opcode != LE_OP_ADD_F && node.opcode != LE_OP_SUB_F) continue;
@@ -1209,8 +1096,7 @@ void Optimizer::pass_direct_destination_coalescing()
 {
     update_consumer_lists();
 
-    for (auto& kv : m_nodes) {
-        OptNode& out_node = kv.second;
+    for (auto& [name, out_node] : m_nodes) {
         if (out_node.is_dead) continue;
 
         bool is_dout = (out_node.type == "DIGITALOUTPUT" || out_node.type == "OUTPUT" ||
@@ -1333,8 +1219,8 @@ void Optimizer::compute_topological_order()
         m_execution_order.push_back(name);
     };
 
-    for (const auto& kv : m_nodes) {
-        visit(kv.first);
+    for (const auto& [name, node] : m_nodes) {
+        visit(name);
     }
 }
 

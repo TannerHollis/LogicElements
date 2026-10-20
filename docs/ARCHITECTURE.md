@@ -8,6 +8,29 @@ overview first, then reference detail.
 
 ---
 
+## Table of contents
+
+- [Overview](#overview)
+- [Runtime engine](#runtime-engine)
+  - [Scan loop (`le_vm.c`)](#scan-loop-le_vmc)
+  - [Instruction format (`le_types.h`)](#instruction-format-le_typesh)
+  - [Process image (`le_process_image.c/.h`)](#process-image-le_process_imagech)
+- [Runtime VM size and feature breakdown](#runtime-vm-size-and-feature-breakdown)
+  - [Subsystem feature sizing and modular cost](#subsystem-feature-sizing-and-modular-cost)
+  - [Deployment profile tiers](#deployment-profile-tiers)
+- [Variable-arity block mechanism](#variable-arity-block-mechanism)
+  - [State block X-Macro architecture (`le_blocks.def`)](#state-block-x-macro-architecture-le_blocksdef)
+- [Zero-heap unified RAM workspace (`src/runtime/src/le_rt.c`, `le_process_image.c`)](#zero-heap-unified-ram-workspace-srcruntimesrcle_rtc-le_process_imagec)
+- [Loader, storage & NVRAM (`le_loader.c`, `le_storage.c`, `le_nvram.c`)](#loader-storage--nvram-le_loaderc-le_storagec-le_nvramc)
+- [Compiler (`src/compiler`)](#compiler-srccompiler)
+  - [Pipeline (`le_compiler_core.cpp`, `le_code_block.cpp`, `le_optimizer.cpp`)](#pipeline-le_compiler_corecpp-le_code_blockcpp-le_optimizercpp)
+  - [Public API (`src/compiler/include/le_compiler.h`)](#public-api-srccompilerincludele_compilerh)
+- [Hardware abstraction layer (`src/runtime/include/le_hal.h`)](#hardware-abstraction-layer-srcruntimeincludele_halh)
+- [Tooling](#tooling)
+- [Testing](#testing)
+
+---
+
 ## Overview
 
 LogicElements is a two-sided system.

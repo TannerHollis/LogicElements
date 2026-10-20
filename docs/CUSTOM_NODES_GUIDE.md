@@ -4,6 +4,40 @@ This guide describes how to design, configure, implement, and compile custom boa
 
 ---
 
+## Table of contents
+
+- [Overview](#overview)
+- [Architectural data flow](#architectural-data-flow)
+- [Binary instruction format (`LE_OP_BLOCK`)](#binary-instruction-format-le_op_block)
+  - [Field breakdown](#field-breakdown)
+- [Board profile specification (`.leconfig`)](#board-profile-specification-leconfig)
+  - [Schema and syntax](#schema-and-syntax)
+  - [Attribute definitions](#attribute-definitions)
+- [Firmware implementation in C](#firmware-implementation-in-c)
+  - [1. HAL callback declarations (`le_hal.h`)](#1-hal-callback-declarations-le_halh)
+  - [2. Process image memory access helpers](#2-process-image-memory-access-helpers)
+- [Concrete implementation recipes](#concrete-implementation-recipes)
+  - [Recipe 1: Hardware PWM timer output controller](#recipe-1-hardware-pwm-timer-output-controller)
+  - [Recipe 2: Hardware quadrature encoder reader](#recipe-2-hardware-quadrature-encoder-reader)
+  - [Recipe 3: Fast exponential smoothing / DSP filter](#recipe-3-fast-exponential-smoothing--dsp-filter)
+  - [Defining the JSON metadata callback](#defining-the-json-metadata-callback)
+  - [Modern Preferred Alternative: Declarative Nodes in `src/le_board_config.c`](#modern-preferred-alternative-declarative-nodes-in-srcle_board_configc)
+- [Discovery and interrogation](#discovery-and-interrogation)
+  - [1. Interactive terminal CLI (`nodes`)](#1-interactive-terminal-cli-nodes)
+  - [2. Binary framed packet protocol (`0x03` / `0x83`)](#2-binary-framed-packet-protocol-0x03--0x83)
+  - [3. Python discovery CLI](#3-python-discovery-cli)
+- [Circuit schematic authoring](#circuit-schematic-authoring)
+- [Compilation and optimization behavior](#compilation-and-optimization-behavior)
+  - [Compiler resolution process](#compiler-resolution-process)
+- [Disassembly verification](#disassembly-verification)
+- [Troubleshooting and best practices](#troubleshooting-and-best-practices)
+  - [Execution determinism](#execution-determinism)
+  - [Memory safety and isolation](#memory-safety-and-isolation)
+  - [Handling unused operands](#handling-unused-operands)
+  - [Unrecognized function IDs](#unrecognized-function-ids)
+
+---
+
 ## Overview
 
 LogicElements provides a standard library of deterministic PLC elements, including combinational gates, latches, timers, counters, floating-point arithmetic, PID controllers, and protection relays. However, embedded microcontrollers often incorporate specialized hardware peripherals, such as:

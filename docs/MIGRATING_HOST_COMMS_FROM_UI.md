@@ -4,6 +4,20 @@ This guide explains how to decouple and migrate microcontroller communications f
 
 ---
 
+## Table of contents
+
+- [1. Motivation & Background](#1-motivation--background)
+- [2. Architecture Comparison](#2-architecture-comparison)
+  - [Before](#before)
+  - [After](#after)
+- [3. Migration Roadmap](#3-migration-roadmap)
+  - [Phase 1: Update Project Configuration (`LogicElementsUI.vcxproj`)](#phase-1-update-project-configuration-logicelementsuivcxproj)
+  - [Phase 2: Refactor `BoardComms` to Use Canonical Definitions](#phase-2-refactor-boardcomms-to-use-canonical-definitions)
+  - [Phase 3: Asynchronous Program Upload Migration Options](#phase-3-asynchronous-program-upload-migration-options)
+- [4. Verification Checklist](#4-verification-checklist)
+
+---
+
 ## 1. Motivation & Background
 
 Historically, `LogicElementsUI` contained the only host-side implementation of the framed UART binary packet protocol (`BoardComms.cpp`), implemented using Qt (`QSerialPort`, `QTimer`, `QObject`).

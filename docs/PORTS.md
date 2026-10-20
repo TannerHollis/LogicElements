@@ -6,17 +6,36 @@ This document is the **single authoritative reference** for hardware engineers, 
 
 ---
 
-## Table of Contents
+## Table of contents
 1. [Architecture & Directory Layout](#1-architecture--directory-layout)
+   - [Files to Add to Your Microcontroller Project](#files-to-add-to-your-microcontroller-project)
+   - [Understanding `le_port.h` vs. `le_port.c` (Public Scan Loop vs. Private HAL Callbacks)](#understanding-le_porth-vs-le_portc-public-scan-loop-vs-private-hal-callbacks)
 2. [5-Minute Fast-Track Bring-Up](#2-5-minute-fast-track-bring-up)
+   - [Minimal `main.c`](#minimal-mainc)
 3. [Centralized Configuration (`le_board_config.h` & `le_config.h`)](#3-centralized-configuration-le_board_configh--le_configh)
+   - [Master Configuration Domains](#master-configuration-domains)
 4. [Target Board Profile Specification (`.leconfig` JSON)](#4-target-board-profile-specification-leconfig-json)
 5. [Physical Hardware I/O Integration](#5-physical-hardware-io-integration)
-6. [Program Slot Storage (`storage_read` & `storage_write`)](#6-program-slot-storage-storage_read--storage_write)
+   - [Implementing Scan Helpers](#implementing-scan-helpers)
+6. [Program Slot Storage (`le_board_config.c` & Flash HAL)](#6-program-slot-storage-le_board_configc--flash-hal)
+   - [The Phantom Staging Slot Rule](#the-phantom-staging-slot-rule)
+   - [Declarative Sector Descriptors (`le_board_config.c`)](#declarative-sector-descriptors-le_board_configc)
+   - [Implementing Storage HAL Callbacks](#implementing-storage-hal-callbacks)
 7. [Operational Non-Volatile Memory (NVRAM / Flash Wear Leveling)](#7-operational-non-volatile-memory-nvram--flash-wear-leveling)
+   - [Declarative NVRAM Configuration (`le_board_config.c`)](#declarative-nvram-configuration-le_board_configc)
+   - [Auto-Mounting NVRAM Wear Leveling](#auto-mounting-nvram-wear-leveling)
+   - [Option B: External Byte-Addressable NVRAM (SPI FRAM, MRAM, EEPROM)](#option-b-external-byte-addressable-nvram-spi-fram-mram-eeprom)
 8. [Timing Model & Scan Rate Verification](#8-timing-model--scan-rate-verification)
+   - [The Circuit-Owned Scan Rate Rule](#the-circuit-owned-scan-rate-rule)
+   - [Three Execution Timing Paradigms for Board Implementers](#three-execution-timing-paradigms-for-board-implementers)
 9. [Live Interactive CLI & Program Uploads over UART](#9-live-interactive-cli--program-uploads-over-uart)
-10. [Exposing Board Peripherals via Custom Nodes](#10-exposing-board-peripherals-via-custom-nodes)
+   - [Unified Ingestion via `le_comms_cli_pump`](#unified-ingestion-via-le_comms_cli_pump)
+   - [Buffered UART Drivers with `le_ringbuf_t`](#buffered-uart-drivers-with-le_ringbuf_t)
+   - [CLI Commands Available to Field Engineers](#cli-commands-available-to-field-engineers)
+10. [Exposing Board Peripherals via Declarative Custom Nodes](#10-exposing-board-peripherals-via-declarative-custom-nodes)
+    - [1. Declare the Node in `src/le_board_config.c`](#1-declare-the-node-in-srcle_board_configc)
+    - [2. Automatic HAL Delegation](#2-automatic-hal-delegation)
+    - [3. Automatic Target Profile Export (`caps` / `.leconfig`)](#3-automatic-target-profile-export-caps--leconfig)
 11. [Board Bring-Up Verification Checklist](#11-board-bring-up-verification-checklist)
 
 ---

@@ -6,6 +6,34 @@ This guide covers everything an adopter needs to build or port a microcontroller
 
 ---
 
+## Table of contents
+
+- [Why on-the-fly UART upload](#why-on-the-fly-uart-upload)
+- [Architecture: How UART upload operates](#architecture-how-uart-upload-operates)
+- [The `le_hal_t` interface](#the-le_hal_t-interface)
+- [Step 1: Implement non-volatile storage (`storage_*` callbacks)](#step-1-implement-non-volatile-storage-storage_-callbacks)
+  - [Recipe A: STM32 on-chip flash memory](#recipe-a-stm32-on-chip-flash-memory)
+  - [Recipe B: Raspberry Pi Pico (RP2040 / RP2350 QSPI flash)](#recipe-b-raspberry-pi-pico-rp2040--rp2350-qspi-flash)
+  - [Recipe C: Static RAM mirror (bring-up & simulation)](#recipe-c-static-ram-mirror-bring-up--simulation)
+- [Step 1B: Implement Non-Volatile Runtime Memory (NVRAM) & Wear Leveling](#step-1b-implement-non-volatile-runtime-memory-nvram--wear-leveling)
+  - [Circuit-Driven Dynamic NVRAM Allocation](#circuit-driven-dynamic-nvram-allocation)
+  - [Choosing your NVRAM Backend](#choosing-your-nvram-backend)
+- [Step 2: Implement asynchronous UART reception](#step-2-implement-asynchronous-uart-reception)
+- [Step 3: Integrate the runtime and upload engines](#step-3-integrate-the-runtime-and-upload-engines)
+  - [Option 1: Interactive terminal CLI (`le_cli`)](#option-1-interactive-terminal-cli-le_cli)
+  - [Option 2: Programmatic framed packet protocol (`le_comms`)](#option-2-programmatic-framed-packet-protocol-le_comms)
+- [Step 4: Implement custom board nodes and hardware extensions (optional)](#step-4-implement-custom-board-nodes-and-hardware-extensions-optional)
+  - [1. Define custom nodes metadata in JSON](#1-define-custom-nodes-metadata-in-json)
+  - [2. Implement the hardware callback (`ext_call`)](#2-implement-the-hardware-callback-ext_call)
+- [Complete reference implementation (`main.c`)](#complete-reference-implementation-mainc)
+- [Memory footprint and resource configuration](#memory-footprint-and-resource-configuration)
+  - [Typical footprint across architectures](#typical-footprint-across-architectures)
+- [Board profile specification (`.leconfig`)](#board-profile-specification-leconfig)
+  - [Compiler validation enforcement](#compiler-validation-enforcement)
+- [Field diagnostics and troubleshooting](#field-diagnostics-and-troubleshooting)
+
+---
+
 ## Why on-the-fly UART upload
 
 In industrial control and substation automation, taking down equipment to connect a JTAG or SWD programmer (ST-Link, J-Link, Picoprobe) is costly and impractical. 
